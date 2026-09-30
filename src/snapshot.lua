@@ -11,6 +11,9 @@ M.SLOT = { fire = 1, earth = 2, water = 3, air = 4 }
 M.LB_BASE = { 1.5, 2.0 }
 M.ENCHANT_RESCAN = 5
 M.TWO_HAND_SPEED = 3.0
+-- a single stray reading must not break the held plan: leaving melee and starting to move count only after they last
+M.RANGE_HOLD = 0.4
+M.MOVE_HOLD = 0.3
 M.RANGE_PROBES = { { "stormstrike", "melee" }, { "lavaLash", "melee" }, { "earthShock", "20" }, { "lightningBolt", "30" } }
 M.HP_BY_LEVEL = { { 1, 42 }, { 10, 200 }, { 20, 600 }, { 30, 1200 }, { 40, 2000 }, { 50, 3500 }, { 60, 4500 }, { 70, 7000 }, { 80, 12000 }, { 83, 14000 } }
 M.BASE_MANA = { { 1, 55 }, { 10, 185 }, { 20, 410 }, { 30, 635 }, { 40, 860 }, { 50, 1085 }, { 60, 1520 }, { 70, 2678 }, { 80, 4396 } }
@@ -163,6 +166,35 @@ function M.range(c)
   return "far"
 end
 
+-- per target: a new target and getting closer apply at once, leaving melee only after RANGE_HOLD of such readings
+function M.heldRange(ctx, guid, raw, now)
+  local h = ctx.rangeHold
+  if not h then
+    h = {}
+    ctx.rangeHold = h
+  end
+  if not guid or h.guid ~= guid or raw == "melee" or h.value ~= "melee" then
+    h.guid, h.value, h.since = guid, raw, nil
+    return raw
+  end
+  h.since = h.since or now
+  if now - h.since >= M.RANGE_HOLD then
+    h.value, h.since = raw, nil
+    return raw
+  end
+  return "melee"
+end
+
+-- a short shuffle is not movement: report it after MOVE_HOLD of continuous movement
+function M.moving(ctx, now)
+  if (GetUnitSpeed("player") or 0) <= 0 then
+    ctx.moveSince = nil
+    return false
+  end
+  ctx.moveSince = ctx.moveSince or now
+  return now - ctx.moveSince >= M.MOVE_HOLD
+end
+
 function M.spellHaste(c, mw)
   local rating = 1 + (GetCombatRatingBonus(CR_HASTE_SPELL) or 0) / 100
   local k, name = c.known.lightningBolt, c.names.lightningBolt
@@ -173,7 +205,7 @@ function M.spellHaste(c, mw)
   return math.max(1, math.min(3, base / (castMs / 1000)))
 end
 
-function M.playerInfo(haste)
+function M.playerInfo(haste, moving)
   local base, pos, neg = UnitAttackPower("player")
   local hpMax = UnitHealthMax("player") or 0
   local level = UnitLevel("player") or 1
@@ -192,7 +224,7 @@ function M.playerInfo(haste)
     spellHit = ((GetCombatRatingBonus(CR_HIT_SPELL) or 0) + (GetSpellHitModifier and GetSpellHitModifier() or 0)) / 100,
     spellHaste = haste,
     meleeHaste = 1 + (GetCombatRatingBonus(CR_HASTE_MELEE) or 0) / 100,
-    moving = (GetUnitSpeed("player") or 0) > 0,
+    moving = moving and true or false,
     inCombat = UnitAffectingCombat("player") and true or false,
   }
 end
@@ -236,7 +268,10 @@ end
 function M.targetInfo(ctx, c, now, playerLevel)
   local t = { exists = false, enemy = false, level = 0, hp = 0, hpMax = 0, hpPct = 0, ttd = nil, range = "far",
               fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
-  if not UnitExists("target") or UnitIsDeadOrGhost("target") then return t end
+  if not UnitExists("target") or UnitIsDeadOrGhost("target") then
+    if ctx.rangeHold then ctx.rangeHold.guid = nil end
+    return t
+  end
   t.exists = true
   t.enemy = UnitCanAttack("player", "target") and true or false
   local level = UnitLevel("target") or 0
@@ -261,7 +296,7 @@ function M.targetInfo(ctx, c, now, playerLevel)
   local deb = M.auras("target", "HARMFUL", c.debuffNames, true, now)
   if deb.fs then t.fs = deb.fs.remains end
   if deb.ss then t.ss = { charges = deb.ss.count, remains = deb.ss.remains } end
-  t.range = M.range(c)
+  t.range = M.heldRange(ctx, guid, M.range(c), now)
   return t
 end
 
@@ -305,7 +340,7 @@ function M.build(ctx)
   end
   local _, _, _, _, _, endMs = UnitCastingInfo("player")
   if endMs then S.castRemains = math.max(0, endMs / 1000 - now) end
-  S.player = M.playerInfo(haste)
+  S.player = M.playerInfo(haste, M.moving(ctx, now))
   S.weapons = M.weapons(c, now)
   S.talents = c.talents or {}
   S.spells = M.spellInfo(c, now)
