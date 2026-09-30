@@ -15,7 +15,7 @@ M.RECORD_MAX = 30
 M.MODES = { "auto", "solo", "group", "raid", "pvp" }
 M.EVENTS = {
   "COMBAT_LOG_EVENT_UNFILTERED",
-  "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_SUCCEEDED",
+  "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_SUCCEEDED",
   "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_DELAYED",
   "UNIT_AURA", "PLAYER_TARGET_CHANGED", "UNIT_MANA", "PLAYER_TOTEM_UPDATE", "UNIT_ATTACK_SPEED",
   "PLAYER_ENTER_COMBAT", "PLAYER_LEAVE_COMBAT", "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD",
@@ -23,6 +23,7 @@ M.EVENTS = {
 M.RESCAN = { SPELLS_CHANGED = true, LEARNED_SPELL_IN_TAB = true, PLAYER_LEVEL_UP = true, CHARACTER_POINTS_CHANGED = true, PLAYER_TALENT_UPDATE = true }
 M.PRIORITY = { cast = 6, target = 5, swing = 4, aura = 3, totem = 2, power = 1, pulse = 0 }
 M.WAIT_KEYS = { waitSwing = true, wait = true }
+M.SENT_WINDOW = 1.0 -- s: a START / SUCCEEDED this soon after SENT of the same spell confirms that press
 M.THROTTLED = { aura = true, power = true, swing = true }
 M.MIN_GAP = 0.1
 M.SLEEP_POLL = 1
@@ -122,6 +123,12 @@ function M.mark(rt, kind, key, done)
   end
 end
 
+-- the press of key was already reported by UNIT_SPELLCAST_SENT (and is still in flight)
+local function sentFor(rt, key, now)
+  local s = rt.sent
+  return s and s.key == key and now - s.at <= M.SENT_WINDOW
+end
+
 local function mwNow(ctx, now)
   local a = snapshot.auras("player", "HELPFUL", ctx.cache.buffNames, false, now)
   return a.mw and a.mw.count or 0
@@ -136,19 +143,31 @@ end
 function M.onCast(rt, event, key, now, castID)
   local ctx = rt.ctx
   local done = false
+  if event == "UNIT_SPELLCAST_SENT" then
+    -- the key press itself: the client starts the GCD at once, the server confirms a round trip
+    -- later. Taken as the press now, so the plan does not show the pressed button for that time.
+    rt.sent = { key = key, at = now }
+    M.mark(rt, "cast", key)
+    return
+  end
+  local confirmed = sentFor(rt, key, now)
   if event == "UNIT_SPELLCAST_START" then
+    done = confirmed
+    if confirmed then rt.sent = nil end
     local _, _, _, _, startMs, endMs, _, id = UnitCastingInfo("player")
     local castTime = (startMs and endMs) and (endMs - startMs) / 1000 or 0
     rt.casting = { key = key, mw = mwNow(ctx, now), id = castID or id }
     ctx.swing:onCastStart(now, key, rt.casting.mw, castTime)
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+    if confirmed then rt.sent = nil end
     if ownCast(rt, key, castID) then
       ctx.swing:onCastEnd(now, key, rt.casting.mw, true)
       rt.casting = nil
       done = true
-    elseif (spells.byKey[key].castBase or 0) <= 0 then
+    else
+      done = confirmed
       -- a 5-stack Lightning Bolt is instant too, but it is no sample of an instant spell
-      ctx.swing:onInstant(now, key)
+      if (spells.byKey[key].castBase or 0) <= 0 then ctx.swing:onInstant(now, key) end
     end
     ctx.inflight[key] = now + 1
     if key == "feralSpirit" then ctx.wolvesUntil = now + M.WOLVES end
@@ -160,7 +179,10 @@ function M.onCast(rt, event, key, now, castID)
       rt.casting = nil
     end
     ctx.inflight[key] = nil
-    M.mark(rt, "cast") -- replan, but nothing was cast
+    -- Replan, but nothing was cast. A press taken at SENT is not taken back: a second tap during
+    -- the GCD fails in the client with the same event, and the first press is real. A press the
+    -- server really turned down comes back once the planner's in-flight mark runs out (1 s).
+    M.mark(rt, "cast")
     return
   elseif event == "UNIT_SPELLCAST_DELAYED" then
     local endMs = select(6, UnitCastingInfo("player"))

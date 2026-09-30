@@ -26,7 +26,7 @@ end }
 package.loaded.ttd = { new = function()
   local t = { resets = {} }
   function t:add() end
-  function t:estimate() return 60 end
+  function t:smoothed() return 60 end
   function t:reset(guid) self.resets[#self.resets + 1] = guid or "all" end
   return t
 end }
@@ -226,6 +226,41 @@ describe("runtime", function()
     rt.pending = nil
     runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
     assert.are.same({ kind = "cast", key = "earthShock" }, rt.pending)
+  end)
+
+  -- SENT comes at the key press; START / SUCCEEDED a round trip later (the client GCD runs already)
+  it("takes the press from SENT; the server's confirmation is then no new press", function()
+    local rt = start()
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Earth Shock", "Rank 10", "Mob")
+    assert.are.same({ kind = "cast", key = "earthShock" }, rt.pending)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    assert.are.same({ kind = "cast", key = "earthShock", done = true }, rt.pending)
+    assert.are.same({ "onInstant", 100, "earthShock" }, rt.ctx.swing.calls[1])
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10") -- no SENT: a press
+    assert.are.same({ kind = "cast", key = "earthShock" }, rt.pending)
+  end)
+
+  it("a hard cast confirmed by START after SENT is no second press", function()
+    local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500, castID = 7 } })
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Lightning Bolt", "Rank 14", "Mob")
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    assert.are.same({ kind = "cast", key = "lightningBolt", done = true }, rt.pending)
+    assert.are.equal("onCastStart", rt.ctx.swing.calls[1][1])
+  end)
+
+  -- a second tap during the GCD fails in the client: the first press still counts
+  it("a FAILED after SENT does not take the press back; its SUCCEEDED is still no new press", function()
+    local rt = start()
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_FAILED", "player", "Stormstrike", "")
+    assert.are.same({ kind = "cast" }, rt.pending)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Stormstrike", "")
+    assert.are.same({ kind = "cast", key = "stormstrike", done = true }, rt.pending)
   end)
 
   it("a new press in the same frame wins over the end of the previous cast", function()

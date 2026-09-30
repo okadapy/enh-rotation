@@ -9,7 +9,7 @@ local function ctx(extra)
   local c = {
     swing = { state = function() return { attacking = true, mh = { next = 1.1, speed = 2.6 }, oh = { next = 0.3, speed = 2.6 }, resetByInstant = {} } end },
     enemies = { counts = function() return 0, 2 end },
-    ttd = { add = function() end, estimate = function() return 42 end },
+    ttd = { add = function() end, smoothed = function() return 42 end },
     inflight = {}, mode = "auto",
   }
   for k, v in pairs(extra or {}) do c[k] = v end

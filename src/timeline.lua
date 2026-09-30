@@ -3,7 +3,8 @@ local model = require("model")
 
 local M = {}
 
-M.DEFAULTS = { width = 340, height = 120, nowX = 60, seconds = 6, big = 64, small = 38, icons = 4, gap = 2, lerp = 12, showReason = true }
+M.DEFAULTS = { width = 340, height = 120, nowX = 60, seconds = 6, big = 64, small = 38, icons = 4, gap = 2, lerp = 12, showReason = true,
+               fade = 0.15 }
 M.ICON_Y = 70
 M.TICK_Y = 22
 M.WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -62,11 +63,16 @@ function M.layout(plan, S, opts, elapsed)
   local L = { nowX = o.nowX, icons = {}, ticks = {}, window = nil, gcd = nil, reason = nil,
               dots = math.max(0, math.min(5, mw)) }
   local prev
-  for _, st in ipairs((plan and plan.steps) or {}) do
+  local steps = (plan and plan.steps) or {}
+  -- While the first button is overdue (not pressed yet) the rest of the plan waits with it: the
+  -- next retime (every 0.25 s) puts them back by exactly this lateness, so sliding on meanwhile
+  -- made every later icon run left and jump back right four times a second.
+  local late = steps[1] and math.max(0, elapsed - (steps[1].at or 0)) or 0
+  for i, st in ipairs(steps) do
     if #L.icons >= o.icons then break end
     local meta = spells.byKey[st.key]
     if meta then
-      local t = math.max(0, (st.at or 0) - elapsed)
+      local t = math.max(0, (st.at or 0) - elapsed + (i > 1 and late or 0))
       local big = #L.icons == 0
       local size = big and o.big or o.small
       local x = M.xOf(t, o)
@@ -170,7 +176,7 @@ function TL:setup(parent, opts)
   self.alert:Hide()
   self.glow:Hide()
   self.reason:Hide()
-  self.plan, self.S, self.cur, self.busy = nil, nil, {}, false
+  self.plan, self.S, self.cur, self.alpha, self.busy = nil, nil, {}, {}, false
   self:start()
 end
 
@@ -226,16 +232,24 @@ function TL:tick(dt)
       if x then x = x + (it.x - x) * k else x = it.x end
       self.cur[id] = x
       seen[id] = true
+      -- a new icon fades in over o.fade seconds where it belongs instead of popping up
+      local a = self.alpha[id]
+      a = a and math.min(1, a + (dt or 0) / o.fade) or math.min(1, (dt or 0) / o.fade)
+      self.alpha[id] = a
       ic:SetTexture(it.icon)
+      ic:SetAlpha(a)
       place(ic, f, x, M.ICON_Y, it.size, it.size)
-      if it.big then place(self.glow, f, x, M.ICON_Y, it.size * 1.7, it.size * 1.7) end
+      if it.big then
+        place(self.glow, f, x, M.ICON_Y, it.size * 1.7, it.size * 1.7)
+        self.glow:SetAlpha(a)
+      end
     else
       ic:Hide()
     end
   end
   if not L.icons[1] then self.glow:Hide() end
   for key in pairs(self.cur) do
-    if not seen[key] then self.cur[key] = nil end
+    if not seen[key] then self.cur[key], self.alpha[key] = nil, nil end
   end
   for i, tk in ipairs(L.ticks) do
     local t = self.ticks[i]

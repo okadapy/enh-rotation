@@ -24,6 +24,16 @@ describe("value.step", function()
     assert.are.near(500 + value.WEIGHTS.solo.kill * 10000, v, 1e-6)
   end)
 
+  it("solo: a target that dies at its time-to-die inside the step is a kill too, and only once", function()
+    -- the model stops counting damage at the time-to-die: the target is dead with health left
+    local S = fixtures.state({ mode = "solo", target = { hp = 900, hpMax = 10000 } })
+    local S2 = after(S, 400)
+    S2.target.dead = true
+    assert.are.near(500 + value.WEIGHTS.solo.kill * 10000, value.step(S, S2, 500, 0), 1e-6)
+    local S3 = after(S2, 400)
+    assert.are.near(0, value.step(S2, S3, 0, 0), 1e-9)
+  end)
+
   it("group: overkill counts at 0.2 and there is no kill bonus", function()
     local S = fixtures.state({ mode = "group", target = { hp = 500, hpMax = 10000 } })
     local v = value.step(S, after(S, 0), 2000, 0)

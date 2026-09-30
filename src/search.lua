@@ -300,7 +300,7 @@ local function scoreFrom(o, CS, v, rootNow)
   local t = CS.now - rootNow
   if t < o.horizon then
     if o.model.peekApply and o.model.advance then
-      PRE.mode, PRE.target.hp, PRE.target.hpMax = CS.mode, CS.target.hp, CS.target.hpMax
+      PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = CS.mode, CS.target.hp, CS.target.hpMax, CS.target.dead
       local mana0 = CS.player.mana or 0
       local price = o.value.manaPrice and o.value.manaPrice(CS) or 0 -- before the state moves on
       local dmg = o.model.advance(CS, o.horizon - t)
@@ -418,9 +418,13 @@ local function run(o, S, check)
     if #frontier == 0 then break end
     if check then check() end
   end
+  -- byFirst: the best chain found for every first button ("key" or "key+swing"), so the planner
+  -- can weigh a held first button by its best continuation, not by the old plan's stale tail
+  local byFirst = {}
   local function result(value, steps)
-    return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes }
+    return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes, byFirst = byFirst }
   end
+  for f, c in pairs(bestByFirst) do byFirst[f] = stepsOf(c) end
   if not bestNode then return result(0, {}) end
   -- The best chain of every first button close enough to the best gets its waits filled
   -- (fillIdle), then the best of them wins: a first button must not lose only because its chain
@@ -439,6 +443,7 @@ local function run(o, S, check)
   local budget = { replays = o.fillReplays }
   for _, c in ipairs(list) do
     local v, st = fillIdle(o, S, c.score, stepsOf(c), check, budget)
+    byFirst[c.first] = st
     if v > top then top, steps = v, st end
   end
   best = top
@@ -521,10 +526,23 @@ local function evaluateFrom(o, S, steps, truncate)
   return v, node.steps, horizonValue
 end
 
+-- the byFirst key of a plan's first step
+function M.firstKey(st)
+  return st.afterSwing and (st.key .. "+swing") or st.key
+end
+
 -- replay an existing plan on a fresh state; nil if a step is no longer possible
 -- -> value, retimed steps, the part of the value earned inside the horizon (without terminal)
 function M.evaluate(S, steps, opts)
   return evaluateFrom(defaults(opts), root(S), steps)
+end
+
+-- pressing nothing for the whole horizon -> value, the part earned inside the horizon
+-- (the planner holds an empty plan against a new one with this, like evaluate for a plan)
+function M.idle(S, opts)
+  local o = defaults(opts)
+  local r = root(S)
+  return finalScore(o, { S = r, v = 0, steps = {}, depth = 0 }, r.now)
 end
 
 -- A wait of at least IDLE_MIN inside the plan (before its first step or between two steps): try

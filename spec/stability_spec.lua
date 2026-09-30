@@ -23,6 +23,12 @@ describe("stability in a simulated fight #integration", function()
     assert.are.equal(0, total.quiet, info)
   end)
 
+  -- issue #9: the held first button used to be weighed by the old plan's stale tail and lost to
+  -- every new search right after a press (15.8 changes a minute)
+  it("the first button changes at most 8 times a minute besides the presses", function()
+    assert.is_true(total.changes <= 8 * total.minutes, info)
+  end)
+
   it("the first button changes at most once a minute within 0.3 s before its press", function()
     assert.is_true(total.late <= total.minutes, info)
   end)
@@ -86,5 +92,43 @@ describe("stability without auto-attack #integration", function()
     end)
     assert.are.equal(0, changes(firsts, 1, 19), table.concat(firsts, " "))
     assert.is_true(changes(firsts, 19, 60) <= 1, table.concat(firsts, " "))
+  end)
+end)
+
+-- Issue #9 (level 52, solo, normal mobs): near a mob's death the big icon came and went. The
+-- time-to-die estimate is noisy in game; with it the first button must not flip. States: the
+-- recorded snapshots whose target dies within 10 s, 3 s of events without presses, time-to-die
+-- off by up to ±20% on every event (a fixed LCG, not math.random: the same on every platform).
+describe("stability near a mob's death with a noisy time-to-die #integration", function()
+  local model, util = require("model"), require("util")
+  local path = "spec/fixtures/recorded.lua"
+
+  it("the first button changes at most once per 5 dying mobs", function()
+    local seed = 12345
+    local function rnd()
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    end
+    local runs, changes, lines = 0, 0, {}
+    for i, rec in ipairs(dofile(path)) do
+      local t = rec.S.target
+      if t.exists and t.enemy and t.ttd and t.ttd < 10 then
+        local p, S, last, seq = planner.new({}), util.copy(rec.S), nil, {}
+        for k = 1, 12 do
+          local s = util.copy(S)
+          s.target.ttd = S.target.ttd * (1 + 0.2 * (2 * rnd() - 1))
+          local ev = k == 1 and { kind = "target" } or { kind = k % 2 == 0 and "swing" or "aura" }
+          local plan = p:update(s, ev)
+          local f = plan.steps[1] and plan.steps[1].key or "-"
+          if last and f ~= last then changes = changes + 1 end
+          last, seq[k] = f, f
+          S = model.wait(S, 0.25)
+        end
+        runs = runs + 1
+        lines[#lines + 1] = ("#%d %s"):format(i, table.concat(seq, " "))
+      end
+    end
+    assert.is_true(runs >= 5, "recorded dying mobs: " .. runs)
+    assert.is_true(changes * 5 <= runs, ("%d changes in %d runs\n%s"):format(changes, runs, table.concat(lines, "\n")))
   end)
 end)

@@ -12,6 +12,7 @@ local function stubSearch(script)
     if script.evaluate == false then return nil end
     return script.evaluate, steps, script.horizon
   end
+  function s.idle() return script.idle, script.idleHorizon end
   return s
 end
 
@@ -80,6 +81,56 @@ describe("planner", function()
     assert.are.equal(1, #s.seen)
     assert.are.equal("a", plan.steps[1].key)
     assert.are.near(0.75, plan.steps[1].at, 1e-9)
+  end)
+
+  it("holds a search's \"press nothing\" against a new plan better by less than the margin", function()
+    local script = { best = 100, steps = {} }
+    local p = planner.new({ search = stubSearch(script) })
+    assert.are.equal(0, #p:update(at(100)).steps)
+    script.best, script.steps, script.idle, script.idleHorizon = 103.9, later("b"), 100, 50
+    assert.are.equal(0, #p:update(at(100.1), AURA).steps)
+    script.best = 104.1
+    assert.are.equal("b", p:update(at(100.2), AURA).steps[1].key)
+  end)
+
+  it("a plan emptied by pressing its last button is no \"press nothing\": the next plan shows at once", function()
+    local script = { best = 100, steps = { { key = "stormstrike", at = 0, reason = "" } } }
+    local p = planner.new({ search = stubSearch(script) })
+    p:update(at(100))
+    script.best, script.steps, script.idle, script.idleHorizon = 50, later("b"), 100, 50
+    assert.are.equal("b", p:update(at(100.1), { kind = "cast", key = "stormstrike" }).steps[1].key)
+  end)
+
+  it("weighs the held first button by its best new continuation, not by the old tail", function()
+    -- the old tail alone (100) loses to the new plan (110) by more than the margin (8 = 0.08 x 100),
+    -- but the new search's best chain that starts with the held button is worth 105: it stays
+    local script = { best = 100, steps = later("a") }
+    local s = stubSearch(script)
+    function s.firstKey(st) return st.key end
+    local p = planner.new({ search = s })
+    p:update(at(100))
+    local alt = { { key = "a", at = 0.9, reason = "" }, { key = "c", at = 2.4, reason = "" } }
+    function s.best() return { value = 110, steps = later("b"), byFirst = { a = alt, b = later("b") } } end
+    function s.evaluate(_, steps)
+      if steps[2] and steps[2].key == "c" then return 105, steps, 100 end
+      return 100, steps, 100
+    end
+    local plan = p:update(at(100.1), AURA)
+    assert.are.same({ "a", "c" }, { plan.steps[1].key, plan.steps[2].key })
+  end)
+
+  it("gives a just-pressed button its cooldown until the game shows it", function()
+    local p = planner.new({ search = stubSearch({ best = 100, bestKey = "a" }) })
+    p:update(at(100))
+    p:update(at(100), { kind = "cast", key = "stormstrike" })
+    local s = p:prepare(at(100.25))
+    assert.are.near(8 - 0.25, s.spells.stormstrike.cd, 1e-9)
+    local shown = at(100.25)
+    shown.spells.stormstrike.cd = 7.9
+    assert.are.near(7.9, p:prepare(shown).spells.stormstrike.cd, 1e-9)
+    p:update(at(100.3), { kind = "cast", key = "earthShock" })
+    local sh = p:prepare(at(100.3))
+    assert.is_true(sh.spells.flameShock.cd > 5, "shared shock cooldown")
   end)
 
   it("switches when the held plan can no longer be played", function()

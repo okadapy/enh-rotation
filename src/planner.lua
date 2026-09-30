@@ -1,5 +1,6 @@
 local util = require("util")
 local spells = require("spells")
+local model = require("model")
 
 local M = {}
 
@@ -58,6 +59,17 @@ function P:prepare(S)
       n.inflight[key] = math.max(n.inflight[key] or 0, left)
       local fx = M.EFFECTS[key]
       if fx then fx(n) end
+      -- its cooldown, until the game reports it (the press is known from SENT, a round trip early);
+      -- a cooldown the game already shows is taken as it is
+      local sp = n.spells and n.spells[key]
+      if sp and (sp.cd or 0) <= 0 then
+        local cd = model.cooldownFor(n, key) - (M.INFLIGHT - left)
+        local group = spells.byKey[key] and spells.byKey[key].sharedCd
+        for _, k in ipairs(group and model.SHARED[group] or { key }) do
+          local e = n.spells[k]
+          if e and (e.cd or 0) < cd then e.cd = cd end
+        end
+      end
     else
       self.inflight[key] = nil
     end
@@ -92,19 +104,37 @@ function P:finish(job)
   self.job = nil
   if not job.force and self.plan then
     local old = shifted(self.plan, s.now - self.planNow)
-    if #old > 0 then
-      local oldValue, retimed, horizonValue = self.search.evaluate(s, old, self.searchOpts)
+    -- a search's "press nothing" is held too: without it any new search replaced it at once,
+    -- and near a mob's death the big icon came and went with every noisy time-to-die
+    -- (a plan emptied by pressing its last button is no such decision)
+    if #old > 0 or (self.plan.idle and self.search.idle) then
+      local oldValue, retimed, horizonValue
+      if #old > 0 then
+        oldValue, retimed, horizonValue = self.search.evaluate(s, old, self.searchOpts)
+        -- The held first button is weighed by its best continuation the new search found: the
+        -- old tail is not re-optimized and waits through the seconds the horizon has moved on,
+        -- a handicap larger than the margin, so right after a press the icon changed for nothing.
+        local alt = fresh.byFirst and self.search.firstKey and fresh.byFirst[self.search.firstKey(old[1])]
+        if alt and #alt > 0 then
+          local v, r, h = self.search.evaluate(s, alt, self.searchOpts)
+          if v and (not oldValue or v > oldValue) then oldValue, retimed, horizonValue = v, r, h end
+        end
+      else
+        retimed = {}
+        oldValue, horizonValue = self.search.idle(s, self.searchOpts)
+      end
       local margin = oldValue and math.abs(horizonValue or oldValue) * self.hysteresis
       if margin and retimed[1] and retimed[1].at <= self.hold then margin = margin * self.holdFactor end
       if oldValue and fresh.value <= oldValue + margin then
         self.plan = { value = oldValue, steps = retimed, timedOut = fresh.timedOut, capped = fresh.capped, held = true,
-                      trigger = job.ev }
+                      trigger = job.ev, idle = #retimed == 0 or nil }
         self.planNow = s.now
         return
       end
     end
   end
   fresh.trigger = job.ev
+  fresh.idle = #fresh.steps == 0 or nil
   self.plan = fresh
   self.planNow = s.now
 end
