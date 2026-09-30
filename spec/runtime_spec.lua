@@ -210,6 +210,34 @@ describe("runtime", function()
     assert.are.equal(101, rt.ctx.inflight.lightningBolt)
   end)
 
+  -- START already told the planner about the press: the end of the same cast is no new press
+  -- (it used to force a full replan exactly when the player pressed the next button)
+  it("the end or pushback of a tracked hard cast is reported as done, not as a new press", function()
+    local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500, castID = 7 } })
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    assert.are.same({ kind = "cast", key = "lightningBolt" }, rt.pending)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_DELAYED", "player", "Lightning Bolt", "Rank 14", 7)
+    assert.are.same({ kind = "cast", key = "lightningBolt", done = true }, rt.pending)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    assert.are.same({ kind = "cast", key = "lightningBolt", done = true }, rt.pending)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    assert.are.same({ kind = "cast", key = "earthShock" }, rt.pending)
+  end)
+
+  it("a new press in the same frame wins over the end of the previous cast", function()
+    local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500, castID = 7 } })
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    assert.are.same({ kind = "cast", key = "earthShock" }, rt.pending)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    assert.are.same({ kind = "cast", key = "earthShock" }, rt.pending)
+  end)
+
   it("passes spell pushback to the swing clock with the new cast end", function()
     local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500 } })
     runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14")

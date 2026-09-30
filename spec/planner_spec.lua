@@ -89,6 +89,19 @@ describe("planner", function()
     assert.are.near(1.3, s.lastEval[1].at, 1e-9)
   end)
 
+  it("the end of a cast already taken at its start neither forces a replan nor drops a step", function()
+    local script = { best = 100, steps = { { key = "lightningBolt", at = 0, reason = "" }, { key = "lavaLash", at = 1.7, reason = "" } } }
+    local s = stubSearch(script)
+    local p = planner.new({ search = s })
+    p:update(at(100))
+    script.evaluate = 100
+    p:update(at(100.1), { kind = "cast", key = "lightningBolt" }) -- START
+    script.steps, script.best = { { key = "stormstrike", at = 0, reason = "" } }, 102
+    local plan = p:update(at(101.8), { kind = "cast", key = "lightningBolt", done = true }) -- SUCCEEDED
+    assert.are.equal("lavaLash", plan.steps[1].key)
+    assert.is_true(plan.held)
+  end)
+
   it("shifts held steps by the elapsed time", function()
     local script = { best = 100, steps = { { key = "a", at = 1.0, reason = "" } } }
     local s = stubSearch(script)

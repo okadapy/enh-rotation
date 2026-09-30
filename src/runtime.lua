@@ -113,10 +113,12 @@ function M.report(rt, msg)
   print("|cffff5555EnhRot|r " .. msg)
 end
 
-function M.mark(rt, kind, key)
+-- done: the end (or pushback) of a cast whose START was already reported - no new press
+function M.mark(rt, kind, key, done)
   local p = rt.pending
-  if not p or M.PRIORITY[kind] > M.PRIORITY[p.kind] or (kind == p.kind and key and not p.key) then
-    rt.pending = { kind = kind, key = key }
+  if not p or M.PRIORITY[kind] > M.PRIORITY[p.kind]
+    or (kind == p.kind and key and (not p.key or (p.done and not done))) then
+    rt.pending = { kind = kind, key = key, done = done or nil }
   end
 end
 
@@ -133,6 +135,7 @@ end
 
 function M.onCast(rt, event, key, now, castID)
   local ctx = rt.ctx
+  local done = false
   if event == "UNIT_SPELLCAST_START" then
     local _, _, _, _, startMs, endMs, _, id = UnitCastingInfo("player")
     local castTime = (startMs and endMs) and (endMs - startMs) / 1000 or 0
@@ -142,6 +145,7 @@ function M.onCast(rt, event, key, now, castID)
     if ownCast(rt, key, castID) then
       ctx.swing:onCastEnd(now, key, rt.casting.mw, true)
       rt.casting = nil
+      done = true
     elseif (spells.byKey[key].castBase or 0) <= 0 then
       -- a 5-stack Lightning Bolt is instant too, but it is no sample of an instant spell
       ctx.swing:onInstant(now, key)
@@ -161,10 +165,11 @@ function M.onCast(rt, event, key, now, castID)
   elseif event == "UNIT_SPELLCAST_DELAYED" then
     local endMs = select(6, UnitCastingInfo("player"))
     if endMs and rt.casting and rt.casting.key == key then ctx.swing:onCastDelayed(now, endMs / 1000) end
+    done = true
   else
     return
   end
-  M.mark(rt, "cast", key)
+  M.mark(rt, "cast", key, done)
 end
 
 -- 3.3.5a: timestamp, event, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, ...
