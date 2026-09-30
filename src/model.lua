@@ -240,7 +240,7 @@ function fillState(n, S)
   local pool = n.pool
   n.now, n.gcdRemains, n.castRemains, n.gcd, n.latency = S.now, S.gcdRemains, S.castRemains, S.gcd, S.latency
   n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
-  n.cooldowns, n.cdAllowed, n.memo = S.cooldowns, S.cdAllowed, S.memo
+  n.cooldowns, n.cdAllowed, n.weaveMin, n.memo = S.cooldowns, S.cdAllowed, S.weaveMin, S.memo
   local map, sp = n.spells, S.spells
   map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
   map.frostShock, map.lightningBolt, map.chainLightning = sp.frostShock, sp.lightningBolt, sp.chainLightning
@@ -473,7 +473,8 @@ function M.weaveAllowed(S)
   local t = S.target
   if not (t and t.range == "melee") or talent(S, "maelstromWeapon") <= 0 then return true end
   local mw = S.buffs and S.buffs.mw
-  return floor(((mw and mw.stacks) or 0) + 1e-9) >= wm
+  local n = ((mw and mw.stacks) or 0) + 1e-9
+  return n - n % 1 >= wm
 end
 
 function M.readyIn(S, key)
