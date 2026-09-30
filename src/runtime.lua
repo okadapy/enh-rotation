@@ -10,6 +10,7 @@ local recorder = require("recorder")
 local M = {}
 
 M.PULSE = 0.25
+M.FRAME_MS = 2 -- search time per frame; a search runs over several frames (planner.work)
 M.RECORD_MAX = 30
 M.MODES = { "auto", "solo", "group", "raid", "pvp" }
 M.EVENTS = {
@@ -102,7 +103,7 @@ end
 function M.signature(plan, c)
   local parts = {}
   for _, st in ipairs(plan.steps) do parts[#parts + 1] = ("%s@%.1f"):format(st.key, st.at) end
-  return ("EnhRot: %s | replans=%d timeouts=%d errors=%d"):format(table.concat(parts, " "), c.replans, c.timeouts, c.errors)
+  return ("EnhRot: %s | replans=%d capped=%d errors=%d"):format(table.concat(parts, " "), c.replans, c.capped, c.errors)
 end
 
 function M.report(rt, msg)
@@ -229,7 +230,7 @@ function M.onEvent(rt, event, ...)
     ctx.enemies = enemies.new()
     ctx.ttd:reset()
     rt.mine = {}
-    rt.planner = planner.new({})
+    rt.planner = M.newPlanner()
   elseif event == "PLAYER_ENTERING_WORLD" then
     rt.playerGUID = UnitGUID("player")
     rt.shown = false
@@ -301,34 +302,17 @@ function M.wake(rt)
   M.mark(rt, "target")
 end
 
-function M.step(rt, dt)
-  rt.elapsed = rt.elapsed + (dt or 0)
-  if not rt.shown then
-    rt.shown = true
-    WeakAuras.ScanEvents("ENHROT_SHOW")
-  end
-  if not rt.pending and rt.elapsed < M.PULSE then return false end
-  -- in raids target auras change nearly every frame: minor events wait a little, casts do not
-  if rt.pending and M.THROTTLED[rt.pending.kind] and rt.elapsed < M.MIN_GAP then return false end
-  local ev = rt.pending or { kind = "pulse" }
-  rt.pending, rt.elapsed = nil, 0
-  local now = GetTime()
-  rt.ctx.now = now
-  local S = snapshot.build(rt.ctx)
-  local alert = M.alert(S)
-  if not alert and rt.config.showLust ~= false then alert = M.lustReady(S, now) end
-  rt.tl:setAlert(alert)
-  if not (S.target.exists and S.target.enemy) then
-    rt.plan, rt.S = { value = 0, steps = {} }, S
-    rt.tl:render(rt.plan, S, now)
-    return true
-  end
-  local plan = rt.planner:update(S, ev)
+function M.newPlanner()
+  return planner.new({ budgetMs = M.FRAME_MS })
+end
+
+-- a new plan to show (after a replan, or when a search running over several frames finished)
+function M.show(rt, plan, S, now)
   if not M.validPlan(plan) then
     M.report(rt, "planner returned an invalid plan")
     return false
   end
-  if plan.timedOut then rt.counters.timeouts = rt.counters.timeouts + 1 end
+  if plan.capped then rt.counters.capped = rt.counters.capped + 1 end
   local first = plan.steps[1] and plan.steps[1].key
   if first ~= rt.lastFirst then
     rt.lastFirst = first
@@ -339,6 +323,42 @@ function M.step(rt, dt)
   rt.plan, rt.S = plan, S
   rt.tl:render(plan, S, now)
   return true
+end
+
+-- a frame without a replan: go on with the running search, show its plan once it is done
+local function work(rt)
+  local p, S = rt.planner, rt.S
+  if not (rt.searching and p.work and S) then return false end
+  if not p:work(M.FRAME_MS) then return false end
+  rt.searching = p:busy()
+  return M.show(rt, p:view(S.now), S, S.now)
+end
+
+function M.step(rt, dt)
+  rt.elapsed = rt.elapsed + (dt or 0)
+  if not rt.shown then
+    rt.shown = true
+    WeakAuras.ScanEvents("ENHROT_SHOW")
+  end
+  if not rt.pending and rt.elapsed < M.PULSE then return work(rt) end
+  -- in raids target auras change nearly every frame: minor events wait a little, casts do not
+  if rt.pending and M.THROTTLED[rt.pending.kind] and rt.elapsed < M.MIN_GAP then return work(rt) end
+  local ev = rt.pending or { kind = "pulse" }
+  rt.pending, rt.elapsed = nil, 0
+  local now = GetTime()
+  rt.ctx.now = now
+  local S = snapshot.build(rt.ctx)
+  local alert = M.alert(S)
+  if not alert and rt.config.showLust ~= false then alert = M.lustReady(S, now) end
+  rt.tl:setAlert(alert)
+  if not (S.target.exists and S.target.enemy) then
+    rt.plan, rt.S, rt.searching = { value = 0, steps = {} }, S, false
+    rt.tl:render(rt.plan, S, now)
+    return true
+  end
+  local plan = rt.planner:update(S, ev)
+  rt.searching = rt.planner.busy and rt.planner:busy() or false
+  return M.show(rt, plan, S, now)
 end
 
 function M.timelineOptions(config)
@@ -366,8 +386,8 @@ function M.start(config, env)
   frame.enhrotTimeline = tl
   local rt = {
     config = config, env = env, ctx = ctx, frame = frame, tl = tl, elapsed = 0, pending = nil, shown = false,
-    planner = planner.new({}), rec = config.record and recorder.new(env.saved, M.RECORD_MAX) or nil,
-    playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, timeouts = 0, errors = 0 }, reported = false,
+    planner = M.newPlanner(), rec = config.record and recorder.new(env.saved, M.RECORD_MAX) or nil,
+    playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, capped = 0, errors = 0 }, reported = false,
   }
   tl.onError = function() M.fail(rt) end
   frame:SetScript("OnEvent", function(_, event, ...)

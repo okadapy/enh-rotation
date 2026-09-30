@@ -186,6 +186,11 @@ describe("build #integration", function()
     setfenv(chunk, setmetatable({ aura_env = env }, { __index = _G }))
     chunk()
     EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.3)
+    -- the search runs in 2 ms slices, one per frame: the plan shows once it has finished
+    for _ = 1, 20 do
+      if #env.rt.plan.steps > 0 then break end
+      EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.016)
+    end
     assert.is_true(runtime.validPlan(env.rt.plan))
     assert.is_true(#env.rt.plan.steps >= 1)
     assert.are.equal("ENHROT_SHOW", G.sent[1][1])

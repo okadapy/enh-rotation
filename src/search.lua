@@ -3,7 +3,8 @@ local M = {}
 M.HORIZON = 6.0
 M.BEAM = 6
 M.DEPTH = 4
-M.BUDGET_MS = 2
+M.BUDGET_MS = 2 -- per frame: a search runs in slices (search.start), never cut by the clock
+M.NODE_CAP = 300 -- the whole search stops after this many candidates (deterministic)
 M.READY_EPS = 0.05
 M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
 M.WEAVE = { lightningBolt = true, chainLightning = true }
@@ -127,6 +128,7 @@ local function defaults(opts)
     beam = opts.beam or M.BEAM,
     depth = opts.depth or M.DEPTH,
     budgetMs = opts.budgetMs or M.BUDGET_MS,
+    nodeCap = opts.nodeCap or M.NODE_CAP,
     clock = opts.clock or defaultClock,
   }
 end
@@ -310,26 +312,29 @@ end
 
 local fillIdleStart
 
-function M.best(S, opts)
-  local o = defaults(opts)
-  local start = o.clock()
+-- The whole search as one function. It stops by the node cap only, never by the clock, so its
+-- result is the same however it is cut into frames. check() (nil = run to the end) is called
+-- only between whole frontier nodes: no scratch state (model.peek*) is held there, so other code
+-- may use the scratch buffers while the search is paused.
+local function run(o, S, check)
   S = root(S)
   local rootNow = S.now
   local rootNode = { S = S, v = 0, steps = {}, depth = 0 }
   local rootActions = {}
   local frontier = { rootNode }
   local best, bestNode = -math.huge, nil
-  local timedOut = false
+  local nodes, capped = 0, false
   for _ = 1, o.depth * 2 do
     local children = {}
     local function add(node, a)
       local c, CS = candidate(o, node, a, rootNow)
-      if not c then return false end
+      nodes = nodes + 1
+      if nodes >= o.nodeCap then capped = true end
+      if not c then return capped end
       c.score = scoreFrom(o, CS, c.v, rootNow)
       if (not c.waited or #stepsOf(node) > 0) and c.score > best then best, bestNode = c.score, c end
       children[#children + 1] = c
-      if o.clock() - start > o.budgetMs then timedOut = true end
-      return timedOut
+      return capped
     end
     for _, node in ipairs(frontier) do
       if node.depth < o.depth then
@@ -354,9 +359,10 @@ function M.best(S, opts)
           end
         end
       end
-      if timedOut then break end
+      if capped then break end
+      if check then check() end
     end
-    if timedOut then break end
+    if capped then break end
     table.sort(children, function(x, y)
       if x.score ~= y.score then return x.score > y.score end
       return chainKey(x) < chainKey(y)
@@ -401,14 +407,55 @@ function M.best(S, opts)
       take(skipped[i])
     end
     if #frontier == 0 then break end
+    if check then check() end
   end
-  if not bestNode then return { value = 0, steps = {}, timedOut = timedOut } end
+  local function result(value, steps)
+    return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes }
+  end
+  if not bestNode then return result(0, {}) end
   local steps = stepsOf(bestNode)
-  if not timedOut then best, steps = fillIdleStart(o, S, best, steps, rootActions) end
+  if not capped then best, steps = fillIdleStart(o, S, best, steps, rootActions, check) end
   -- pressing nothing can be the best plan (solo: a mob the swings finish, mana is dear)
   local idle = finalScore(o, rootNode, rootNow)
-  if idle >= best then return { value = idle, steps = {}, timedOut = timedOut } end
-  return { value = best, steps = steps, timedOut = timedOut }
+  if idle >= best then return result(idle, {}) end
+  return result(best, steps)
+end
+
+-- synchronous: the whole search at once (tests, tools); the same result as a job run in slices
+function M.best(S, opts)
+  return run(defaults(opts), S, nil)
+end
+
+-- A search to be run in slices of at most budgetMs per frame (in game: one slice per frame).
+-- job:run(ms) -> true once finished, job.result is the plan. Lua 5.1 coroutines are allowed in
+-- the WeakAuras sandbox; an error inside the search is raised again, as if called directly.
+local Job = {}
+Job.__index = Job
+
+function M.start(S, opts)
+  local o = defaults(opts)
+  local job = setmetatable({ o = o, slices = 0, ms = 0 }, Job)
+  local function check()
+    if o.clock() >= job.deadline then coroutine.yield() end
+  end
+  job.co = coroutine.create(function() return run(o, S, check) end)
+  return job
+end
+
+function Job:run(budgetMs)
+  if self.result then return true end
+  local clock = self.o.clock
+  local t0 = clock()
+  self.deadline = t0 + (budgetMs or self.o.budgetMs)
+  self.slices = self.slices + 1
+  local ok, res = coroutine.resume(self.co)
+  self.ms = self.ms + (clock() - t0)
+  if not ok then error(res, 0) end
+  if coroutine.status(self.co) == "dead" then
+    self.result = res
+    return true
+  end
+  return false
 end
 
 local function evaluateFrom(o, S, steps)
@@ -434,10 +481,11 @@ end
 
 -- The plan starts with a wait of at least a GCD: try each button that can be pressed now in
 -- front of it (the beam compares chains by button count and may have cut "small button now").
-function fillIdleStart(o, S, value, steps, actions)
+function fillIdleStart(o, S, value, steps, actions, check)
   local first = steps[1]
   if not first or first.at < M.IDLE_MIN then return value, steps end
   for _, a in ipairs(actions) do
+    if check then check() end
     if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= first.key then
       local tryList = { { key = a.key, at = 0, reason = M.reason(S, a.key, false) } }
       for i, st in ipairs(steps) do tryList[i + 1] = st end

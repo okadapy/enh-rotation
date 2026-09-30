@@ -454,6 +454,50 @@ describe("runtime", function()
   end)
 end)
 
+describe("runtime with the real planner and a search over several frames", function()
+  it("keeps showing the current plan while a search runs and shows the new one when it is done", function()
+    install()
+    local rtm = require("runtime")
+    local env = { config = {}, region = CreateFrame("Frame"), saved = {} }
+    local rt = rtm.start({}, env)
+    rt.ctx.swing = spy()
+    rt.ctx.enemies = enemiesSpy()
+    local key, runs = "stormstrike", 0
+    local search = {
+      start = function()
+        local left, k = 3, key
+        return { run = function(job)
+          runs = runs + 1
+          left = left - 1
+          if left > 0 then return false end
+          job.result = { value = 100, steps = { { key = k, at = 0, reason = "" } } }
+          return true
+        end }
+      end,
+      evaluate = function() return nil end,
+    }
+    local realPlanner = real.planner or require("planner")
+    rt.planner = realPlanner.new({ search = search, budgetMs = 2 })
+    rtm.update(rt, 0.3) -- first slice
+    assert.are.equal(0, #rt.plan.steps)
+    rtm.update(rt, 0.016)
+    assert.are.equal(0, #rt.plan.steps)
+    rtm.update(rt, 0.016)
+    assert.are.equal("stormstrike", rt.plan.steps[1].key)
+    assert.are.equal(rt.plan, rt.tl.plan)
+    key = "lavaLash"
+    rt.pending = { kind = "target" }
+    rtm.update(rt, 0.016)
+    rtm.update(rt, 0.016)
+    assert.are.equal("stormstrike", rt.plan.steps[1].key)
+    rtm.update(rt, 0.016)
+    assert.are.equal("lavaLash", rt.plan.steps[1].key)
+    assert.are.equal(6, runs)
+    rtm.update(rt, 0.016) -- nothing left to run
+    assert.are.equal(6, runs)
+  end)
+end)
+
 describe("runtime with real neighbours #integration", function()
   it("starts, takes events and plans without errors", function()
     for _, n in ipairs(NEIGHBOURS) do package.loaded[n] = nil end

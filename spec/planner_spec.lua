@@ -148,6 +148,65 @@ describe("planner", function()
     assert.are.near(1.0, s.seen[1].inflight.flameShock, 1e-9)
   end)
 
+  -- a search that needs `slices` run() calls; the plan it finds is script.bestKey at that time
+  local function slowSearch(script, slices)
+    local s = stubSearch(script)
+    s.started = 0
+    function s.start()
+      s.started = s.started + 1
+      local left, key, value = slices, script.bestKey, script.best
+      return { run = function(job)
+        left = left - 1
+        if left > 0 then return false end
+        job.result = { value = value, steps = { { key = key, at = 0, reason = "" } } }
+        return true
+      end }
+    end
+    return s
+  end
+
+  it("with a per-frame budget the plan changes only once the search has finished", function()
+    local script = { best = 100, bestKey = "a" }
+    local s = slowSearch(script, 3)
+    local p = planner.new({ search = s, budgetMs = 2 })
+    assert.are.equal(0, #p:update(at(100)).steps) -- no plan yet
+    assert.is_false(p:work())
+    assert.is_true(p:work())
+    assert.are.equal("a", p:view(100.05).steps[1].key)
+    script.best, script.bestKey, script.evaluate = 200, "b", 100
+    assert.are.equal("a", p:update(at(100.1), { kind = "aura" }).steps[1].key)
+    assert.is_false(p:work())
+    assert.are.equal("a", p:view(100.12).steps[1].key)
+    assert.is_true(p:work())
+    assert.are.equal("b", p:view(100.15).steps[1].key)
+  end)
+
+  it("events during a running search are searched after it, not instead of it", function()
+    local script = { best = 100, bestKey = "a" }
+    local s = slowSearch(script, 4) -- every update() runs one slice
+    local p = planner.new({ search = s, budgetMs = 2 })
+    p:update(at(100))
+    p:update(at(100.02), { kind = "aura" })
+    p:update(at(100.04), { kind = "power" })
+    assert.are.equal(1, s.started)
+    assert.is_true(p:work())
+    assert.are.equal(2, s.started) -- one search for the newest state
+    assert.is_true(p:busy())
+  end)
+
+  it("pressing the planned button shows the rest of the plan at once", function()
+    local script = { best = 100, steps = { { key = "stormstrike", at = 0, reason = "" }, { key = "lavaLash", at = 1.5, reason = "" } } }
+    local s = stubSearch(script)
+    local p = planner.new({ search = s })
+    p:update(at(100))
+    local slow = slowSearch({ best = 100, bestKey = "x" }, 5)
+    p.search = setmetatable({ start = slow.start }, { __index = s })
+    p.budgetMs = 2
+    local plan = p:update(at(100.2), { kind = "cast", key = "stormstrike" })
+    assert.are.equal("lavaLash", plan.steps[1].key)
+    assert.are.near(1.3, plan.steps[1].at, 1e-9)
+  end)
+
   it("a cast event before any plan exists does not fail", function()
     local p = planner.new({ search = stubSearch({ best = 10, bestKey = "a" }) })
     assert.are.equal("a", p:update(at(100), { kind = "cast", key = "stormstrike" }).steps[1].key)

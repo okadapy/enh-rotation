@@ -59,12 +59,36 @@ describe("search.best", function()
     assert.are.equal("after swing - no clip", plan.steps[1].reason)
   end)
 
-  it("returns the best plan found so far when the time budget runs out", function()
+  -- the old wall-clock cut made the plan depend on the computer's speed (and flicker)
+  it("is never cut by the clock: a slow clock gives the same plan", function()
     stub.setup({ a = { dmg = 50, cd = 0 }, b = { dmg = 20, cd = 0 }, c = { dmg = 10, cd = 0 } })
     local t = 0
-    local plan = search.best(stub.state(), opts({ budgetMs = 2, clock = function() t = t + 1; return t end }))
-    assert.is_true(plan.timedOut)
+    local slow = search.best(stub.state(), opts({ budgetMs = 2, clock = function() t = t + 1; return t end }))
+    local plain = search.best(stub.state(), opts())
+    assert.is_false(slow.capped)
+    assert.are.equal(keys(plain), keys(slow))
+    assert.are.equal(plain.value, slow.value)
+  end)
+
+  it("returns the best plan found so far when the node cap is reached", function()
+    stub.setup({ a = { dmg = 50, cd = 0 }, b = { dmg = 20, cd = 0 }, c = { dmg = 10, cd = 0 } })
+    local plan = search.best(stub.state(), opts({ nodeCap = 4 }))
+    assert.is_true(plan.capped)
     assert.is_true(#plan.steps >= 1)
+    assert.are.equal(4, plan.nodes)
+  end)
+
+  it("a search run in slices (start/run) gives the same plan as a whole one", function()
+    stub.setup({ a = { dmg = 50, cd = 3 }, b = { dmg = 45, cd = 2 }, c = { dmg = 20, cd = 0 } })
+    local t = 0
+    local job = search.start(stub.state(), opts({ clock = function() t = t + 0.7; return t end }))
+    local slices = 0
+    while not job:run(1) do slices = slices + 1 end
+    assert.is_true(slices >= 2, "slices " .. slices)
+    local whole = search.best(stub.state(), opts())
+    assert.are.equal(keys(whole), keys(job.result))
+    assert.are.equal(whole.value, job.result.value)
+    assert.is_true(job:run(1))
   end)
 
   it("is deterministic", function()
@@ -220,6 +244,21 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.near(0, plan.steps[1].at, 1e-9)
     local v = search.evaluate(S, plan.steps, { budgetMs = 1e9 })
     assert.are.near(plan.value, v, 1e-6)
+  end)
+
+  it("level 80: a search run in 2 ms slices of a slow clock equals the whole search", function()
+    local Sc = require("scenario")
+    for i, S in ipairs({ Sc.state(80), busy({ buffs = { mw = { stacks = 3, remains = 20 } } }),
+                         busy({ spells = { flameShock = { cd = 0 }, earthShock = { cd = 0 } }, target = { fs = 0 } }) }) do
+      local whole = search.best(S)
+      local t = 0
+      local job = search.start(S, { clock = function() t = t + 0.3; return t end })
+      local n = 1
+      while not job:run(2) do n = n + 1 end
+      assert.is_true(n > 1, "state " .. i .. " ran in one slice")
+      assert.are.equal(keys(whole), keys(job.result), "state " .. i)
+      assert.are.equal(whole.value, job.result.value, "state " .. i)
+    end
   end)
 
   it("3 stacks: waits for the main-hand swing, then weaves Lightning Bolt without a clip", function()
