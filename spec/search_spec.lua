@@ -47,14 +47,16 @@ describe("search.best", function()
     for _, s in ipairs(plan.steps) do assert.is_true(s.at < search.HORIZON) end
   end)
 
-  it("a step after waitSwing is marked 'after swing - no clip'", function()
-    stub.setup({ a = { dmg = 50, cd = 0 } })
+  -- waiting for a swing is only for weaving a cast (search.WEAVE): "swing, then Bolt" is one step
+  it("a Bolt after waitSwing is marked 'after swing - no clip'", function()
+    stub.setup({ lightningBolt = { dmg = 50, cd = 0 }, a = { dmg = 60, cd = 0 } })
     local S = stub.state({ swing = 0.3, mw = 3 })
     stub.value.step = function(_, S2, dmg) return dmg + ((S2.now >= 0.3 and S2.now < 0.35) and 1000 or 0) end
     local plan = search.best(S, opts())
     stub.value.step = function(_, _, dmg) return dmg end
-    assert.are.equal("a", plan.steps[1].key)
+    assert.are.equal("lightningBolt", plan.steps[1].key)
     assert.are.near(0.31, plan.steps[1].at, 1e-9)
+    assert.are.equal("after swing - no clip", plan.steps[1].reason)
   end)
 
   it("returns the best plan found so far when the time budget runs out", function()

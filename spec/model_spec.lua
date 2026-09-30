@@ -136,11 +136,25 @@ describe("model", function()
       S.totems = { fire = { kind = "fireElemental", remains = 60 }, water = { remains = 5 } }
       assert.is_nil(model.readyIn(S, "callOfElements"))
     end)
-    it("Lightning Shield only when charges are missing", function()
+    -- the model spends no charges (only "any charge left" matters for Static Shock), so a refresh
+    -- with charges left changes nothing unless the shield runs out inside the horizon
+    it("Lightning Shield only when it is gone or runs out soon", function()
       local S = base()
       assert.is_nil(model.readyIn(S, "lightningShield"))
       S.buffs.ls.charges = 1
+      assert.is_nil(model.readyIn(S, "lightningShield"))
+      S.buffs.ls.remains = 4
       assert.are.equal(0, model.readyIn(S, "lightningShield"))
+      S.buffs.ls = { charges = 0, remains = 0 }
+      assert.are.equal(0, model.readyIn(S, "lightningShield"))
+    end)
+    it("the same fire totem is not dropped again while it outlasts what the value counts", function()
+      local S = base()
+      S.totems.fire = { kind = "magma", remains = 15 }
+      assert.is_nil(model.readyIn(S, "magmaTotem"))
+      assert.are.equal(0, model.readyIn(S, "searingTotem"))
+      S.totems.fire.remains = 5
+      assert.are.equal(0, model.readyIn(S, "magmaTotem"))
     end)
   end)
 

@@ -27,6 +27,7 @@ M.RAGE_DURATION = duration("shamanisticRage", 15)
 M.RAGE_MANA_AP = 0.15
 M.LS_DURATION = duration("lightningShield", 600)
 M.INFLIGHT = 1.0
+M.TOTEM_REDROP = 12 -- = value.TAIL: remaining totem time past this is not valued
 M.COE_WATER = 20 -- wowsims: Call of the Elements when the water totem has less than 20 s
 M.WAIT_SWING_PAD = 0.01
 M.CAST_SPELLS = { lightningBolt = true, chainLightning = true }
@@ -229,7 +230,14 @@ function M.readyIn(S, key)
     local water = S.totems.water
     if not water or (water.remains or 0) >= M.COE_WATER then return nil end
   end
-  if key == "lightningShield" and (S.buffs.ls.charges or 0) >= M.lsMaxCharges(S) then return nil end
+  if key == "lightningShield" then
+    local ls = S.buffs.ls
+    if (ls.charges or 0) >= M.lsMaxCharges(S) then return nil end
+    -- charges are not spent in the model: a refresh only matters when the shield is gone or ending
+    if (ls.charges or 0) > 0 and (ls.remains or 0) >= M.HORIZON then return nil end
+  end
+  -- the same fire totem again changes nothing while it still stands longer than value.TAIL counts
+  if M.TOTEM_KIND[key] and M.TOTEM_KIND[key] == fire.kind and (fire.remains or 0) >= M.TOTEM_REDROP then return nil end
   if (sp.cost or 0) > (S.player.mana or 0) then return nil end
   if S.player.moving and M.castTime(S, key) > 0 then return nil end
   local r = math.max(sp.cd or 0, S.castRemains or 0, S.gcdRemains or 0)

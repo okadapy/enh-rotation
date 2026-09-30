@@ -228,7 +228,7 @@ local function candidate(o, node, a, rootNow)
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
   local c = { parent = node, a = a, depth = node.depth + 1, at = at }
-  if waited and m.peekWait then
+  if (waited or node.virtual) and m.peekWait then
     -- S is a scratch state: keep what the step text needs now, rebuild the rest on demand
     c.reason = M.reason(S, a.key, afterSwing)
   else
@@ -256,13 +256,18 @@ end
 
 -- a real (allocated) state for a candidate that goes on to the next beam step
 local function materialize(o, c)
+  local parent = c.parent
   if c.waited then
-    c.S = o.model.wait(c.parent.S, c.a.readyIn)
-  else
-    local pre = c.pre
-    if not pre then pre = o.model.wait(c.parent.S, c.a.readyIn) end
-    c.S = o.model.apply(pre, c.a.key, o.horizon - c.at)
+    c.S = o.model.wait(parent.S, c.a.readyIn)
+    return
   end
+  local pre = c.pre
+  if not pre then
+    -- a "swing, then Bolt" child: its parent's state was a scratch one, rebuild it first
+    local base = parent.virtual and o.model.wait(parent.parent.S, parent.a.readyIn) or parent.S
+    pre = c.a.readyIn > M.READY_EPS and o.model.wait(base, c.a.readyIn) or base
+  end
+  c.S = o.model.apply(pre, c.a.key, o.horizon - c.at)
 end
 
 -- stands in for the state before the tail in value.step (manaSpent = 0 reads only these)
@@ -271,9 +276,16 @@ local PRE = { target = {} }
 -- CS comes from a peek (a scratch state): pad it to the horizon in place
 -- the candidate's state again, as a scratch state
 local function peekState(o, c)
-  local m = o.model
-  if c.waited then return (m.peekWait(c.parent.S, c.a.readyIn)) end
-  local pre = c.pre or m.peekWait(c.parent.S, c.a.readyIn)
+  local m, parent = o.model, c.parent
+  if c.waited then return (m.peekWait(parent.S, c.a.readyIn)) end
+  local pre = c.pre
+  if not pre then
+    if parent.virtual then
+      pre = m.peekWait(parent.parent.S, parent.a.readyIn) -- weave children have no wait of their own
+    else
+      pre = m.peekWait(parent.S, c.a.readyIn)
+    end
+  end
   return (m.peekApply(pre, c.a.key, o.horizon - c.at))
 end
 
@@ -323,20 +335,21 @@ function M.best(S, opts)
         local acts = o.model.actions(node.S)
         if node == rootNode then rootActions = acts end
         for _, a in ipairs(acts) do
-          if a.key == "waitSwing" and node == rootNode then
-            -- the first step decides what is shown: "swing, then Bolt" competes with "Bolt now" as
-            -- one step; as a bare wait it would lose the first beam cut to any button
+          if a.key == "waitSwing" then
+            -- "swing, then Bolt" competes with "Bolt now" as one step; a bare wait would lose
+            -- every beam cut to any button. The waited state is a scratch one (virtual node).
             local S0 = node.S
             if S0.now + a.readyIn - rootNow < o.horizon then
-              local S1, d = o.model.wait(S0, a.readyIn)
-              local wn = { S = S1, v = node.v + waitValue(o, S0, S1, d), steps = node.steps, depth = node.depth,
-                           waited = true, afterSwing = true, parent = node, a = a }
+              local S1, d = (o.model.peekWait or o.model.wait)(S0, a.readyIn)
+              local wn = { S = S1, v = node.v + waitValue(o, S0, S1, d), depth = node.depth,
+                           waited = true, afterSwing = true, parent = node, a = a, virtual = true }
               for _, b in ipairs(o.model.actions(S1)) do
-                if M.WEAVE[b.key] and add(wn, b) then break end
+                if M.WEAVE[b.key] and b.readyIn <= M.READY_EPS and add(wn, b) then break end
               end
             end
+          elseif add(node, a) then
+            break
           end
-          if not timedOut and add(node, a) then break end
         end
       end
       if timedOut then break end
