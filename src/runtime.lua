@@ -34,6 +34,8 @@ M.ATTACK_ID = 6603
 M.ALERT_ICONS = {
   noEnchant = "Interface\\Icons\\Spell_Nature_Cyclone",
   outOfRange = "Interface\\Icons\\Ability_Rogue_Sprint",
+  moveIn = "Interface\\Icons\\Ability_Rogue_Sprint",
+  autoAttack = "Interface\\Icons\\INV_Sword_04",
 }
 
 function M.validPlan(plan)
@@ -54,17 +56,27 @@ end
 
 function M.alert(S)
   local sp, b, w = S.spells, S.buffs, S.weapons
-  if sp.lightningShield and b.ls.charges <= 0 then
+  local t = S.target
+  local melee = t.exists and t.enemy and t.range == "melee"
+  -- in melee reach without auto-attack: no swings, no Maelstrom, no mana from Shamanistic Rage;
+  -- first, it costs more than any missing buff (recorded in game: whole fights like that)
+  if melee and S.swing and not S.swing.attacking then
+    return withIcon({ key = "autoAttack", reason = "Auto-attack is off" })
+  end
+  -- not while the cast is on its way (the aura comes a moment after the cast)
+  if sp.lightningShield and b.ls.charges <= 0 and not (S.inflight and S.inflight.lightningShield) then
     return withIcon({ key = "lightningShield", reason = "Lightning Shield missing" })
   end
   if (w.mh and not w.mh.enchant) or (w.oh and not w.oh.enchant) then
     return withIcon({ key = "noEnchant", reason = "Weapon imbue missing" })
   end
+  -- Shamanistic Rage returns mana only through melee hits: not at range, not without auto-attack
   local rage = sp.shamanisticRage
-  if rage and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2 and rage.cd <= (S.gcdRemains or 0) + 0.1 then
+  if rage and melee and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2
+    and rage.cd <= (S.gcdRemains or 0) + 0.1 then
     return withIcon({ key = "shamanisticRage", reason = "Low mana: Shamanistic Rage" })
   end
-  if S.target.exists and S.target.enemy and S.target.range == "far" then
+  if t.exists and t.enemy and t.range == "far" then
     return withIcon({ key = "outOfRange", reason = "Target out of range" })
   end
   return nil
@@ -350,7 +362,17 @@ function M.show(rt, plan, S, now)
   end
   rt.plan, rt.S = plan, S
   rt.tl:render(plan, S, now)
+  rt.tl:setAlert(rt.alert or M.idleHint(plan, S, rt.searching))
   return true
+end
+
+-- Nothing to press at 20-30 yards (solo, mana is dear): the timeline would be empty with no
+-- hint at all. The plan values the walk to melee at nothing, the player needs to be told.
+function M.idleHint(plan, S, searching)
+  local t = S and S.target
+  if searching or not (t and t.exists and t.enemy) or #plan.steps > 0 then return nil end
+  if t.range == "20" or t.range == "30" then return withIcon({ key = "moveIn", reason = "Move into melee" }) end
+  return nil
 end
 
 -- a frame without a replan: go on with the running search, show its plan once it is done
@@ -414,6 +436,7 @@ function M.step(rt, dt)
   local S = snapshot.build(rt.ctx)
   local alert = M.alert(S)
   if not alert and rt.config.showLust ~= false then alert = M.lustReady(S, now) end
+  rt.alert = alert
   rt.tl:setAlert(alert)
   if not (S.target.exists and S.target.enemy) then
     rt.plan, rt.S, rt.searching = { value = 0, steps = {} }, S, false
