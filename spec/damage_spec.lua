@@ -150,6 +150,20 @@ describe("damage", function()
       local S = s80(); S.enemies.nearby = 3
       assert.are.near((371 + 0.1 * 1200) * 0.93 * 1.1 * 3 / 2, damage.periodic(S, "magmaTotem"), 1e-6)
     end)
+    it("Fire Nova and Magma hit around the totem: the whole fight with the target in melee, " ..
+       "else only who hits the shaman in melee", function()
+      local S = s80(); S.enemies = { melee = 1, nearby = 4 }
+      assert.are.equal(4, damage.targets(S, "fireNova"))
+      assert.are.equal(4, damage.targets(S, "magmaTotem"))
+      S.target.range = "30"
+      assert.are.equal(1, damage.targets(S, "fireNova"))
+      S.enemies = { melee = 0, nearby = 4 }
+      assert.are.equal(0, damage.targets(S, "magmaTotem"))
+      assert.are.equal(0, damage.action(S, "fireNova"))
+      assert.are.equal(0, damage.periodic(S, "magmaTotem"))
+      -- Chain Lightning still jumps between the enemies of the fight
+      assert.are.equal(3, damage.targets(S, "chainLightning"))
+    end)
     it("magma dot = one pulse on one target, 10 pulses every 2 s", function()
       local S = s80(); S.enemies.nearby = 3
       local per, pulses, period = damage.dot(S, "magmaTotem")

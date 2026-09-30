@@ -211,11 +211,12 @@ end
 -- per-spell conditions besides cooldown, mana and range (nil = allowed)
 local SPECIAL = {
   lavaLash = function(S) return S.weapons.oh ~= nil end,
-  fireNova = function(S) return fireUp(S) end,
+  -- Fire Nova and Magma Totem hit only around the totem at the shaman's feet (damage.totemTargets)
+  fireNova = function(S) return fireUp(S) and damage.totemTargets(S) >= 1 end,
   searingTotem = function(S, fire) return not (fire.kind == "fireElemental" and (fire.remains or 0) > 0) end,
-  magmaTotem = function(S, fire, live)
+  magmaTotem = function(S, fire)
     if fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return false end
-    return live or ((S.enemies and S.enemies.nearby) or 0) >= 1
+    return damage.totemTargets(S) >= 1
   end,
   -- spec 5.1: Frost Shock only where it pays, i.e. without Earth Shock (same cooldown, no Stormstrike bonus)
   frostShock = function(S) return not S.spells.earthShock end,

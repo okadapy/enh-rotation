@@ -103,6 +103,21 @@ describe("model", function()
       S.totems.fire = { kind = "searing", remains = 30 }
       assert.are.equal(0, model.readyIn(S, "fireNova"))
     end)
+    it("Fire Nova and Magma Totem only with an enemy in reach of the totem at the shaman's feet", function()
+      local S = base(); S.totems.fire = { kind = "searing", remains = 30 }
+      S.target.range = "30"; S.enemies = { melee = 0, nearby = 1 }
+      assert.is_nil(model.readyIn(S, "fireNova"))
+      assert.is_nil(model.readyIn(S, "magmaTotem"))
+      S.target.range = "20"
+      assert.is_nil(model.readyIn(S, "fireNova"))
+      -- another mob hits the shaman in melee: it stands in the nova and the magma pulses
+      S.enemies = { melee = 1, nearby = 2 }
+      assert.are.equal(0, model.readyIn(S, "fireNova"))
+      assert.are.equal(0, model.readyIn(S, "magmaTotem"))
+      S.target.range = "melee"; S.enemies = { melee = 0, nearby = 1 }
+      assert.are.equal(0, model.readyIn(S, "fireNova"))
+      assert.are.equal(0, model.readyIn(S, "magmaTotem"))
+    end)
     it("does not replace Fire Elemental with Searing or Magma", function()
       local S = base(); S.totems.fire = { kind = "fireElemental", remains = 100 }
       assert.is_nil(model.readyIn(S, "magmaTotem"))
@@ -501,7 +516,8 @@ describe("model working copies (search speed)", function()
   local function states()
     local list = {}
     for _, over in ipairs({ {}, { buffs = { mw = { stacks = 3, remains = 20 } } }, { buffs = { rage = 10, ls = { charges = 0 } } },
-                           { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } } }) do
+                           { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } },
+                           { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S

@@ -105,7 +105,7 @@ function M.reason(S, key, afterSwing)
   elseif key == "flameShock" then
     return (S.target.fs or 0) <= 0 and "Flame Shock expired" or "refresh Flame Shock"
   elseif key == "fireNova" or key == "magmaTotem" then
-    local n = (S.enemies and S.enemies.nearby) or 1
+    local n = require("damage").totemTargets(S)
     if n >= 2 then return ("%d targets"):format(n) end
     return key == "fireNova" and "Fire Nova ready" or "Magma Totem down"
   elseif key == "shamanisticRage" then
