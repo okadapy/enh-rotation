@@ -84,14 +84,14 @@ describe("aura", function()
   it("has custom options with defaults in config", function()
     local host = t.c[1]
     assert.are.same({ "scale", "seconds", "icons", "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage",
-                      "showReason", "showLust", "shield", "record", "export", "printDebug" },
+                      "weave", "showReason", "showLust", "shield", "record", "export", "printDebug" },
       optionKeys(host.authorOptions))
     assert.are.same(aura.defaultConfig(), host.config)
     assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, cdFeralSpirit = 1, cdFireElemental = 1,
-                      cdShamanisticRage = 3, showReason = true, showLust = false, shield = 1,
+                      cdShamanisticRage = 3, weave = 1, showReason = true, showLust = false, shield = 1,
                       record = false, export = false, printDebug = false }, aura.defaultConfig())
     assert.are.equal("auto", host.authorOptions[4].values[1])
-    assert.are.same({ "auto", "Lightning Shield", "Water Shield" }, host.authorOptions[10].values)
+    assert.are.same({ "auto", "Lightning Shield", "Water Shield" }, host.authorOptions[11].values)
   end)
 
   it("cooldown options: auto / boss only / always / never, read by runtime in the same order", function()
@@ -108,6 +108,19 @@ describe("aura", function()
       runtime.cooldowns(aura.defaultConfig()))
     assert.are.same({ feralSpirit = "boss", fireElemental = "never", shamanisticRage = "auto" },
       runtime.cooldowns({ cdFeralSpirit = 2, cdFireElemental = 4, cdShamanisticRage = 1 }))
+  end)
+
+  it("weave option: 3+ / 5 stacks / any, read by runtime in the same order (default 3+)", function()
+    local runtime = require("runtime")
+    local opt
+    for _, o in ipairs(t.c[1].authorOptions) do if o.key == "weave" then opt = o end end
+    assert.are.same({ "3+ stacks", "5 stacks", "any (model decides)" }, opt.values)
+    assert.are.equal(1, opt.default)
+    assert.are.same({ 3, 5, 0 }, runtime.WEAVE_MINS)
+    assert.are.equal(3, runtime.weaveMin(aura.defaultConfig()))
+    assert.are.equal(3, runtime.weaveMin({}))
+    assert.are.equal(5, runtime.weaveMin({ weave = 2 }))
+    assert.are.equal(0, runtime.weaveMin({ weave = 3 }))
   end)
 
   it("round-trips through the import string", function()

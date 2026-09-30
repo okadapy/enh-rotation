@@ -128,6 +128,9 @@ describe("snapshot", function()
     install({})
     local cds = { feralSpirit = "auto", fireElemental = "boss", shamanisticRage = "always" }
     assert.are.equal(cds, snapshot.build(ctx({ cooldowns = cds })).cooldowns)
+    -- the weaving option: nil without it (the model decides, as before the option)
+    assert.is_nil(snapshot.build(ctx()).weaveMin)
+    assert.are.equal(5, snapshot.build(ctx({ weaveMin = 5 })).weaveMin)
   end)
 
   it("decides the long cooldowns' gate once per snapshot (S.cdAllowed), latched per target", function()
