@@ -10,6 +10,8 @@ M.WEIGHTS = {
 M.WEIGHTS.pvp = M.WEIGHTS.group
 
 M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses after the horizon
+M.SOLO_REGEN = 20            -- solo: seconds of drinking (lost damage) per full bar of mana
+M.MELEE_SHARE = 1.5          -- enhancement damage / auto-attack damage, for the damage-per-second estimate
 M.SUPPORT = 0.06             -- share of auto-attack damage the support totems add (Windfury, Strength of Earth...)
 M.TAIL = 12                  -- s of remaining DoT/totem/pet time worth counting: later it can simply be recast
 M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightning Bolt
@@ -29,6 +31,17 @@ local function D() return package.loaded.damage or require("damage") end
 
 local function weights(S) return M.WEIGHTS[S.mode] or M.WEIGHTS.group end
 
+-- the character's damage per second: auto attacks are about MELEE_SHARE of it
+function M.dpsEstimate(S)
+  local sw, w = S.swing, S.weapons
+  if not (sw and w) then return 0 end
+  local damage = D()
+  local dps = 0
+  if sw.mh and w.mh and (sw.mh.speed or 0) > 0 then dps = dps + damage.auto(S, "mh") / sw.mh.speed end
+  if sw.oh and w.oh and (sw.oh.speed or 0) > 0 then dps = dps + damage.auto(S, "oh") / sw.oh.speed end
+  return dps * M.MELEE_SHARE
+end
+
 -- damage points one mana point is worth; scales with the character through AP + SP
 function M.manaPrice(S)
   local p = S.player
@@ -39,6 +52,9 @@ function M.manaPrice(S)
     local scarcity = 1 + 3 * (1 - frac) * (1 - frac)
     local rage = S.spells and S.spells.shamanisticRage
     if not rage or (rage.cd or 0) > 0 then scarcity = scarcity * M.RAGE_SCARCITY end
+    -- mana spent now is drunk back later: a full bar costs SOLO_REGEN seconds of damage
+    local dps = M.dpsEstimate(S)
+    if dps > 0 and (p.manaMax or 0) > 0 then return w.mana * scarcity * dps * M.SOLO_REGEN / p.manaMax end
     return w.mana * scarcity * ref
   end
   local ttd = S.target and S.target.ttd

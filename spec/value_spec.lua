@@ -54,6 +54,13 @@ describe("value.manaPrice", function()
     assert.is_true(value.manaPrice(low) > value.manaPrice(full) * 2)
   end)
 
+  -- solo, mana that runs out costs drinking time: a full bar is worth SOLO_REGEN seconds of damage
+  it("solo: a full bar of mana is worth SOLO_REGEN seconds of the character's damage", function()
+    local S = fixtures.state({ mode = "solo", player = { mana = 10000, manaMax = 10000 }, spells = { shamanisticRage = { cd = 0 } } })
+    local dps = (damage.auto(S, "mh") / S.swing.mh.speed + damage.auto(S, "oh") / S.swing.oh.speed) * value.MELEE_SHARE
+    assert.are.near(value.SOLO_REGEN * dps, value.manaPrice(S) * 10000, 1e-6)
+  end)
+
   it("solo: mana is dearer while Shamanistic Rage is on cooldown", function()
     local ready = fixtures.state({ mode = "solo", spells = { shamanisticRage = { cd = 0 } } })
     local onCd = fixtures.state({ mode = "solo", spells = { shamanisticRage = { cd = 30 } } })

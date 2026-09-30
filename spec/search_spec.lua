@@ -188,6 +188,15 @@ describe("search on the real model (wowsims rules) #integration", function()
     for _, l in ipairs(limits) do assert.is_true(l > 0 and l <= search.HORIZON + 1e-9) end
   end)
 
+  it("mana that Shamanistic Rage returns while waiting counts too", function()
+    local S = busy({ mode = "solo", spells = { lavaLash = { cd = 0 }, shamanisticRage = { cd = 0 } },
+                     swing = { mh = { next = 3.2 }, oh = { next = 3.4 } } })
+    local o = { budgetMs = 1e9 }
+    local without = search.evaluate(S, { { key = "lavaLash", at = 0, reason = "" } }, o)
+    local with = search.evaluate(S, { { key = "lavaLash", at = 0, reason = "" }, { key = "shamanisticRage", at = 1.5, reason = "" } }, o)
+    assert.is_true(with > without + 100, ("with %.0f, without %.0f"):format(with, without))
+  end)
+
   it("never plans a cast that would end after the horizon", function()
     local S = busy({ talents = { maelstromWeapon = 0 }, spells = { lightningBolt = { cd = 0 } } })
     local ct = require("model").castTime(S, "lightningBolt")

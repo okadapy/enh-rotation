@@ -130,6 +130,11 @@ local function defaults(opts)
   }
 end
 
+-- waiting spends no mana, but Shamanistic Rage returns some on every swing
+local function waitValue(o, S, S1, dmg)
+  return o.value.step(S, S1, dmg, (S.player.mana or 0) - (S1.player.mana or 0))
+end
+
 -- A cast must end inside the horizon: its damage counts at once, while what it costs (swings
 -- held back or reset after it) would fall past the horizon and never be paid.
 local function fitsHorizon(o, S, key, at)
@@ -144,7 +149,7 @@ local function finalScore(o, node, rootNow)
   if t < o.horizon then
     -- the padded state is thrown away: use the model's allocation-free scratch when it has one
     local S2, dmg = (o.model.peekWait or o.model.wait)(S, o.horizon - t)
-    v = v + o.value.step(S, S2, dmg, 0)
+    v = v + waitValue(o, S, S2, dmg)
     S = S2
   end
   return v + o.value.terminal(S)
@@ -155,14 +160,14 @@ local function extend(o, node, a, rootNow)
   if a.key == "waitSwing" then
     if node.waited or S.now + a.readyIn - rootNow >= o.horizon then return nil end
     local S1, d = o.model.wait(S, a.readyIn)
-    return { S = S1, v = v + o.value.step(S, S1, d, 0), steps = node.steps, depth = node.depth,
+    return { S = S1, v = v + waitValue(o, S, S1, d), steps = node.steps, depth = node.depth,
              waited = true, afterSwing = true }
   end
   local afterSwing = node.afterSwing
   if a.readyIn > M.READY_EPS then
     if S.now + a.readyIn - rootNow >= o.horizon then return nil end
     local S1, d = o.model.wait(S, a.readyIn)
-    v = v + o.value.step(S, S1, d, 0)
+    v = v + waitValue(o, S, S1, d)
     S = S1
     afterSwing = false
   end
@@ -206,7 +211,7 @@ local function candidate(o, node, a, rootNow)
   if a.key == "waitSwing" then
     if node.waited or S.now + a.readyIn - rootNow >= o.horizon then return nil end
     local S1, d = peekWait(S, a.readyIn)
-    local c = { parent = node, a = a, v = v + o.value.step(S, S1, d, 0), depth = node.depth,
+    local c = { parent = node, a = a, v = v + waitValue(o, S, S1, d), depth = node.depth,
                 waited = true, afterSwing = true }
     return c, S1
   end
@@ -215,7 +220,7 @@ local function candidate(o, node, a, rootNow)
   if a.readyIn > M.READY_EPS then
     if S.now + a.readyIn - rootNow >= o.horizon then return nil end
     local S1, d = peekWait(S, a.readyIn)
-    v = v + o.value.step(S, S1, d, 0)
+    v = v + waitValue(o, S, S1, d)
     S = S1
     afterSwing = false
     waited = true
@@ -277,11 +282,13 @@ local function scoreFrom(o, CS, v, rootNow)
   if t < o.horizon then
     if o.model.peekApply and o.model.advance then
       PRE.mode, PRE.target.hp, PRE.target.hpMax = CS.mode, CS.target.hp, CS.target.hpMax
+      local mana0 = CS.player.mana or 0
+      local price = o.value.manaPrice and o.value.manaPrice(CS) or 0 -- before the state moves on
       local dmg = o.model.advance(CS, o.horizon - t)
-      v = v + o.value.step(PRE, CS, dmg, 0)
+      v = v + o.value.step(PRE, CS, dmg, 0) - (mana0 - (CS.player.mana or 0)) * price
     else
       local S2, dmg = o.model.wait(CS, o.horizon - t)
-      v = v + o.value.step(CS, S2, dmg, 0)
+      v = v + waitValue(o, CS, S2, dmg)
       CS = S2
     end
   end
@@ -322,7 +329,7 @@ function M.best(S, opts)
             local S0 = node.S
             if S0.now + a.readyIn - rootNow < o.horizon then
               local S1, d = o.model.wait(S0, a.readyIn)
-              local wn = { S = S1, v = node.v + o.value.step(S0, S1, d, 0), steps = node.steps, depth = node.depth,
+              local wn = { S = S1, v = node.v + waitValue(o, S0, S1, d), steps = node.steps, depth = node.depth,
                            waited = true, afterSwing = true, parent = node, a = a }
               for _, b in ipairs(o.model.actions(S1)) do
                 if M.WEAVE[b.key] and add(wn, b) then break end
