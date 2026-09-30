@@ -211,7 +211,7 @@ function G.install(cfg)
   _G.UnitCastingInfo = function(u)
     local c = u == "player" and cfg.casting
     if not c then return nil end
-    return c.name, nil, nil, "icon", c.startMs, c.endMs, false, 1, false
+    return c.name, nil, nil, "icon", c.startMs, c.endMs, false, c.castID or 1, false
   end
   _G.GetTotemInfo = function(slot)
     local t = (cfg.totems or {})[slot]

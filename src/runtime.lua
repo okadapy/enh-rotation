@@ -94,7 +94,8 @@ function M.report(rt, msg)
 end
 
 function M.mark(rt, kind, key)
-  if not rt.pending or M.PRIORITY[kind] > M.PRIORITY[rt.pending.kind] then
+  local p = rt.pending
+  if not p or M.PRIORITY[kind] > M.PRIORITY[p.kind] or (kind == p.kind and key and not p.key) then
     rt.pending = { kind = kind, key = key }
   end
 end
@@ -104,28 +105,39 @@ local function mwNow(ctx, now)
   return a.mw and a.mw.count or 0
 end
 
-function M.onCast(rt, event, key, now)
+-- the event belongs to the tracked hard cast (castID = 4th argument of UNIT_SPELLCAST_* in 3.3.5a)
+local function ownCast(rt, key, castID)
+  local c = rt.casting
+  return c and c.key == key and (castID == nil or c.id == nil or castID == c.id)
+end
+
+function M.onCast(rt, event, key, now, castID)
   local ctx = rt.ctx
   if event == "UNIT_SPELLCAST_START" then
-    local _, _, _, _, startMs, endMs = UnitCastingInfo("player")
+    local _, _, _, _, startMs, endMs, _, id = UnitCastingInfo("player")
     local castTime = (startMs and endMs) and (endMs - startMs) / 1000 or 0
-    rt.casting = { key = key, mw = mwNow(ctx, now) }
+    rt.casting = { key = key, mw = mwNow(ctx, now), id = castID or id }
     ctx.swing:onCastStart(now, key, rt.casting.mw, castTime)
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-    if rt.casting and rt.casting.key == key then
+    if ownCast(rt, key, castID) then
       ctx.swing:onCastEnd(now, key, rt.casting.mw, true)
       rt.casting = nil
-    else
+    elseif (spells.byKey[key].castBase or 0) <= 0 then
+      -- a 5-stack Lightning Bolt is instant too, but it is no sample of an instant spell
       ctx.swing:onInstant(now, key)
     end
     ctx.inflight[key] = now + 1
     if key == "feralSpirit" then ctx.wolvesUntil = now + M.WOLVES end
   elseif event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
-    if rt.casting and rt.casting.key == key then
+    -- FAILED also comes for a button pressed during the own cast ("Another action is in progress")
+    local stillCasting = event == "UNIT_SPELLCAST_FAILED" and castID == nil and UnitCastingInfo("player") ~= nil
+    if ownCast(rt, key, castID) and not stillCasting then
       ctx.swing:onCastEnd(now, key, rt.casting.mw, false)
       rt.casting = nil
     end
     ctx.inflight[key] = nil
+    M.mark(rt, "cast") -- replan, but nothing was cast
+    return
   elseif event == "UNIT_SPELLCAST_DELAYED" then
     local endMs = select(6, UnitCastingInfo("player"))
     if endMs and rt.casting and rt.casting.key == key then ctx.swing:onCastDelayed(now, endMs / 1000) end
@@ -170,10 +182,10 @@ function M.onEvent(rt, event, ...)
   if event == "COMBAT_LOG_EVENT_UNFILTERED" then
     M.onCombatLog(rt, now, ...)
   elseif event:sub(1, 15) == "UNIT_SPELLCAST_" then
-    local unit, name = ...
+    local unit, name, _, castID = ...
     if unit ~= "player" then return end
     local key = ctx.cache.keyByName[name]
-    if key then M.onCast(rt, event, key, now) end
+    if key then M.onCast(rt, event, key, now, castID) end
   elseif event == "UNIT_AURA" then
     local unit = ...
     if unit == "player" or unit == "target" then M.mark(rt, "aura") end
