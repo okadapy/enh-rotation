@@ -151,7 +151,26 @@ describe("search.signature and reason", function()
     stub.setup({})
     assert.are.equal("5 stacks: instant", search.reason(stub.state({ mw = 5 }), "lightningBolt", false))
     assert.are.equal("3 stacks, fits before swing", search.reason(stub.state({ mw = 3 }), "lightningBolt", true))
-    assert.are.equal("3 stacks: hard-cast", search.reason(stub.state({ mw = 3 }), "lightningBolt", false))
+    -- the cast (2.5 s x 0.4 = 1 s, + latency) against the next main-hand swing
+    assert.are.equal("3 stacks, fits before swing", search.reason(stub.state({ mw = 3, swing = 1.5 }), "lightningBolt", false))
+    assert.are.equal("3 stacks: delays swing", search.reason(stub.state({ mw = 3, swing = 0.6 }), "lightningBolt", true))
+    local S = stub.state({ mw = 3, swing = 1.05 })
+    S.latency = 0.1
+    assert.are.equal("3 stacks: delays swing", search.reason(S, "lightningBolt", false))
+    -- the off hand is held back by a cast too
+    S = stub.state({ mw = 4, swing = 1.5 })
+    S.swing.oh = { next = 0.2, speed = 2 }
+    assert.are.equal("4 stacks: delays swing", search.reason(S, "chainLightning", false))
+    S.swing.oh.next = 1.9
+    assert.are.equal("4 stacks, fits before swing", search.reason(S, "chainLightning", false))
+    assert.are.equal("1 stack, fits before swing", search.reason(stub.state({ mw = 1, swing = 3 }), "lightningBolt", false))
+    assert.are.equal("1 stack: delays swing", search.reason(stub.state({ mw = 1, swing = 1 }), "lightningBolt", false))
+    -- no stacks: the cast resets the swing timer whenever it ends
+    assert.are.equal("0 stacks: resets swing", search.reason(stub.state({ mw = 0, swing = 9 }), "lightningBolt", true))
+    -- not attacking: no swing to fit before
+    S = stub.state({ mw = 2 })
+    S.swing.attacking = false
+    assert.are.equal("2 stacks: hard-cast", search.reason(S, "lightningBolt", false))
     assert.are.equal("Flame Shock not ticking", search.reason(stub.state({ fs = 0 }), "flameShock", false))
     assert.are.equal("refresh Flame Shock", search.reason(stub.state({ fs = 4 }), "flameShock", false))
   end)
@@ -168,9 +187,9 @@ describe("search.signature and reason", function()
     local S = stub.state({ mw = 5 })
     S.target.range = "30"
     assert.are.equal("5 stacks: instant", search.reason(S, "lightningBolt", false))
-    S = stub.state({ mw = 2 })
+    S = stub.state({ mw = 2, swing = 0.5 })
     S.target.range = "melee"
-    assert.are.equal("2 stacks: hard-cast", search.reason(S, "lightningBolt", false))
+    assert.are.equal("2 stacks: delays swing", search.reason(S, "lightningBolt", false))
   end)
 
   it("Earth Shock says whether Flame Shock is ticking", function()
@@ -215,15 +234,17 @@ describe("search.signature and reason", function()
     local keys = { "lightningBolt", "chainLightning", "flameShock", "earthShock", "frostShock", "searingTotem",
                    "magmaTotem", "fireNova", "shamanisticRage", "lightningShield", "stormstrike", "lavaLash",
                    "fireElemental", "feralSpirit", "callOfElements" }
-    for _, mw in ipairs({ 0, 4, 5 }) do
+    for _, mw in ipairs({ 0, 1, 4, 5 }) do
       for _, fs in ipairs({ 0, 5 }) do
         for _, range in ipairs({ "melee", "30" }) do
           for _, nearby in ipairs({ 1, 12 }) do
             for _, mana in ipairs({ 100, 1000 }) do
               for _, after in ipairs({ false, true }) do
-                local S = stub.state({ mw = mw, fs = fs })
+                -- a cast that fits before the swing, one that delays it, no swings at all
+                local S = stub.state({ mw = mw, fs = fs, swing = nearby == 1 and 0.1 or 99 })
                 S.target.exists, S.target.enemy, S.target.range = true, true, range
                 S.enemies.nearby, S.player.mana = nearby, mana
+                S.swing.attacking = not (after and mana == 100)
                 for _, k in ipairs(keys) do
                   local r = search.reason(S, k, after)
                   assert.is_true(#r <= 28, k .. ": " .. r)
