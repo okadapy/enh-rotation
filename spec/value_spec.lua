@@ -209,13 +209,60 @@ describe("value.terminal", function()
     assert.are.near(5 * damage.periodic(wolves, "feralSpirit") * value.DISCOUNT, value.terminal(wolves) - value.terminal(none), 1e-6)
   end)
 
-  it("remaining totem and DoT time counts only up to TAIL seconds: the button can be pressed again later", function()
+  it("remaining totem time counts only up to TAIL seconds: the totem can be dropped again later", function()
     local tail = base({ totems = { fire = { kind = "searing", remains = value.TAIL } } })
     local long = base({ totems = { fire = { kind = "searing", remains = 50 } } })
     assert.is_true(value.TAIL >= 10 and value.TAIL < 20)
     assert.are.near(value.terminal(tail), value.terminal(long), 1e-6)
-    local fs = base({ target = { fs = value.TAIL + 6, ttd = 60 } })
-    assert.are.near(value.TAIL * damage.periodic(fs, "flameShock") * value.DISCOUNT, value.terminal(fs) - value.terminal(base()), 1e-6)
+  end)
+
+  -- stub damage: Earth Shock 1800, Flame Shock 900 + 100 dps; the shock cooldown is 6 s
+  describe("Flame Shock and the shock slot (a recast overwrites the DoT)", function()
+    local function fs18() damage.dot = function(_, key) if key == "flameShock" then return 300, 6, 3 end return 0, 0, 1 end end
+    -- average shock press when Flame Shock (duration d) is kept up: one Flame Shock, the rest Earth Shocks
+    local function cycle(d) local n = d / 6; return (900 + 100 * d + (n - 1) * 1800) / n end
+
+    it("the whole remaining DoT counts, not only TAIL seconds: a recast cannot add to it", function()
+      fs18()
+      local long = base({ target = { fs = 17, ttd = 60 } })
+      local short = base({ target = { fs = 5, ttd = 60 } })
+      assert.is_true(17 > value.TAIL)
+      -- both far from expiry: the shock slot stays Earth Shock in both
+      assert.are.near(12 * 100 * value.DISCOUNT, value.terminal(long) - value.terminal(short), 1e-6)
+    end)
+
+    it("a ready shock with the DoT gone is worth the average press of the Flame Shock cycle", function()
+      fs18()
+      local ready = base({ target = { fs = 0, ttd = 60 } })
+      local onCd = base({ target = { fs = 0, ttd = 60 }, spells = { fireNova = { cd = 10 }, earthShock = { cd = 6 }, flameShock = { cd = 6 } } })
+      -- (900 + 1800 + 2 x 1800) / 3 = 2100 > Earth Shock 1800
+      assert.are.near(cycle(18) * value.DISCOUNT, value.terminal(ready) - value.terminal(onCd), 1e-6)
+    end)
+
+    it("ticks a recast would clip add nothing: refreshing now or at expiry ends in the same worth", function()
+      fs18()
+      local gone = base({ target = { fs = 0, ttd = 60 } })
+      local ending = base({ target = { fs = 2, ttd = 60 } })
+      -- 2 s left: 2100 - 200 > 1800, the slot is still the recast, which loses those 2 s again
+      assert.are.near(value.terminal(gone), value.terminal(ending), 1e-6)
+    end)
+
+    it("ticks worth more than the recast's gain over Earth Shock keep the Earth Shock", function()
+      fs18()
+      local gone = base({ target = { fs = 0, ttd = 60 } })
+      local running = base({ target = { fs = 5, ttd = 60 } })
+      -- 5 s x 100 against 2100 - 1800 = 300: the slot is Earth Shock, the DoT keeps its 500
+      assert.are.near((500 + 1800 - cycle(18)) * value.DISCOUNT, value.terminal(running) - value.terminal(gone), 1e-6)
+    end)
+
+    it("no Flame Shock known or no live target: the shock slot is Earth Shock", function()
+      fs18()
+      local noFs = base({ target = { fs = 0, ttd = 60 } })
+      noFs.spells.flameShock = nil
+      local onCd = base({ target = { fs = 0, ttd = 60 }, spells = { fireNova = { cd = 10 }, earthShock = { cd = 6 } } })
+      onCd.spells.flameShock = nil
+      assert.are.near(1800 * value.DISCOUNT, value.terminal(noFs) - value.terminal(onCd), 1e-6)
+    end)
   end)
 
   it("support totems (the water slot stands for the set) are worth a share of auto-attack damage", function()
