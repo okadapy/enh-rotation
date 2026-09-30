@@ -203,17 +203,116 @@ describe("runtime", function()
     assert.are.equal(2, #calls)
   end)
 
-  it("stops for good after an error instead of failing every frame", function()
+  it("goes on after a single error and says it once", function()
     local rt = start()
     local boom = true
-    rt.planner = { update = function() if boom then boom = false; error("boom") end; return PLAN end }
-    assert.has_error(function() rt.frame.scripts.OnUpdate(rt.frame, 0.3) end)
-    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    rt.planner = { update = function() if boom then boom = false; error("boom", 0) end; return PLAN end }
+    assert.is_false(rt.frame.scripts.OnUpdate(rt.frame, 0.3) or false)
     assert.are.equal(1, #G.printed)
-    assert.truthy(G.printed[1]:find("stopped after an error", 1, true))
+    assert.are.equal("|cffff5555EnhRot|r error: boom", G.printed[1])
+    assert.are.equal(1, rt.counters.errors)
+    assert.is_nil(rt.stopped)
+    assert.is_not_nil(rt.frame.scripts.OnUpdate)
+    assert.is_true(rt.frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+    -- the planner starts afresh and plans again
+    local calls = 0
+    rt.planner = { update = function() calls = calls + 1; return PLAN end }
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(1, calls)
+    assert.are.equal("stormstrike", rt.plan.steps[1].key)
+    assert.are.equal(1, #G.printed)
+    -- one long-lived coroutine per guarded function, not one per frame
+    local co = rt.guards[runtime.step]
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(co, rt.guards[runtime.step])
+    assert.are.equal("suspended", coroutine.status(co))
+  end)
+
+  it("counts a timeline error and starts the timeline again", function()
+    local rt = start()
+    rt.tl:stop()
+    rt.tl.onError()
+    assert.are.equal("|cffff5555EnhRot|r error: timeline error", G.printed[1])
+    assert.is_true(rt.tl.frame.shown)
+    assert.is_nil(rt.stopped)
+  end)
+
+  it("says the same error once, and stops after too many in a short time", function()
+    local rt = start()
+    local fails = 0
+    local function broken() return { update = function() fails = fails + 1; error("again", 0) end } end
+    for i = 1, runtime.MAX_ERRORS - 1 do
+      rt.planner = broken()
+      rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+      assert.is_nil(rt.stopped)
+    end
+    assert.are.equal(1, #G.printed)
+    rt.planner = broken()
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(runtime.MAX_ERRORS, fails)
+    assert.is_true(rt.stopped)
+    assert.are.equal(2, #G.printed)
+    assert.truthy(G.printed[2]:find("stopped after an error", 1, true))
     assert.is_nil(rt.frame.scripts.OnUpdate)
     assert.are.same({}, rt.frame.events)
     assert.is_false(rt.tl.frame.shown)
+  end)
+
+  it("does not stop for errors spread over a longer time", function()
+    local rt = start()
+    for i = 1, runtime.MAX_ERRORS * 2 do
+      G.cfg.now = 100 + i * (runtime.ERROR_WINDOW / 2)
+      rt.planner = { update = function() error("rare", 0) end }
+      rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    end
+    assert.is_nil(rt.stopped)
+    assert.are.equal(runtime.MAX_ERRORS * 2, rt.counters.errors)
+  end)
+
+  it("survives an error in an event handler and in a running search job", function()
+    local rt = start()
+    local swing = rt.ctx.swing
+    rt.ctx.swing = { onAttack = function() error("event boom", 0) end }
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_ENTER_COMBAT")
+    assert.are.equal("|cffff5555EnhRot|r error: event boom", G.printed[1])
+    rt.ctx.swing = swing
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_ENTER_COMBAT")
+    assert.are.equal("swing", rt.pending.kind)
+    -- a search coroutine that dies raises its error again from job:run
+    local job = coroutine.create(function() error("search boom", 0) end)
+    rt.planner = { update = function() return PLAN end, busy = function() return true end,
+                   work = function() local ok, e = coroutine.resume(job); if not ok then error(e, 0) end end,
+                   view = function() return PLAN end }
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.is_true(rt.searching)
+    rt.frame.scripts.OnUpdate(rt.frame, 0.01)
+    assert.are.equal("|cffff5555EnhRot|r error: search boom", G.printed[2])
+    assert.is_false(rt.searching)
+    assert.is_nil(rt.stopped)
+    assert.is_nil(rt.planner.work)
+  end)
+
+  it("starts only on a WotLK 3.3.5a client", function()
+    install()
+    runtime.buildWarned = nil
+    _G.GetBuildInfo = function() return "3.3.5", "12340", "Jun 24 2010", 30300 end
+    assert.is_true((runtime.supported()))
+    local env = { config = {}, region = CreateFrame("Frame"), saved = {} }
+    assert.is_not_nil(runtime.start(env.config, env))
+    _G.GetBuildInfo = function() return "10.2.0", "52188", "Nov 1 2023", 100200 end
+    local ok, msg = runtime.supported()
+    assert.is_false(ok)
+    assert.truthy(msg:find("supports only WotLK 3.3.5a (build 30300); this client is 10.2.0", 1, true))
+    G.printed = {}
+    local env2 = { config = {}, region = CreateFrame("Frame"), saved = {} }
+    assert.is_nil(runtime.start(env2.config, env2))
+    assert.is_nil(runtime.start(env2.config, env2))
+    assert.is_nil(env2.rt)
+    assert.are.equal(1, #G.printed)
+    assert.truthy(G.printed[1]:find("supports only WotLK 3.3.5a", 1, true))
+    _G.GetBuildInfo = nil
+    runtime.buildWarned = nil
+    assert.is_true((runtime.supported()))
   end)
 
   it("feeds own swings and extra attacks to the swing clock", function()
