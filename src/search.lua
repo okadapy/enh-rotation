@@ -5,6 +5,9 @@ M.BEAM = 6
 M.DEPTH = 4
 M.BUDGET_MS = 2
 M.READY_EPS = 0.05
+M.WEAVE = { lightningBolt = true, chainLightning = true } -- what waiting for a swing is for
+M.NOW_SLOTS = 3 -- beam places kept for "press now" children
+M.IDLE_MIN = 1.0 -- a plan whose first button waits this long gets a button tried in front of it
 
 M.REASONS = {
   stormstrike = "Stormstrike: +20% nature",
@@ -285,26 +288,48 @@ local function scoreFrom(o, CS, v, rootNow)
   return v + o.value.terminal(CS)
 end
 
+local fillIdleStart
+
 function M.best(S, opts)
   local o = defaults(opts)
   local start = o.clock()
   S = root(S)
   local rootNow = S.now
-  local frontier = { { S = S, v = 0, steps = {}, depth = 0 } }
+  local rootNode = { S = S, v = 0, steps = {}, depth = 0 }
+  local rootActions = {}
+  local frontier = { rootNode }
   local best, bestNode = -math.huge, nil
   local timedOut = false
   for _ = 1, o.depth * 2 do
     local children = {}
+    local function add(node, a)
+      local c, CS = candidate(o, node, a, rootNow)
+      if not c then return false end
+      c.score = scoreFrom(o, CS, c.v, rootNow)
+      if (not c.waited or #stepsOf(node) > 0) and c.score > best then best, bestNode = c.score, c end
+      children[#children + 1] = c
+      if o.clock() - start > o.budgetMs then timedOut = true end
+      return timedOut
+    end
     for _, node in ipairs(frontier) do
       if node.depth < o.depth then
-        for _, a in ipairs(o.model.actions(node.S)) do
-          local c, CS = candidate(o, node, a, rootNow)
-          if c then
-            c.score = scoreFrom(o, CS, c.v, rootNow)
-            if (not c.waited or #stepsOf(node) > 0) and c.score > best then best, bestNode = c.score, c end
-            children[#children + 1] = c
-            if o.clock() - start > o.budgetMs then timedOut = true; break end
+        local acts = o.model.actions(node.S)
+        if node == rootNode then rootActions = acts end
+        for _, a in ipairs(acts) do
+          if a.key == "waitSwing" and node == rootNode then
+            -- the first step decides what is shown: "swing, then Bolt" competes with "Bolt now" as
+            -- one step; as a bare wait it would lose the first beam cut to any button
+            local S0 = node.S
+            if S0.now + a.readyIn - rootNow < o.horizon then
+              local S1, d = o.model.wait(S0, a.readyIn)
+              local wn = { S = S1, v = node.v + o.value.step(S0, S1, d, 0), steps = node.steps, depth = node.depth,
+                           waited = true, afterSwing = true, parent = node, a = a }
+              for _, b in ipairs(o.model.actions(S1)) do
+                if M.WEAVE[b.key] and add(wn, b) then break end
+              end
+            end
           end
+          if not timedOut and add(node, a) then break end
         end
       end
       if timedOut then break end
@@ -316,11 +341,14 @@ function M.best(S, opts)
     end)
     -- best first; a state already in the beam (same signature) is skipped. Signatures are only
     -- needed for the few children looked at here, so they are taken from rebuilt states.
+    -- At most beam - NOW_SLOTS places go to children that first wait: "button now, the big one
+    -- later" must not lose the cut to a row of "wait, then the big one" (every 1-step chain idles
+    -- to the horizon, so pressing a small button now looks worse than it is).
     frontier = {}
     local taken = {}
-    for i = 1, #children do
-      if #frontier >= o.beam then break end
-      local c = children[i]
+    local later, maxLater = 0, o.beam - math.min(o.beam, M.NOW_SLOTS)
+    local skipped = {}
+    local function take(c)
       local sig
       if c.depth < o.depth or not o.model.peekApply then
         materialize(o, c)
@@ -329,21 +357,36 @@ function M.best(S, opts)
         sig = M.signature(peekState(o, c)) -- never expanded: no real state needed
       end
       if c.waited then sig = sig .. "w" end
-      if not taken[sig] then
-        taken[sig] = true
-        frontier[#frontier + 1] = c
+      if taken[sig] then return end
+      taken[sig] = true
+      frontier[#frontier + 1] = c
+    end
+    for i = 1, #children do
+      if #frontier >= o.beam then break end
+      local c = children[i]
+      local waits = c.waited or c.a.readyIn > M.READY_EPS
+      if waits and later >= maxLater then
+        skipped[#skipped + 1] = c
+      else
+        local n = #frontier
+        take(c)
+        if waits and #frontier > n then later = later + 1 end
       end
+    end
+    -- not enough buttons to press now: the waiting ones fill the rest
+    for i = 1, #skipped do
+      if #frontier >= o.beam then break end
+      take(skipped[i])
     end
     if #frontier == 0 then break end
   end
   if not bestNode then return { value = 0, steps = {}, timedOut = timedOut } end
-  return { value = best, steps = stepsOf(bestNode), timedOut = timedOut }
+  local steps = stepsOf(bestNode)
+  if not timedOut then best, steps = fillIdleStart(o, S, best, steps, rootActions) end
+  return { value = best, steps = steps, timedOut = timedOut }
 end
 
--- replay an existing plan on a fresh state; nil if a step is no longer possible
-function M.evaluate(S, steps, opts)
-  local o = defaults(opts)
-  S = root(S)
+local function evaluateFrom(o, S, steps)
   local rootNow = S.now
   local node = { S = S, v = 0, steps = {}, depth = 0 }
   for _, st in ipairs(steps) do
@@ -357,6 +400,27 @@ function M.evaluate(S, steps, opts)
   end
   if #node.steps == 0 then return nil end
   return finalScore(o, node, rootNow), node.steps
+end
+
+-- replay an existing plan on a fresh state; nil if a step is no longer possible
+function M.evaluate(S, steps, opts)
+  return evaluateFrom(defaults(opts), root(S), steps)
+end
+
+-- The plan starts with a wait of at least a GCD: try each button that can be pressed now in
+-- front of it (the beam compares chains by button count and may have cut "small button now").
+function fillIdleStart(o, S, value, steps, actions)
+  local first = steps[1]
+  if not first or first.at < M.IDLE_MIN then return value, steps end
+  for _, a in ipairs(actions) do
+    if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= first.key then
+      local tryList = { { key = a.key, at = 0, reason = M.reason(S, a.key, false) } }
+      for i, st in ipairs(steps) do tryList[i + 1] = st end
+      local v, st = evaluateFrom(o, S, tryList)
+      if v and v > value and st[1].key == a.key then value, steps = v, st end
+    end
+  end
+  return value, steps
 end
 
 return M

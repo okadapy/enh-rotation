@@ -196,6 +196,21 @@ describe("search on the real model (wowsims rules) #integration", function()
     end
   end)
 
+  -- beam search compares chains by the number of buttons, so "small button now, big ones later"
+  -- can lose the cut to "big ones later" although it is the better plan; best() tries such a
+  -- button in front of a plan that starts with a wait
+  it("uses the idle time before the first button for a useful one (Lightning Shield)", function()
+    local S = busy({
+      buffs = { ls = { charges = 0, remains = 0 } },
+      spells = { stormstrike = { cd = 4 }, earthShock = { cd = 3 }, flameShock = { cd = 3 }, lavaLash = { cd = 3 }, fireNova = { cd = 4 } },
+    })
+    local plan = search.best(S, { budgetMs = 1e9 })
+    assert.are.equal("lightningShield", plan.steps[1].key)
+    assert.are.near(0, plan.steps[1].at, 1e-9)
+    local v = search.evaluate(S, plan.steps, { budgetMs = 1e9 })
+    assert.are.near(plan.value, v, 1e-6)
+  end)
+
   it("3 stacks: waits for the main-hand swing, then weaves Lightning Bolt without a clip", function()
     local S = busy({
       buffs = { mw = { stacks = 3, remains = 20 } },
