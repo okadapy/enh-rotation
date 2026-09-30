@@ -138,7 +138,7 @@ describe("snapshot", function()
     assert.is_nil(snapshot.build(ctx()).cdAllowed) -- no options: nothing decided (model decides as before)
     local S = snapshot.build(c)
     assert.are.same({ feralSpirit = true, fireElemental = false, shamanisticRage = true }, S.cdAllowed)
-    assert.are.equal("Creature-7", c.cdLatch.guid)
+    assert.are.equal("Creature-7", c.cdLatch[1].guid)
     ttd = 20 -- below 22.5, above 22.5 x 0.75: the latch holds
     assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
     ttd = 16 -- below 16.875: released
@@ -147,14 +147,17 @@ describe("snapshot", function()
     assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
     ttd = 23
     assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
-    -- another target: a fresh latch
+    -- another target: a fresh latch, the first one kept
     install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-8" } })
     ttd = 20
     assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
-    assert.are.equal("Creature-8", c.cdLatch.guid)
+    assert.are.equal("Creature-8", c.cdLatch[1].guid)
+    assert.are.equal("Creature-7", c.cdLatch[2].guid)
+    install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-7" } })
+    assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
   end)
 
-  it("cooldownGate: latch per GUID, reset on a target change or without options", function()
+  it("cooldownGate: latch per GUID, cleared without options", function()
     local model = require("model")
     local need = model.COOLDOWN_TTD.feralSpirit
     local function S(ttd, boss)
@@ -175,6 +178,7 @@ describe("snapshot", function()
     assert.is_nil(snapshot.cooldownGate(c, { target = { ttd = 30 } }, "B"))
     assert.is_nil(c.cdLatch)
     assert.is_false(snapshot.cooldownGate(c, S(21), "B").feralSpirit)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "A").feralSpirit) -- no options dropped A's too
     -- no target (nil GUID): nothing latches
     snapshot.cooldownGate(c, S(30), nil)
     assert.is_false(snapshot.cooldownGate(c, S(21), nil).feralSpirit)
@@ -182,6 +186,50 @@ describe("snapshot", function()
     local b = snapshot.cooldownGate(c, S(1, true), "Boss")
     assert.is_true(b.feralSpirit)
     assert.is_true(b.fireElemental)
+  end)
+
+  it("cooldownGate: latches for the last LATCH_TARGETS GUIDs", function()
+    assert.are.equal(3, snapshot.LATCH_TARGETS)
+    local need = require("model").COOLDOWN_TTD.feralSpirit
+    local function S(ttd) return { cooldowns = { feralSpirit = "auto" }, target = { ttd = ttd } } end
+    local function gate(c, ttd, guid) return snapshot.cooldownGate(c, S(ttd), guid).feralSpirit end
+    local low = need * 0.75 + 0.5 -- below the line, above the release
+    -- A -> B -> A: A keeps its latch (the review's case: 30, 15, 21)
+    local c = {}
+    assert.is_true(gate(c, 30, "A"))
+    assert.is_false(gate(c, 15, "B"))
+    assert.is_true(gate(c, 21, "A"))
+    assert.is_false(gate(c, 21, "B"))
+    -- no target in between: nothing latched, nothing dropped
+    assert.is_true(gate(c, 30, nil))
+    assert.is_false(gate(c, low, nil))
+    assert.are.equal(2, #c.cdLatch)
+    assert.is_true(gate(c, low, "A"))
+    -- the same GUID again reuses its slot: no new table
+    local slot = c.cdLatch[1]
+    gate(c, low, "A")
+    assert.are.equal(slot, c.cdLatch[1])
+    assert.are.equal(2, #c.cdLatch)
+    -- a 4th GUID drops the least recently seen
+    c = {}
+    for _, g in ipairs({ "A", "B", "C" }) do assert.is_true(gate(c, 30, g)) end
+    assert.is_true(gate(c, low, "A")) -- A seen last: B is now the oldest
+    assert.is_true(gate(c, 30, "D"))
+    assert.are.equal(3, #c.cdLatch)
+    assert.are.same({ "D", "A", "C" }, { c.cdLatch[1].guid, c.cdLatch[2].guid, c.cdLatch[3].guid })
+    assert.is_false(gate(c, low, "B")) -- B evicted: back to the plain line (and B pushes C out)
+    assert.are.same({ "B", "D", "A" }, { c.cdLatch[1].guid, c.cdLatch[2].guid, c.cdLatch[3].guid })
+    assert.is_true(gate(c, low, "D"))
+    assert.is_true(gate(c, low, "A"))
+    assert.is_false(gate(c, low, "C"))
+    -- release per GUID: A released, D untouched
+    assert.is_false(gate(c, need * 0.75 - 0.01, "A"))
+    assert.is_false(gate(c, low, "A"))
+    assert.is_true(gate(c, low, "D"))
+    -- no options: all cleared
+    assert.is_nil(snapshot.cooldownGate(c, { target = { ttd = 30 } }, "D"))
+    assert.is_nil(c.cdLatch)
+    assert.is_false(gate(c, low, "D"))
   end)
 
   it("guesses mob health when the client only gives percent", function()
