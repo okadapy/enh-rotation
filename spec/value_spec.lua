@@ -58,10 +58,11 @@ describe("value.step", function()
 end)
 
 describe("value.manaPrice", function()
-  it("solo: mana gets more expensive as it runs low", function()
-    local full = fixtures.state({ mode = "solo", player = { mana = 10000, manaMax = 10000 } })
-    local low = fixtures.state({ mode = "solo", player = { mana = 2000, manaMax = 10000 } })
-    assert.is_true(value.manaPrice(low) > value.manaPrice(full) * 2)
+  -- drinking is linear: the last mana point costs the same seconds of drinking as the first
+  it("solo: the price does not depend on how full the bar is or on Shamanistic Rage", function()
+    local full = fixtures.state({ mode = "solo", player = { mana = 10000, manaMax = 10000 }, spells = { shamanisticRage = { cd = 0 } } })
+    local low = fixtures.state({ mode = "solo", player = { mana = 800, manaMax = 10000 }, spells = { shamanisticRage = { cd = 40 } } })
+    assert.are.near(value.manaPrice(full), value.manaPrice(low), 1e-9)
   end)
 
   -- solo, mana that runs out costs drinking time: a full bar is worth SOLO_REGEN seconds of damage
@@ -69,12 +70,6 @@ describe("value.manaPrice", function()
     local S = fixtures.state({ mode = "solo", player = { mana = 10000, manaMax = 10000 }, spells = { shamanisticRage = { cd = 0 } } })
     local dps = (damage.auto(S, "mh") / S.swing.mh.speed + damage.auto(S, "oh") / S.swing.oh.speed) * value.MELEE_SHARE
     assert.are.near(value.SOLO_REGEN * dps, value.manaPrice(S) * 10000, 1e-6)
-  end)
-
-  it("solo: mana is dearer while Shamanistic Rage is on cooldown", function()
-    local ready = fixtures.state({ mode = "solo", spells = { shamanisticRage = { cd = 0 } } })
-    local onCd = fixtures.state({ mode = "solo", spells = { shamanisticRage = { cd = 30 } } })
-    assert.are.near(value.manaPrice(ready) * 1.5, value.manaPrice(onCd), 1e-9)
   end)
 
   it("group: nearly free unless the fight outlasts the mana", function()

@@ -17,7 +17,6 @@ M.TAIL = 12                  -- s of remaining DoT/totem/pet time worth counting
 M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightning Bolt
 M.OOM_WEIGHT = 0.5           -- group/raid mana weight when the fight outlasts the mana
 M.FIGHT_MANA_PER_SEC = 0.003 -- net share of max mana spent per second (after regen), for the OOM projection
-M.RAGE_SCARCITY = 1.5        -- solo: mana is dearer while Shamanistic Rage is on cooldown
 M.READY_KEYS = { "stormstrike", "lavaLash", "earthShock", "fireNova" }
 M.COOLDOWN = {}  -- base cooldowns of READY_KEYS (spells data)
 do
@@ -49,14 +48,14 @@ function M.manaPrice(S)
   local ref = ((p.ap or 0) + (p.spNature or 0)) / 4000
   local w = weights(S)
   if S.mode == "solo" then
-    local frac = (p.manaMax and p.manaMax > 0) and ((p.mana or 0) / p.manaMax) or 1
-    local scarcity = 1 + 3 * (1 - frac) * (1 - frac)
-    local rage = S.spells and S.spells.shamanisticRage
-    if not rage or (rage.cd or 0) > 0 then scarcity = scarcity * M.RAGE_SCARCITY end
-    -- mana spent now is drunk back later: a full bar costs SOLO_REGEN seconds of damage
+    -- Mana spent now is drunk back later: a full bar costs SOLO_REGEN seconds of damage. Drinking
+    -- is linear, so the price does not grow as the bar empties: the "scarcity" and "Rage on
+    -- cooldown" multipliers left from the old AP-based price made it 4-6x the drinking time, and
+    -- a level-53 player in melee was told to idle with Stormstrike and Lava Lash ready.
+    -- A bar that runs dry needs no extra price: what cannot be paid cannot be pressed.
     local dps = M.dpsEstimate(S)
-    if dps > 0 and (p.manaMax or 0) > 0 then return w.mana * scarcity * dps * M.SOLO_REGEN / p.manaMax end
-    return w.mana * scarcity * ref
+    if dps > 0 and (p.manaMax or 0) > 0 then return w.mana * dps * M.SOLO_REGEN / p.manaMax end
+    return w.mana * ref
   end
   local ttd = S.target and S.target.ttd
   if ttd and p.manaMax and (p.mana or 0) < ttd * p.manaMax * M.FIGHT_MANA_PER_SEC then

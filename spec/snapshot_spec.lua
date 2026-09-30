@@ -141,6 +141,85 @@ describe("snapshot", function()
     assert.are.equal("melee", snapshot.build(ctx()).target.range)
   end)
 
+  describe("range hysteresis", function()
+    local known = { [top("stormstrike")] = true, [top("earthShock")] = true, [top("lightningBolt")] = true }
+    local MELEE = { Stormstrike = 1, ["Earth Shock"] = 1, ["Lightning Bolt"] = 1 }
+    local TWENTY = { Stormstrike = 0, ["Earth Shock"] = 1, ["Lightning Bolt"] = 1 }
+    local FAR = { Stormstrike = 0, ["Earth Shock"] = 0, ["Lightning Bolt"] = 0 }
+    local cfg, c
+    local function at(now, inRange, guid)
+      cfg.now, cfg.inRange = now, inRange
+      if guid then cfg.target.guid = guid end
+      return snapshot.build(c).target.range
+    end
+    before_each(function()
+      cfg = install({ known = known, inRange = MELEE })
+      c = ctx()
+    end)
+
+    it("a short melee -> 20 -> melee flicker stays melee", function()
+      assert.are.equal("melee", at(100.0, MELEE))
+      assert.are.equal("melee", at(100.1, TWENTY))
+      assert.are.equal("melee", at(100.3, TWENTY))
+      assert.are.equal("melee", at(100.4, MELEE))
+      -- the hold starts over after a melee reading
+      assert.are.equal("melee", at(100.5, TWENTY))
+      assert.are.equal("melee", at(100.8, FAR))
+    end)
+
+    it("leaves melee once a non-melee reading has lasted RANGE_HOLD", function()
+      assert.are.equal("melee", at(100.0, MELEE))
+      assert.are.equal("melee", at(100.1, TWENTY))
+      assert.are.equal("20", at(100.11 + snapshot.RANGE_HOLD, TWENTY))
+      assert.are.equal("far", at(100.6, FAR))
+      assert.are.equal("20", at(100.7, TWENTY))
+      -- getting closer is instant
+      assert.are.equal("melee", at(100.8, MELEE))
+    end)
+
+    it("a new target takes its first reading at once", function()
+      assert.are.equal("melee", at(100.0, MELEE, "Creature-7"))
+      assert.are.equal("far", at(100.1, FAR, "Creature-8"))
+      assert.are.equal("melee", at(100.2, MELEE, "Creature-9"))
+      assert.are.equal("20", at(100.3, TWENTY, "Creature-7"))
+    end)
+
+    it("counts the held melee target as a melee enemy", function()
+      at(100.0, MELEE)
+      cfg.now, cfg.inRange = 100.2, TWENTY
+      assert.are.equal(1, snapshot.build(c).enemies.melee)
+    end)
+  end)
+
+  describe("movement hysteresis", function()
+    local cfg, c
+    local function at(now, moving)
+      cfg.now, cfg.moving = now, moving
+      return snapshot.build(c).player.moving
+    end
+    before_each(function()
+      cfg = install({})
+      c = ctx()
+    end)
+
+    it("a short shuffle is not movement", function()
+      assert.is_false(at(100.0, false))
+      assert.is_false(at(100.1, true))
+      assert.is_false(at(100.3, true))
+      assert.is_false(at(100.35, false))
+      assert.is_false(at(100.5, true))
+      assert.is_false(at(100.7, true))
+    end)
+
+    it("reports movement after MOVE_HOLD of continuous movement and stops at once", function()
+      assert.is_false(at(100.0, true))
+      assert.is_false(at(100.2, true))
+      assert.is_true(at(100.01 + snapshot.MOVE_HOLD, true))
+      assert.is_true(at(101.0, true))
+      assert.is_false(at(101.1, false))
+    end)
+  end)
+
   it("derives spell haste from the real Lightning Bolt cast time", function()
     install({ known = { [top("lightningBolt")] = true }, castMs = { ["Lightning Bolt"] = 2000 } })
     local S = snapshot.build(ctx())

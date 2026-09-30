@@ -109,19 +109,25 @@ describe("stability near a mob's death with a noisy time-to-die #integration", f
       seed = (seed * 1103515245 + 12345) % 2147483648
       return seed / 2147483648
     end
-    local runs, changes, lines = 0, 0, {}
+    local runs, changes, stale, lines = 0, 0, 0, {}
     for i, rec in ipairs(dofile(path)) do
       local t = rec.S.target
       if t.exists and t.enemy and t.ttd and t.ttd < 10 then
         local p, S, last, seq = planner.new({}), util.copy(rec.S), nil, {}
         for k = 1, 12 do
+          local dead = S.target.dead -- by model time: from here an empty plan is right, not a flip
           local s = util.copy(S)
           s.target.ttd = S.target.ttd * (1 + 0.2 * (2 * rnd() - 1))
           local ev = k == 1 and { kind = "target" } or { kind = k % 2 == 0 and "swing" or "aura" }
           local plan = p:update(s, ev)
           local f = plan.steps[1] and plan.steps[1].key or "-"
-          if last and f ~= last then changes = changes + 1 end
-          last, seq[k] = f, f
+          if dead then
+            -- no stale button that needs the (dead) target; a buff like Lightning Shield may stay
+            if model.NEEDS_TARGET[f] then stale = stale + 1 end
+          elseif last and f ~= last then
+            changes = changes + 1
+          end
+          last, seq[k] = f, (dead and "+" or "") .. f
           S = model.wait(S, 0.25)
         end
         runs = runs + 1
@@ -130,5 +136,6 @@ describe("stability near a mob's death with a noisy time-to-die #integration", f
     end
     assert.is_true(runs >= 5, "recorded dying mobs: " .. runs)
     assert.is_true(changes * 5 <= runs, ("%d changes in %d runs\n%s"):format(changes, runs, table.concat(lines, "\n")))
+    assert.are.equal(0, stale, "a button for the dead target stayed (+ = after death)\n" .. table.concat(lines, "\n"))
   end)
 end)
