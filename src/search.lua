@@ -390,6 +390,9 @@ function M.best(S, opts)
   if not bestNode then return { value = 0, steps = {}, timedOut = timedOut } end
   local steps = stepsOf(bestNode)
   if not timedOut then best, steps = fillIdleStart(o, S, best, steps, rootActions) end
+  -- pressing nothing can be the best plan (solo: a mob the swings finish, mana is dear)
+  local idle = finalScore(o, rootNode, rootNow)
+  if idle >= best then return { value = idle, steps = {}, timedOut = timedOut } end
   return { value = best, steps = steps, timedOut = timedOut }
 end
 

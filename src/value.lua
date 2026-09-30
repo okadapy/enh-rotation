@@ -126,11 +126,13 @@ local function readyValue(S, damage)
   local spells = S.spells
   if not spells then return 0 end
   local fire = S.totems and S.totems.fire
+  -- Fire Nova needs a totem, but not the one standing by a dead mob: then it counts as the others
+  local novaOk = (fire and fire.kind) or not alive(S)
   local keys = M.READY_KEYS
   for i = 1, #keys do
     local key = keys[i]
     local sp = spells[key]
-    if sp and (key ~= "fireNova" or (fire and fire.kind)) then
+    if sp and (key ~= "fireNova" or novaOk) then
       local cd, full = sp.cd or 0, M.COOLDOWN[key] or 0
       local share = 1
       if cd > 0 then share = full > cd and (1 - cd / full) or 0 end

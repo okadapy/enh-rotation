@@ -152,6 +152,12 @@ describe("value.terminal", function()
     assert.are.near(value.terminal(onCd), value.terminal(noTotem), 1e-6)
   end)
 
+  it("after the target died a fire totem no longer makes Fire Nova worth more", function()
+    local none = base({ spells = { fireNova = { cd = 0 } }, target = { dead = true } })
+    local totem = base({ spells = { fireNova = { cd = 0 } }, target = { dead = true }, totems = { fire = { kind = "searing", remains = 50 } } })
+    assert.are.near(value.terminal(none), value.terminal(totem), 1e-6)
+  end)
+
   it("an active Magma Totem adds its remaining pulses", function()
     local none = base()
     local magma = base({ totems = { fire = { kind = "magma", remains = 10 } } })
