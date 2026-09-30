@@ -213,6 +213,32 @@ describe("model", function()
       assert.is_true(S2.buffs.mw.stacks < 5)
       assert.is_true(S2.buffs.mw.stacks >= 0)
     end)
+    it("a cast the target does not live to see (castTime + latency) deals no damage, but costs mana", function()
+      local S = base(); S.target.ttd = 1.2
+      local S2, dmg = model.apply(S, "lightningBolt")
+      assert.are.equal(0, dmg)
+      assert.are.equal(1e7, S2.target.hp)
+      assert.are.equal(8000 - 300, S2.player.mana)
+      -- lands after the cast time but before the server ends the cast: still a corpse
+      S.target.ttd = 2.5 + 0.1
+      assert.are.equal(0, select(2, model.apply(S, "lightningBolt")))
+      S.target.ttd = 2.5 + 0.15 + 0.01
+      local _, d = model.apply(S, "lightningBolt")
+      assert.are.near(damage.action(S, "lightningBolt"), d, 1e-6)
+    end)
+    it("no kill by a cast that lands after the target died", function()
+      local S = base(); S.target.hp = 100; S.target.ttd = 1.2
+      local S2 = model.apply(S, "chainLightning")
+      assert.are.equal(100, S2.target.hp)
+    end)
+    it("instants still hit a target about to die", function()
+      local S = base(); S.target.ttd = 0.5
+      local _, d = model.apply(S, "earthShock")
+      assert.are.near(damage.action(S, "earthShock"), d, 1e-6)
+      S.buffs.mw = { stacks = 5, remains = 20 }
+      _, d = model.apply(S, "lightningBolt")
+      assert.is_true(d > 0)
+    end)
     it("Stormstrike puts 4 charges, nature spells consume one", function()
       local S = base()
       local S2 = model.apply(S, "stormstrike")
@@ -517,6 +543,7 @@ describe("model working copies (search speed)", function()
     local list = {}
     for _, over in ipairs({ {}, { buffs = { mw = { stacks = 3, remains = 20 } } }, { buffs = { rage = 10, ls = { charges = 0 } } },
                            { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } },
+                           { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
                            { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } } }) do
       local S = fixtures.state(over)
       S.memo = {}

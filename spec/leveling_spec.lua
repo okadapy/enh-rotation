@@ -88,6 +88,16 @@ describe("leveling #integration", function()
     assert.are.equal("lightningBolt", (Sc.first(S)))
   end)
 
+  it("level 53 solo: no hard-cast Lightning Bolt into a mob that dies before it lands", function()
+    local S = midFight(53)
+    S.target.fs = 10
+    S.target.hp, S.target.hpPct, S.target.ttd = S.target.hpMax * 0.2, 0.2, 1.5
+    Sc.cd(S, { stormstrike = 4, shock = 4, lavaLash = 4 })
+    for _, st in ipairs(Sc.best(S).steps) do
+      assert.is_true(st.key ~= "lightningBolt" and st.key ~= "chainLightning", st.key)
+    end
+  end)
+
   it("solo: no mana on a mob that auto attacks finish anyway", function()
     local S = Sc.state(30)
     S.target.hp, S.target.hpPct, S.target.ttd = S.target.hpMax * 0.05, 0.05, 2
