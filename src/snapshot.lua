@@ -115,8 +115,9 @@ function M.enchants(c, now)
   if sig ~= c.enchantSig or now - c.enchantAt > M.ENCHANT_RESCAN then
     local tip = M.tooltip()
     c.enchant = {
-      mh = hasMH and M.enchantOf(tip, 16, c.enchantNames) or nil,
-      oh = hasOH and M.enchantOf(tip, 17, c.enchantNames) or nil,
+      -- present but not Windfury/Flametongue/Rockbiter (Frostbrand, Earthliving): "other"
+      mh = hasMH and (M.enchantOf(tip, 16, c.enchantNames) or "other") or nil,
+      oh = hasOH and (M.enchantOf(tip, 17, c.enchantNames) or "other") or nil,
     }
     c.enchantSig, c.enchantAt = sig, now
   end

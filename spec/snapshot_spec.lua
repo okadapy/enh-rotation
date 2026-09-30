@@ -62,6 +62,16 @@ describe("snapshot", function()
     assert.are.equal("ft", S.weapons.oh.enchant)
   end)
 
+  it("an imbue it does not know (Frostbrand, Earthliving) is 'other', not missing", function()
+    install({ enchants = { mh = true, oh = true },
+              tooltip = { [16] = { "Some Axe", "Frostbrand 9 (30 min)" }, [17] = { "Other Axe", "Earthliving 6 (30 min)" } } })
+    local S = snapshot.build(ctx())
+    assert.are.equal("other", S.weapons.mh.enchant)
+    assert.are.equal("other", S.weapons.oh.enchant)
+    local alert = require("runtime").alert(S)
+    assert.is_true(alert == nil or alert.key ~= "noEnchant")
+  end)
+
   it("has no off-hand with a two-hander and no imbue without an enchant", function()
     install({ speed = { 3.5, nil }, enchants = {} })
     local S = snapshot.build(ctx({ swing = { state = function() return { attacking = true, mh = { next = 1, speed = 3.5 } } end } }))
