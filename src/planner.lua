@@ -3,7 +3,14 @@ local spells = require("spells")
 
 local M = {}
 
-M.HYSTERESIS = 0.03
+-- A new plan replaces the held one only if it is better by HYSTERESIS x the damage the held
+-- plan does inside the horizon (not x its total value: the terminal estimate of the state after
+-- the horizon is large and varies a lot, it made the margin arbitrary). When the held first
+-- button is due within HOLD seconds, the margin is HOLD_FACTOR times larger: the player is
+-- about to press it, and a late change costs more than the small gain.
+M.HYSTERESIS = 0.08
+M.HOLD = 0.3
+M.HOLD_FACTOR = 2
 M.INFLIGHT = 1.0
 M.FS_DURATION = (spells.byKey.flameShock and spells.byKey.flameShock.duration) or 18
 
@@ -30,6 +37,8 @@ function M.new(opts)
     search = opts.search or require("search"),
     searchOpts = opts.searchOpts,
     hysteresis = opts.hysteresis or M.HYSTERESIS,
+    hold = opts.hold or M.HOLD,
+    holdFactor = opts.holdFactor or M.HOLD_FACTOR,
     budgetMs = opts.budgetMs,
     inflight = {},
     plan = nil,
@@ -72,29 +81,32 @@ local function startJob(search, s, opts)
   return { run = function(self) self.result = search.best(s, opts); return true end }
 end
 
-function P:begin(s, force)
-  self.job = { s = s, force = force, search = startJob(self.search, s, self.searchOpts) }
+-- ev: what asked for this search (kept on the plan it produces: plan.trigger)
+function P:begin(s, force, ev)
+  self.job = { s = s, force = force, ev = ev, search = startJob(self.search, s, self.searchOpts) }
 end
 
 -- the search of job finished: keep the current plan unless the new one is clearly better
 function P:finish(job)
   local fresh, s = job.search.result, job.s
   self.job = nil
-  self.searches = (self.searches or 0) + 1
   if not job.force and self.plan then
     local old = shifted(self.plan, s.now - self.planNow)
     if #old > 0 then
-      local oldValue, retimed = self.search.evaluate(s, old, self.searchOpts)
-      if oldValue and fresh.value <= oldValue + math.abs(oldValue) * self.hysteresis then
-        self.plan = { value = oldValue, steps = retimed, timedOut = fresh.timedOut, capped = fresh.capped, held = true }
+      local oldValue, retimed, horizonValue = self.search.evaluate(s, old, self.searchOpts)
+      local margin = oldValue and math.abs(horizonValue or oldValue) * self.hysteresis
+      if margin and retimed[1] and retimed[1].at <= self.hold then margin = margin * self.holdFactor end
+      if oldValue and fresh.value <= oldValue + margin then
+        self.plan = { value = oldValue, steps = retimed, timedOut = fresh.timedOut, capped = fresh.capped, held = true,
+                      trigger = job.ev }
         self.planNow = s.now
         return
       end
     end
   end
+  fresh.trigger = job.ev
   self.plan = fresh
   self.planNow = s.now
-  self.swaps = (self.swaps or 0) + 1
 end
 
 -- run the pending search for at most budgetMs; true when a search finished in this call
@@ -106,7 +118,7 @@ function P:work(budgetMs)
   if self.queued then
     local q = self.queued
     self.queued = nil
-    self:begin(q.s, q.force)
+    self:begin(q.s, q.force, q.ev)
   end
   return true
 end
@@ -116,7 +128,8 @@ function P:view(now)
   local plan = self.plan
   if not plan then return nil end
   local steps = shifted(plan, now - self.planNow)
-  return { value = plan.value, steps = steps, timedOut = plan.timedOut, capped = plan.capped, held = plan.held }
+  return { value = plan.value, steps = steps, timedOut = plan.timedOut, capped = plan.capped, held = plan.held,
+           trigger = plan.trigger }
 end
 
 function P:busy() return self.job ~= nil end
@@ -132,7 +145,7 @@ function P:update(S, ev)
       -- the end of a cast whose start was already reported: nothing new was pressed
     elseif first and first.key == ev.key then
       -- the planned button was pressed: the rest of the plan goes on at once
-      self.plan = { value = self.plan.value, steps = shifted(self.plan, S.now - self.planNow, true), held = true }
+      self.plan = { value = self.plan.value, steps = shifted(self.plan, S.now - self.planNow, true), held = true, trigger = ev }
       self.planNow = S.now
       restart = true
     else
@@ -140,13 +153,32 @@ function P:update(S, ev)
     end
   end
   local s = self:prepare(S)
+  if ev.kind == "pulse" and not force then
+    -- Nothing happened: the running search goes on, or the held plan is only moved on in time.
+    -- A new search now could only find what the moving horizon brings in, and that is flicker.
+    if self.job then return self:view(S.now) end
+    local old = shifted(self.plan, S.now - self.planNow)
+    if #old > 0 then
+      local v, retimed = self.search.evaluate(s, old, self.searchOpts)
+      if v then
+        local pl = self.plan
+        self.plan = { value = v, steps = retimed, timedOut = pl.timedOut, capped = pl.capped, held = true, trigger = pl.trigger }
+        self.planNow = S.now
+        return self:view(S.now)
+      end
+      force = true -- the held plan can no longer be played
+    end
+  end
   if self.job and not restart then
     -- a search is running: it finishes first, then the newest state is searched
-    self.queued = { s = s, force = force }
+    -- the queued search stands for every event since: keep the most telling one
+    local q = self.queued
+    local qev = (q and q.ev and q.ev.kind ~= "pulse" and ev.kind == "pulse") and q.ev or ev
+    self.queued = { s = s, force = force or (q and q.force) or false, ev = qev }
   else
     -- a press or a new target makes a running search stale
     self.queued = nil
-    self:begin(s, force)
+    self:begin(s, force, ev)
   end
   self:work()
   return self:view(S.now) or { value = 0, steps = {} }

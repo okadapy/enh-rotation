@@ -10,7 +10,7 @@ local function stubSearch(script)
   function s.evaluate(_, steps)
     s.lastEval = steps
     if script.evaluate == false then return nil end
-    return script.evaluate, steps
+    return script.evaluate, steps, script.horizon
   end
   return s
 end
@@ -27,30 +27,59 @@ describe("planner", function()
     assert.are.equal("a", p:update(at(100)).steps[1].key)
   end)
 
-  it("holds the current plan when the new one is less than 3% better", function()
-    local script = { best = 100, bestKey = "a" }
+  -- margin = HYSTERESIS (0.08) x the held plan's damage inside the horizon (script.horizon)
+  local AURA = { kind = "aura" }
+  local function later(key) return { { key = key, at = 1.0, reason = "" } } end
+
+  it("holds the current plan when the new one is better by less than the margin", function()
+    local script = { best = 100, steps = later("a") }
     local p = planner.new({ search = stubSearch(script) })
     p:update(at(100))
-    script.best, script.bestKey, script.evaluate = 102, "b", 100
-    local plan = p:update(at(100.1))
+    script.best, script.steps, script.evaluate, script.horizon = 103.9, later("b"), 100, 50
+    local plan = p:update(at(100.1), AURA)
     assert.are.equal("a", plan.steps[1].key)
     assert.is_true(plan.held)
   end)
 
-  it("switches when the new plan is more than 3% better", function()
-    local script = { best = 100, bestKey = "a" }
+  it("switches when the new plan is better by more than the margin", function()
+    local script = { best = 100, steps = later("a") }
     local p = planner.new({ search = stubSearch(script) })
     p:update(at(100))
-    script.best, script.bestKey, script.evaluate = 104, "b", 100
-    assert.are.equal("b", p:update(at(100.1)).steps[1].key)
+    script.best, script.steps, script.evaluate, script.horizon = 104.1, later("b"), 100, 50
+    assert.are.equal("b", p:update(at(100.1), AURA).steps[1].key)
   end)
 
-  it("hysteresis works with negative values", function()
-    local script = { best = -100, bestKey = "a" }
+  it("the margin doubles when the held first button is due within HOLD seconds", function()
+    local script = { best = 100, bestKey = "a" } -- due now
     local p = planner.new({ search = stubSearch(script) })
     p:update(at(100))
-    script.best, script.bestKey, script.evaluate = -99, "b", -100
-    assert.are.equal("a", p:update(at(100.1)).steps[1].key)
+    script.best, script.bestKey, script.evaluate, script.horizon = 107.9, "b", 100, 50
+    assert.are.equal("a", p:update(at(100.1), AURA).steps[1].key)
+    script.best = 108.1
+    assert.are.equal("b", p:update(at(100.2), AURA).steps[1].key)
+  end)
+
+  it("the margin works with negative values", function()
+    local script = { best = -100, steps = later("a") }
+    local p = planner.new({ search = stubSearch(script) })
+    p:update(at(100))
+    script.best, script.steps, script.evaluate, script.horizon = -96.1, later("b"), -100, -50
+    assert.are.equal("a", p:update(at(100.1), AURA).steps[1].key)
+    script.best = -95.9
+    assert.are.equal("b", p:update(at(100.2), AURA).steps[1].key)
+  end)
+
+  -- a search on a pulse could only find what the moving horizon brings in: flicker
+  it("a pulse without events does not search, it only moves the held plan on", function()
+    local script = { best = 100, steps = later("a") }
+    local s = stubSearch(script)
+    local p = planner.new({ search = s })
+    p:update(at(100))
+    script.best, script.steps, script.evaluate = 1000, later("b"), 100
+    local plan = p:update(at(100.25))
+    assert.are.equal(1, #s.seen)
+    assert.are.equal("a", plan.steps[1].key)
+    assert.are.near(0.75, plan.steps[1].at, 1e-9)
   end)
 
   it("switches when the held plan can no longer be played", function()
@@ -138,14 +167,6 @@ describe("planner", function()
     assert.are.equal(0, #p:update(at(100)).steps)
     assert.are.equal(0, #p:update(at(100.25)).steps)
   end)
-  it("a negative plan is replaced when the new one clears |old| * 3%", function()
-    local script = { best = -100, bestKey = "a" }
-    local p = planner.new({ search = stubSearch(script) })
-    p:update(at(100))
-    script.best, script.bestKey, script.evaluate = -96, "b", -100
-    assert.are.equal("b", p:update(at(100.1)).steps[1].key)
-  end)
-
   it("Flame Shock just cast is assumed to last its full 18 seconds", function()
     local s = stubSearch({ best = 100 })
     local p = planner.new({ search = s })

@@ -159,7 +159,7 @@ local function finalScore(o, node, rootNow)
     v = v + waitValue(o, S, S2, dmg)
     S = S2
   end
-  return v + o.value.terminal(S)
+  return v + o.value.terminal(S), v
 end
 
 -- replay one step: wait exactly a.readyIn (> 0), then press
@@ -485,10 +485,12 @@ local function evaluateFrom(o, S, steps, truncate)
     node = c
   end
   if #node.steps == 0 then return nil end
-  return finalScore(o, node, rootNow), node.steps
+  local v, horizonValue = finalScore(o, node, rootNow)
+  return v, node.steps, horizonValue
 end
 
 -- replay an existing plan on a fresh state; nil if a step is no longer possible
+-- -> value, retimed steps, the part of the value earned inside the horizon (without terminal)
 function M.evaluate(S, steps, opts)
   return evaluateFrom(defaults(opts), root(S), steps)
 end
