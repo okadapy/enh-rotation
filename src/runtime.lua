@@ -311,18 +311,74 @@ function M.onEvent(rt, event, ...)
   end
 end
 
--- The sandbox offers no protected calls: a Lua error inside one update leaves rt.busy set.
--- The next frame sees it and stops the engine instead of repeating the error every frame.
+-- The sandbox offers no protected calls, but coroutine.resume hands an error back instead of
+-- raising it. Each guarded function (the frame step, the event handler) runs in its own
+-- long-lived coroutine that yields its results after every call and takes the next call's
+-- arguments from the resume: nothing is allocated per call. An error kills that coroutine; the
+-- next call makes a new one. An error inside a search job (a coroutine of its own) is raised
+-- again by job:run and so ends up here too.
+local function loop(fn)
+  local function again(...)
+    return again(coroutine.yield(fn(...)))
+  end
+  return again
+end
+
+local function resumed(rt, fn, ok, ...)
+  if ok then return ... end
+  if rt.guards[fn] then rt.guards[fn] = nil end
+  M.onError(rt, (...))
+  return nil
+end
+
+function M.guarded(rt, fn, ...)
+  local guards = rt.guards
+  if not guards then
+    guards = {}
+    rt.guards = guards
+  end
+  local co = guards[fn]
+  local st = co and coroutine.status(co)
+  if st ~= "suspended" then
+    co = coroutine.create(loop(fn))
+    -- a call from inside the same guarded function (an event fired while it runs) gets a coroutine
+    -- of its own and leaves the long-lived one alone
+    if st ~= "running" and st ~= "normal" then guards[fn] = co end
+  end
+  return resumed(rt, fn, coroutine.resume(co, ...))
+end
+
+-- One error: said in chat (each message once), the planner and its search start afresh, the
+-- engine goes on. MAX_ERRORS errors within ERROR_WINDOW seconds: it stops until /reload.
+M.MAX_ERRORS = 5
+M.ERROR_WINDOW = 10
+
+function M.onError(rt, msg)
+  msg = tostring(msg)
+  rt.counters.errors = rt.counters.errors + 1
+  rt.errorsSeen = rt.errorsSeen or {}
+  if not rt.errorsSeen[msg] then
+    rt.errorsSeen[msg] = true
+    print("|cffff5555EnhRot|r error: " .. msg)
+  end
+  local now = GetTime()
+  local times = rt.errorTimes or {}
+  rt.errorTimes = times
+  times[#times + 1] = now
+  while #times > M.MAX_ERRORS do table.remove(times, 1) end
+  if #times >= M.MAX_ERRORS and now - times[1] <= M.ERROR_WINDOW then
+    M.fail(rt)
+    return
+  end
+  -- what a half-done step may have left behind: the planner (with its search job) and the
+  -- pending event; the next pulse plans from scratch
+  rt.planner, rt.searching, rt.lastFirst, rt.due = M.newPlanner(), false, nil, nil
+  rt.pending, rt.elapsed = nil, 0
+end
+
 function M.update(rt, dt)
   if rt.stopped then return false end
-  if rt.busy then
-    M.fail(rt)
-    return false
-  end
-  rt.busy = true
-  local r = M.step(rt, dt)
-  rt.busy = false
-  return r
+  return M.guarded(rt, M.step, rt, dt) or false
 end
 
 function M.fail(rt)
@@ -504,7 +560,25 @@ function M.timelineOptions(config)
   return { icons = config.icons, seconds = config.seconds, scale = config.scale, showReason = config.showReason ~= false }
 end
 
+-- WotLK 3.3.5a only: spell ranks, talents, combat log arguments and the API are of that client
+M.BUILD = 30300
+
+function M.supported()
+  if not GetBuildInfo then return true end
+  local version, _, _, toc = GetBuildInfo()
+  if toc == nil or tonumber(toc) == M.BUILD then return true end
+  return false, ("EnhRot supports only WotLK 3.3.5a (build %d); this client is %s (%s)"):format(M.BUILD, tostring(version), tostring(toc))
+end
+
 function M.start(config, env)
+  local ok, msg = M.supported()
+  if not ok then
+    if not M.buildWarned then
+      M.buildWarned = true
+      print("|cffff5555EnhRot|r" .. msg:sub(7))
+    end
+    return nil
+  end
   config = config or {}
   env = env or {}
   env.saved = env.saved or {}
@@ -528,15 +602,17 @@ function M.start(config, env)
     planner = M.newPlanner(), rec = config.record and recorder.new(env.saved, M.RECORD_MAX, M.PRESS_MAX) or nil,
     playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, capped = 0, errors = 0 }, reported = false,
   }
-  tl.onError = function() M.fail(rt) end
+  -- the timeline stops itself on the frame after an error of its own: counted like the engine's,
+  -- and it starts again unless that was one error too many
+  tl.onError = function()
+    M.onError(rt, "timeline error")
+    if not (rt.stopped or rt.sleeping or rt.inactive) then tl:start() end
+  end
   M.checkTalents(rt)
   if config.export then M.showExport(env) end
   frame:SetScript("OnEvent", function(_, event, ...)
     if rt.stopped then return end
-    if rt.busy then return M.fail(rt) end
-    rt.busy = true
-    M.onEvent(rt, event, ...)
-    rt.busy = false
+    M.guarded(rt, M.onEvent, rt, event, ...)
   end)
   frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
   frame:Show()
