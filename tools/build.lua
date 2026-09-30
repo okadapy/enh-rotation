@@ -68,12 +68,27 @@ function B.dump(t, indent)
   return table.concat(out)
 end
 
+-- WeakAuras 5.22 stores aura_env.saved as a string: SerializeEx -> CompressDeflate -> EncodeForPrint
+-- (Private.SaveAuraEnvironment). Returns the table, or nil if s is not such a string.
+function B.decodeSaved(s)
+  if type(s) ~= "string" or s == "" then return nil end
+  local LibDeflate = require("LibDeflate")
+  local compressed = LibDeflate:DecodeForPrint(s)
+  if not compressed then return nil end
+  local serialized = LibDeflate:DecompressDeflate(compressed)
+  if not serialized then return nil end
+  local ok, t = require("LibSerialize"):Deserialize(serialized)
+  if ok and type(t) == "table" then return t end
+  return nil
+end
+
 function B.findSnapshots(t, seen)
   seen = seen or {}
   if type(t) ~= "table" or seen[t] then return nil end
   seen[t] = true
   if type(t.enhrotSnapshots) == "table" then return t.enhrotSnapshots end
-  for _, v in pairs(t) do
+  for k, v in pairs(t) do
+    if k == "saved" and type(v) == "string" then v = B.decodeSaved(v) end
     local found = B.findSnapshots(v, seen)
     if found then return found end
   end

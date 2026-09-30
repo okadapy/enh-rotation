@@ -113,6 +113,16 @@ describe("build (pure)", function()
     assert.is_nil(build.findSnapshots({ a = { b = 1 } }))
   end)
 
+  it("finds snapshots inside an encoded information.saved string (WeakAuras 5.22)", function()
+    local LibSerialize, LibDeflate = require("LibSerialize"), require("LibDeflate")
+    local list = { { S = { now = 7 }, plan = { value = 1, steps = {} } } }
+    local str = LibDeflate:EncodeForPrint(LibDeflate:CompressDeflate(
+      LibSerialize:SerializeEx({ errorOnUnserializableType = false }, { enhrotSnapshots = list }), { level = 1 }))
+    local found = build.findSnapshots({ displays = { x = { information = { saved = str } } } })
+    assert.are.same(list, found)
+    assert.is_nil(build.findSnapshots({ displays = { x = { information = { saved = "not encoded" } } } }))
+  end)
+
   it("parses snapshots out of a WeakAuras SavedVariables file", function()
     local list = build.parseSnapshots(build.readFile(SAMPLE), SAMPLE)
     assert.are.equal(2, #list)
