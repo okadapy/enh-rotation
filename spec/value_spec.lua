@@ -135,6 +135,15 @@ describe("value.terminal", function()
     assert.are.near(5 * damage.periodic(wolves, "feralSpirit") * value.DISCOUNT, value.terminal(wolves) - value.terminal(none), 1e-6)
   end)
 
+  it("remaining totem and DoT time counts only up to TAIL seconds: the button can be pressed again later", function()
+    local tail = base({ totems = { fire = { kind = "searing", remains = value.TAIL } } })
+    local long = base({ totems = { fire = { kind = "searing", remains = 50 } } })
+    assert.is_true(value.TAIL >= 10 and value.TAIL < 20)
+    assert.are.near(value.terminal(tail), value.terminal(long), 1e-6)
+    local fs = base({ target = { fs = value.TAIL + 6, ttd = 60 } })
+    assert.are.near(value.TAIL * damage.periodic(fs, "flameShock") * value.DISCOUNT, value.terminal(fs) - value.terminal(base()), 1e-6)
+  end)
+
   it("survives a state without pets, spells or totems", function()
     local S = base()
     S.pets, S.spells = nil, {}

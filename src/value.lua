@@ -10,6 +10,7 @@ M.WEIGHTS = {
 M.WEIGHTS.pvp = M.WEIGHTS.group
 
 M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses after the horizon
+M.TAIL = 12                  -- s of remaining DoT/totem/pet time worth counting: later it can simply be recast
 M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightning Bolt
 M.OOM_WEIGHT = 0.5           -- group/raid mana weight when the fight outlasts the mana
 M.FIGHT_MANA_PER_SEC = 0.01  -- share of max mana spent per second, for the OOM projection
@@ -59,7 +60,7 @@ local function alive(S)
 end
 
 local function lifetime(S, remains)
-  remains = remains or 0
+  remains = math.min(remains or 0, M.TAIL)
   local ttd = S.target.ttd
   if ttd then return math.max(0, math.min(remains, ttd)) end
   return math.max(0, remains)
