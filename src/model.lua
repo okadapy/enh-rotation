@@ -597,7 +597,8 @@ local function applyOn(n, key, ct, dt, adv)
   local cast
   if ct > 0 then
     cast = CAST
-    cast.ends, cast.reset = ct, mwAtCast == 0
+    -- the swing clock goes on when the server ends the cast: castTime + latency after the press
+    cast.ends, cast.reset = ct + (n.latency or 0), mwAtCast == 0
   elseif n.swing.resetByInstant and n.swing.resetByInstant[key] then
     M.resetSwings(n)
   end

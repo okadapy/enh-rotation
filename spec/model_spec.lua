@@ -261,24 +261,36 @@ describe("model", function()
   end)
 
   describe("swings during casts", function()
-    it("0-stack bolt: swings during the cast are lost and timers reset at cast end", function()
+    -- base() has latency 0.15: the swing clock restarts when the server ends the cast
+    it("0-stack bolt: swings during the cast are lost and timers reset at cast end + latency", function()
       local S = base(); S.swing.mh.next = 1.0; S.swing.oh.next = 2.0
       local S2, dmg, dt = model.apply(S, "lightningBolt")
       assert.are.near(2.5, dt, 1e-9)
-      assert.are.near(2.6, S2.swing.mh.next, 1e-9)
-      assert.are.near(2.6, S2.swing.oh.next, 1e-9)
+      assert.are.near(2.6 + 0.15, S2.swing.mh.next, 1e-9)
+      assert.are.near(2.6 + 0.15, S2.swing.oh.next, 1e-9)
       assert.are.near(damage.action(S, "lightningBolt"), dmg, 1e-6)
     end)
-    it("3-stack bolt: a swing due during the cast lands at cast end", function()
+    it("3-stack bolt: a swing due during the cast lands at cast end + latency", function()
       local S = base(); S.buffs.mw = { stacks = 3, remains = 20 }
       S.swing.mh.next = 0.4; S.swing.oh.next = 1.2
       local S2, dmg, dt = model.apply(S, "lightningBolt")
       assert.are.near(1.5, dt, 1e-9)
-      assert.are.near(1.0 + 2.6 - 1.5, S2.swing.mh.next, 1e-9)
+      assert.are.near(1.0 + 0.15 + 2.6 - 1.5, S2.swing.mh.next, 1e-9)
       assert.are.near(1.2 + 2.6 - 1.5, S2.swing.oh.next, 1e-9)
       local expected = damage.action(S, "lightningBolt")
       assert.is_true(dmg > expected)
     end)
+    it("a swing due just after the cast ends is held back by the latency", function()
+      local S = base(); S.buffs.mw = { stacks = 3, remains = 20 }
+      S.swing.mh.next = 1.05; S.swing.oh.next = 2.0
+      local S2 = model.apply(S, "lightningBolt")
+      assert.are.near(1.0 + 0.15 + 2.6 - 1.5, S2.swing.mh.next, 1e-9)
+      S.latency = 0
+      assert.are.near(1.05 + 2.6 - 1.5, model.apply(S, "lightningBolt").swing.mh.next, 1e-9)
+      S.latency = 0.15
+      assert.are.near(1.0 + 0.15 + 2.6 - 1.5, (model.peekApply(S, "lightningBolt")).swing.mh.next, 1e-9)
+    end)
+
     it("instant spell does not touch swings by default", function()
       local S = base(); S.swing.mh.next = 0.4
       local S2 = model.apply(S, "earthShock")
