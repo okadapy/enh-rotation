@@ -6,12 +6,15 @@ local snapshot = require("snapshot")
 local planner = require("planner")
 local timeline = require("timeline")
 local recorder = require("recorder")
+local version = require("version")
 
 local M = {}
 
 M.PULSE = 0.25
 M.FRAME_MS = 2 -- search time per frame; a search runs over several frames (planner.work)
 M.RECORD_MAX = 30
+M.PRESS_MAX = 200
+M.VERSION = version
 M.MODES = { "auto", "solo", "group", "raid", "pvp" }
 M.EVENTS = {
   "COMBAT_LOG_EVENT_UNFILTERED",
@@ -146,6 +149,27 @@ local function mwNow(ctx, now)
   return a.mw and a.mw.count or 0
 end
 
+-- The first shown button and since when it is due: replans that keep suggesting it at 0 do not
+-- move that moment on (the delay of a press is counted from it).
+function M.trackDue(rt, plan, now)
+  local st = plan and plan.steps[1]
+  local d = rt.due
+  if not st then
+    rt.due = nil
+  elseif d and d.key == st.key then
+    if d.at > now then d.at = now + st.at end
+  else
+    rt.due = { key = st.key, at = now + st.at }
+  end
+end
+
+-- press log (recording on): what was pressed against what was shown
+local function logPress(rt, key, now)
+  if not rt.rec then return end
+  local d = rt.due
+  rt.rec:press(key, now, rt.plan, d and d.at)
+end
+
 -- the event belongs to the tracked hard cast (castID = 4th argument of UNIT_SPELLCAST_* in 3.3.5a)
 local function ownCast(rt, key, castID)
   local c = rt.casting
@@ -159,10 +183,14 @@ function M.onCast(rt, event, key, now, castID)
     -- the key press itself: the client starts the GCD at once, the server confirms a round trip
     -- later. Taken as the press now, so the plan does not show the pressed button for that time.
     rt.sent = { key = key, at = now }
+    logPress(rt, key, now)
     M.mark(rt, "cast", key)
     return
   end
   local confirmed = sentFor(rt, key, now)
+  if confirmed and rt.rec and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED") then
+    rt.rec:confirm(key)
+  end
   if event == "UNIT_SPELLCAST_START" then
     done = confirmed
     if confirmed then rt.sent = nil end
@@ -203,6 +231,8 @@ function M.onCast(rt, event, key, now, castID)
   else
     return
   end
+  -- START / SUCCEEDED without SENT before it: the press itself (SENT did not come)
+  if not done then logPress(rt, key, now) end
   M.mark(rt, "cast", key, done)
 end
 
@@ -354,6 +384,7 @@ function M.show(rt, plan, S, now)
   end
   if plan.capped then rt.counters.capped = rt.counters.capped + 1 end
   local first = plan.steps[1] and plan.steps[1].key
+  M.trackDue(rt, plan, now)
   if first ~= rt.lastFirst then
     rt.lastFirst = first
     rt.counters.replans = rt.counters.replans + 1
@@ -421,7 +452,7 @@ function M.step(rt, dt)
     if not rt.inactive then
       rt.inactive = true
       rt.planner, rt.searching, rt.lastFirst = M.newPlanner(), false, nil
-      rt.plan = { value = 0, steps = {} }
+      rt.plan, rt.due = { value = 0, steps = {} }, nil
     end
     rt.tl:stop() -- again after a wake-up, which shows the timeline
     return false
@@ -439,7 +470,7 @@ function M.step(rt, dt)
   rt.alert = alert
   rt.tl:setAlert(alert)
   if not (S.target.exists and S.target.enemy) then
-    rt.plan, rt.S, rt.searching = { value = 0, steps = {} }, S, false
+    rt.plan, rt.S, rt.searching, rt.due = { value = 0, steps = {} }, S, false, nil
     rt.tl:render(rt.plan, S, now)
     return true
   end
@@ -459,10 +490,11 @@ end
 -- the export window with the recorded snapshots (option "Export snapshots")
 function M.showExport(env)
   local function text()
-    local list = env.saved and env.saved[recorder.KEY] or {}
-    local s = recorder.export(list, M.exportLibs())
+    local saved = env.saved or {}
+    local list, presses = saved[recorder.KEY] or {}, saved[recorder.PRESS_KEY] or {}
+    local s = recorder.export({ version = M.VERSION, snapshots = list, presses = presses }, M.exportLibs())
     if not s then return "EnhRot: this client has no LibSerialize/LibDeflate, send WeakAuras.lua instead" end
-    if #list == 0 then return "EnhRot: no snapshots yet - turn on Record snapshots and play a while" end
+    if #list == 0 and #presses == 0 then return "EnhRot: no snapshots yet - turn on Record snapshots and play a while" end
     return s
   end
   return timeline.exportWindow(text(), text)
@@ -493,7 +525,7 @@ function M.start(config, env)
   frame.enhrotTimeline = tl
   local rt = {
     config = config, env = env, ctx = ctx, frame = frame, tl = tl, elapsed = 0, pending = nil, shown = false,
-    planner = M.newPlanner(), rec = config.record and recorder.new(env.saved, M.RECORD_MAX) or nil,
+    planner = M.newPlanner(), rec = config.record and recorder.new(env.saved, M.RECORD_MAX, M.PRESS_MAX) or nil,
     playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, capped = 0, errors = 0 }, reported = false,
   }
   tl.onError = function() M.fail(rt) end

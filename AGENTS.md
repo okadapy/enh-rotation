@@ -8,6 +8,8 @@ WeakAura-подсказчик для энх-шамана под WotLK 3.3.5a (We
 - Сборка строки импорта: `docker compose run --rm test lua tools/build.lua` → `dist/EnhRot.txt` (`dist/` не в git)
 - Декодировать строку: `docker compose run --rm test lua tools/build.lua decode <file>`
 - Снимки из игры в тесты: `docker compose run --rm test lua tools/build.lua import-snapshots <WeakAuras.lua>` → `spec/fixtures/recorded.lua`
+- Сводка журнала нажатий из отчёта: `docker compose run --rm test lua tools/build.lua presses <файл>` (строка экспорта или `WeakAuras.lua`)
+- Версия в сборке: `RELEASE_TAG`, иначе `git describe --tags`, иначе `dev` (подставляется вместо `src/version.lua`)
 - Перегенерировать данные рангов: `docker compose run --rm test python3 tools/spelldata.py data/Spell.dbc src/spells_data.lua`
   (`data/Spell.dbc` — из `rebuffed.mpq` клиента, в git не хранится)
 - Claude в GitHub: `.github/workflows/claude.yml` — `@claude` в issue/комментарии/ревью (владелец и участники); там нет Lua локально, тесты — через `docker compose`.
