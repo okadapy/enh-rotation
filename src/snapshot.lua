@@ -6,7 +6,9 @@ local util = require("util")
 
 local M = {}
 
-M.BUFFS = { [53817] = "mw", [49281] = "ls", [16280] = "flurry", [30823] = "rage", [2825] = "lust", [32182] = "lust", [16166] = "em" }
+M.BUFFS = { [53817] = "mw", [49281] = "ls", [16280] = "flurry", [30823] = "rage", [2825] = "lust", [32182] = "lust", [16166] = "em",
+  -- Water Shield: matched by name, so rank 1 stands for all ranks (not a castable action here)
+  [52127] = "ws" }
 M.DEBUFFS = { [8050] = "fs", [17364] = "ss" }
 M.TOTEMS = { [2894] = "fireElemental", [8190] = "magma", [3599] = "searing" }
 M.ENCHANTS = { [8232] = "wf", [8024] = "ft", [8017] = "rb" }
@@ -20,6 +22,7 @@ M.MOVE_HOLD = 0.3
 M.RANGE_PROBES = { { "stormstrike", "melee" }, { "lavaLash", "melee" }, { "earthShock", "20" }, { "lightningBolt", "30" } }
 M.HP_BY_LEVEL = { { 1, 42 }, { 10, 200 }, { 20, 600 }, { 30, 1200 }, { 40, 2000 }, { 50, 3500 }, { 60, 4500 }, { 70, 7000 }, { 80, 12000 }, { 83, 14000 } }
 M.BASE_MANA = { { 1, 55 }, { 10, 185 }, { 20, 410 }, { 30, 635 }, { 40, 860 }, { 50, 1085 }, { 60, 1520 }, { 70, 2678 }, { 80, 4396 } }
+M.SHIELD_PREFS = { auto = true, lightning = true, water = true }
 M.CLASS_MULT = { normal = 1, trivial = 1, minus = 0.5, rare = 1.5, elite = 3, rareelite = 3, worldboss = 100 }
 
 local CR_HIT_MELEE, CR_HIT_SPELL, CR_HASTE_MELEE, CR_HASTE_SPELL = 6, 8, 18, 20
@@ -390,9 +393,12 @@ function M.build(ctx)
   S.buffs = {
     mw = { stacks = mw, remains = remains(mine.mw) },
     ls = { charges = charges(mine.ls), remains = remains(mine.ls) },
+    ws = mine.ws and { charges = charges(mine.ws), remains = remains(mine.ws) } or nil,
     flurry = { charges = charges(mine.flurry), remains = remains(mine.flurry) },
     rage = remains(mine.rage), lust = remains(mine.lust), em = remains(mine.em),
   }
+  S.player.shield = (mine.ls and "lightning") or (mine.ws and "water") or nil
+  S.shieldPref = M.SHIELD_PREFS[ctx.shield] and ctx.shield or "auto"
   S.target = M.targetInfo(ctx, c, now, S.player.level)
   S.target.meleeIn = M.meleeIn(S)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)

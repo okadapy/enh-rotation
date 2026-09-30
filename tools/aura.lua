@@ -14,6 +14,8 @@ M.OPTIONS = {
     values = { "auto", "solo", "group", "raid", "pvp (reserved)" }, default = 1, width = 1, useDesc = true },
   { type = "toggle", key = "showReason", name = "Show reason under icon", default = true, width = 1, useDesc = false },
   { type = "toggle", key = "showLust", name = "Show Bloodlust ready in group", default = true, width = 1, useDesc = false },
+  { type = "select", key = "shield", name = "Shield", desc = "the shield to keep up; auto: Lightning Shield unless Water Shield is on",
+    values = { "auto", "Lightning Shield", "Water Shield" }, default = 1, width = 1, useDesc = true },
   { type = "toggle", key = "record", name = "Record snapshots for bug reports", default = false, width = 1, useDesc = false },
   { type = "toggle", key = "export", name = "Export snapshots (copy window)", default = false, width = 1, useDesc = false },
   { type = "toggle", key = "printDebug", name = "Print debug to chat", default = false, width = 1, useDesc = false },

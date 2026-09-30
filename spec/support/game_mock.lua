@@ -5,6 +5,7 @@ local G = {}
 G.EXTRA_NAMES = {
   [53817] = "Maelstrom Weapon", [49281] = "Lightning Shield", [16280] = "Flurry",
   [30823] = "Shamanistic Rage", [2825] = "Bloodlust", [32182] = "Heroism", [16166] = "Elemental Mastery",
+  [52127] = "Water Shield",
   [8050] = "Flame Shock", [17364] = "Stormstrike",
   [3599] = "Searing Totem", [8190] = "Magma Totem", [2894] = "Fire Elemental Totem",
   [8232] = "Windfury Weapon", [8024] = "Flametongue Weapon", [8017] = "Rockbiter Weapon",

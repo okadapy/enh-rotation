@@ -83,12 +83,13 @@ describe("aura", function()
 
   it("has custom options with defaults in config", function()
     local host = t.c[1]
-    assert.are.same({ "scale", "seconds", "icons", "mode", "showReason", "showLust", "record", "export", "printDebug" },
+    assert.are.same({ "scale", "seconds", "icons", "mode", "showReason", "showLust", "shield", "record", "export", "printDebug" },
       optionKeys(host.authorOptions))
     assert.are.same(aura.defaultConfig(), host.config)
-    assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, showReason = true, showLust = true,
+    assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, showReason = true, showLust = true, shield = 1,
                       record = false, export = false, printDebug = false }, aura.defaultConfig())
     assert.are.equal("auto", host.authorOptions[4].values[1])
+    assert.are.same({ "auto", "Lightning Shield", "Water Shield" }, host.authorOptions[7].values)
   end)
 
   it("round-trips through the import string", function()
