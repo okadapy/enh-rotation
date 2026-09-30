@@ -54,6 +54,17 @@ describe("timeline layout", function()
     assert.are.equal("Stormstrike", L.reason)
   end)
 
+  it("keeps the rest of the plan in place while the first button is overdue", function()
+    local p = plan({ "stormstrike", 0.2 }, { "lavaLash", 1.7 }, { "lightningBolt", 3.2 })
+    local on = timeline.layout(p, S(), {}, 0.2)
+    local late = timeline.layout(p, S(), {}, 0.6) -- pressed 0.4 s late: nothing moves
+    assert.are.equal(60, late.icons[1].x)
+    assert.are.near(on.icons[2].x, late.icons[2].x, 1e-9)
+    assert.are.near(on.icons[3].x, late.icons[3].x, 1e-9)
+    local before = timeline.layout(p, S(), {}, 0.1) -- before it is due, all run down
+    assert.is_true(before.icons[2].x > on.icons[2].x)
+  end)
+
   it("pushes overlapping icons to the right", function()
     local L = timeline.layout(plan({ "stormstrike", 0 }, { "lavaLash", 0.3 }), S(), {}, 0)
     assert.are.near(113, L.icons[2].x, 1e-9)

@@ -62,11 +62,16 @@ function M.layout(plan, S, opts, elapsed)
   local L = { nowX = o.nowX, icons = {}, ticks = {}, window = nil, gcd = nil, reason = nil,
               dots = math.max(0, math.min(5, mw)) }
   local prev
-  for _, st in ipairs((plan and plan.steps) or {}) do
+  local steps = (plan and plan.steps) or {}
+  -- While the first button is overdue (not pressed yet) the rest of the plan waits with it: the
+  -- next retime (every 0.25 s) puts them back by exactly this lateness, so sliding on meanwhile
+  -- made every later icon run left and jump back right four times a second.
+  local late = steps[1] and math.max(0, elapsed - (steps[1].at or 0)) or 0
+  for i, st in ipairs(steps) do
     if #L.icons >= o.icons then break end
     local meta = spells.byKey[st.key]
     if meta then
-      local t = math.max(0, (st.at or 0) - elapsed)
+      local t = math.max(0, (st.at or 0) - elapsed + (i > 1 and late or 0))
       local big = #L.icons == 0
       local size = big and o.big or o.small
       local x = M.xOf(t, o)
