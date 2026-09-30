@@ -292,6 +292,34 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.equal("lightningBolt", plan.steps[1].key)
   end)
 
+  -- a held "swing, then Bolt" plan shifted until the swing is 0.03 s away
+  local function nearSwing(mhNext)
+    return busy({ buffs = { mw = { stacks = 3, remains = 20 } },
+                  swing = { attacking = true, mh = { next = mhNext, speed = 2.6 }, oh = { next = 1.5, speed = 2.6 } } })
+  end
+
+  it("replaying 'swing, then Bolt' 0.04 s before the swing still waits for the swing", function()
+    local S = nearSwing(0.03)
+    local v, steps = search.evaluate(S, { { key = "lightningBolt", at = 0.04, reason = "after swing - no clip", afterSwing = true } })
+    assert.is_number(v)
+    assert.are.near(0.04, steps[1].at, 1e-9)
+    assert.is_true(steps[1].afterSwing)
+    local now = search.evaluate(S, { { key = "lightningBolt", at = 0, reason = "" } })
+    assert.is_true(v > now, ("after the swing %.0f, now %.0f"):format(v, now))
+  end)
+
+  it("a planned wait shorter than READY_EPS is kept, not turned into 'press now'", function()
+    local _, steps = search.evaluate(nearSwing(0.03), { { key = "lightningBolt", at = 0.02, reason = "" } })
+    assert.are.near(0.02, steps[1].at, 1e-9)
+  end)
+
+  it("a swing that comes later than planned is still waited for; one already done is not", function()
+    local _, late = search.evaluate(nearSwing(0.08), { { key = "lightningBolt", at = 0.04, reason = "", afterSwing = true } })
+    assert.are.near(0.08 + require("model").WAIT_SWING_PAD, late[1].at, 1e-9)
+    local _, done = search.evaluate(nearSwing(2.5), { { key = "lightningBolt", at = 0.02, reason = "", afterSwing = true } })
+    assert.are.near(0.02, done[1].at, 1e-9)
+  end)
+
   it("3 stacks: waits for the main-hand swing, then weaves Lightning Bolt without a clip", function()
     local S = busy({
       buffs = { mw = { stacks = 3, remains = 20 } },
@@ -302,5 +330,6 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.equal("lightningBolt", plan.steps[1].key)
     assert.is_true(plan.steps[1].at >= 0.29 and plan.steps[1].at < 0.45, "at=" .. plan.steps[1].at)
     assert.are.equal("after swing - no clip", plan.steps[1].reason)
+    assert.is_true(plan.steps[1].afterSwing)
   end)
 end)

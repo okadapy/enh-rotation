@@ -10,6 +10,7 @@ M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing
 M.WEAVE = { lightningBolt = true, chainLightning = true }
 M.PER_FIRST = 1 -- beam places kept for the best chains of every first button (diversity)
 M.DIVERSITY = 0.05 -- ... if their score is within this share of the layer's best
+M.SWING_SLACK = 0.3 -- replay: an "after swing" step waits for a swing at most this much later than planned
 M.IDLE_MIN = 1.0 -- a plan whose first button waits this long gets a button tried in front of it
 
 M.REASONS = {
@@ -161,21 +162,14 @@ local function finalScore(o, node, rootNow)
   return v + o.value.terminal(S)
 end
 
-local function extend(o, node, a, rootNow)
+-- replay one step: wait exactly a.readyIn (> 0), then press
+local function extend(o, node, a, rootNow, afterSwing)
   local S, v = node.S, node.v
-  if a.key == "waitSwing" then
-    if node.waited or S.now + a.readyIn - rootNow >= o.horizon then return nil end
-    local S1, d = o.model.wait(S, a.readyIn)
-    return { S = S1, v = v + waitValue(o, S, S1, d), steps = node.steps, depth = node.depth,
-             waited = true, afterSwing = true }
-  end
-  local afterSwing = node.afterSwing
-  if a.readyIn > M.READY_EPS then
+  if a.readyIn > 1e-9 then
     if S.now + a.readyIn - rootNow >= o.horizon then return nil end
     local S1, d = o.model.wait(S, a.readyIn)
     v = v + waitValue(o, S, S1, d)
     S = S1
-    afterSwing = false
   end
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
@@ -183,7 +177,7 @@ local function extend(o, node, a, rootNow)
   v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   local steps = {}
   for i, s in ipairs(node.steps) do steps[i] = s end
-  steps[#steps + 1] = { key = a.key, at = at, reason = M.reason(S, a.key, afterSwing) }
+  steps[#steps + 1] = { key = a.key, at = at, reason = M.reason(S, a.key, afterSwing), afterSwing = afterSwing or nil }
   return { S = S2, v = v, steps = steps, depth = node.depth + 1 }
 end
 
@@ -235,11 +229,12 @@ local function candidate(o, node, a, rootNow)
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
   local c = { parent = node, a = a, depth = node.depth + 1, at = at,
               first = node.first or (node.virtual and node.parent.first) or a.key }
+  c.afterSwingStep = afterSwing or nil
   if (waited or node.virtual) and m.peekWait then
     -- S is a scratch state: keep what the step text needs now, rebuild the rest on demand
     c.reason = M.reason(S, a.key, afterSwing)
   else
-    c.pre, c.reasonAfterSwing = S, afterSwing
+    c.pre = S
   end
   local S2, dmg = peekApply(S, a.key, o.horizon - at)
   c.v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
@@ -255,7 +250,8 @@ function stepsOf(c)
   else
     local steps = {}
     for i, st in ipairs(parent) do steps[i] = st end
-    steps[#steps + 1] = { key = c.a.key, at = c.at, reason = c.reason or M.reason(c.pre, c.a.key, c.reasonAfterSwing) }
+    steps[#steps + 1] = { key = c.a.key, at = c.at, reason = c.reason or M.reason(c.pre, c.a.key, c.afterSwingStep),
+                          afterSwing = c.afterSwingStep }
     c.steps = steps
   end
   return c.steps
@@ -475,8 +471,15 @@ local function evaluateFrom(o, S, steps, truncate)
       if not truncate then return nil end
       break
     end
-    local planned = st.at - (node.S.now - rootNow)
-    local c = extend(o, node, { key = st.key, readyIn = math.max(r, planned) }, rootNow)
+    -- the planned wait is kept exactly (a residual cooldown under READY_EPS counts as ready, as in
+    -- the search); an "after swing" step waits for the swing even if it comes a little later
+    local wait = st.at - (node.S.now - rootNow)
+    if r > M.READY_EPS and r > wait then wait = r end
+    if st.afterSwing then
+      local sw = o.model.swingIn and o.model.swingIn(node.S)
+      if sw and sw > wait and sw <= wait + M.SWING_SLACK then wait = sw end
+    end
+    local c = extend(o, node, { key = st.key, readyIn = wait }, rootNow, st.afterSwing)
     if not c then break end
     c.steps[#c.steps].reason = st.reason
     node = c

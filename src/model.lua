@@ -630,16 +630,21 @@ function M.actions(S)
     local r = M.readyIn(S, meta.key)
     if r then out[#out + 1] = { key = meta.key, readyIn = r } end
   end
-  local sw = S.swing
-  if sw and sw.attacking and alive(S) and S.target.range == "melee" then
-    local nxt = math.huge
-    for _, h in ipairs(M.HANDS) do
-      if sw[h] and sw[h].next then nxt = math.min(nxt, sw[h].next) end
-    end
-    local r = nxt + M.WAIT_SWING_PAD
-    if r < M.HORIZON then out[#out + 1] = { key = "waitSwing", readyIn = r } end
-  end
+  local r = M.swingIn(S)
+  if r and r < M.HORIZON then out[#out + 1] = { key = "waitSwing", readyIn = r } end
   return out
+end
+
+-- time until just after the next own swing (what waitSwing waits); nil = no swings coming
+function M.swingIn(S)
+  local sw = S.swing
+  if not (sw and sw.attacking and alive(S) and S.target.range == "melee") then return nil end
+  local nxt = math.huge
+  for _, h in ipairs(M.HANDS) do
+    if sw[h] and sw[h].next then nxt = math.min(nxt, sw[h].next) end
+  end
+  if nxt == math.huge then return nil end
+  return nxt + M.WAIT_SWING_PAD
 end
 
 return M
