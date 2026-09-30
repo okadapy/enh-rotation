@@ -363,6 +363,27 @@ describe("runtime", function()
     assert.are.equal("ENHROT_SHOW", G.sent[1][1])
   end)
 
+  for _, case in ipairs({ { "dead or a ghost", { playerDead = true } }, { "on a flight path", { taxi = true } },
+                          { "in a vehicle", { vehicle = true } }, { "mounted out of combat", { mounted = true, inCombat = false } } }) do
+    it("hides the timeline and does not plan when " .. case[1], function()
+      local rt = start(nil, case[2])
+      runtime.update(rt, 0.3)
+      assert.are.equal(0, #calls)
+      assert.is_false(rt.tl.frame.shown)
+      for k in pairs(case[2]) do G.cfg[k] = nil end
+      rt.pending = { kind = "aura" }
+      runtime.update(rt, 0.3)
+      assert.are.equal(1, #calls)
+      assert.is_true(rt.tl.frame.shown)
+    end)
+  end
+
+  it("plans when mounted in combat", function()
+    local rt = start(nil, { mounted = true })
+    runtime.update(rt, 0.3)
+    assert.are.equal(1, #calls)
+  end)
+
   it("does not plan without a hostile target", function()
     local rt = start(nil, { target = { exists = false } })
     runtime.update(rt, 0.3)

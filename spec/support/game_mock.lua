@@ -99,6 +99,7 @@ end
 
 -- cfg: now, level, mana, manaMax, int, hp, hpMax, ap, sp={[school]=n}, crit, spellCrit, ratings={[cr]=n}, hitMod,
 -- speed={mh,oh}, damage={minMH,maxMH,minOH,maxOH}, latencyMs, raid, party, moving, inCombat,
+-- playerDead, taxi, vehicle, mounted,
 -- known={[id]=true}, bookOnly={[id]=true}, costs={[name]=n}, castMs={[name]=ms}, cooldowns={[name]={start,dur}},
 -- inRange={[name]=0|1}, interact, auras={[unit]={HELPFUL={...},HARMFUL={...}}} (name,count,expires,caster,id),
 -- target={exists,enemy,level,hp,hpMax,guid,classification,dead,player}, totems={[slot]={name,start,dur}},
@@ -185,7 +186,7 @@ function G.install(cfg)
     return (t and t.enemy ~= false) and 1 or nil
   end
   _G.UnitIsDeadOrGhost = function(u)
-    if u == "player" then return nil end
+    if u == "player" then return cfg.playerDead and 1 or nil end
     local t = tgt()
     return (t and t.dead) and 1 or nil
   end
@@ -222,6 +223,10 @@ function G.install(cfg)
   _G.GetNumPartyMembers = function() return cfg.party or 0 end
   _G.GetUnitSpeed = function() return cfg.moving and 7 or 0 end
   _G.UnitAffectingCombat = function() return cfg.inCombat ~= false and 1 or nil end
+  _G.UnitOnTaxi = function() return cfg.taxi and 1 or nil end
+  _G.UnitInVehicle = function() return cfg.vehicle and 1 or nil end
+  _G.UnitHasVehicleUI = function() return cfg.vehicle and 1 or nil end
+  _G.IsMounted = function() return cfg.mounted and 1 or nil end
   _G.UnitCastingInfo = function(u)
     local c = u == "player" and cfg.casting
     if not c then return nil end

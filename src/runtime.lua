@@ -339,6 +339,16 @@ local function work(rt)
   return M.show(rt, p:view(S.now), S, S.now)
 end
 
+-- nothing to suggest: dead or a ghost, on a flight path, in a vehicle, mounted out of combat
+-- (UnitInVehicle / UnitHasVehicleUI exist since 3.0; checked anyway, like IsCurrentSpell)
+function M.inactive()
+  if UnitIsDeadOrGhost("player") then return "dead" end
+  if UnitOnTaxi and UnitOnTaxi("player") then return "taxi" end
+  if (UnitInVehicle and UnitInVehicle("player")) or (UnitHasVehicleUI and UnitHasVehicleUI("player")) then return "vehicle" end
+  if IsMounted and IsMounted() and not UnitAffectingCombat("player") then return "mounted" end
+  return nil
+end
+
 function M.step(rt, dt)
   rt.elapsed = rt.elapsed + (dt or 0)
   if not rt.shown then
@@ -350,6 +360,21 @@ function M.step(rt, dt)
   if rt.pending and M.THROTTLED[rt.pending.kind] and rt.elapsed < M.MIN_GAP then return work(rt) end
   local ev = rt.pending or { kind = "pulse" }
   rt.pending, rt.elapsed = nil, 0
+  if M.inactive() then
+    -- the timeline is hidden and the planner starts afresh afterwards
+    if not rt.inactive then
+      rt.inactive = true
+      rt.planner, rt.searching, rt.lastFirst = M.newPlanner(), false, nil
+      rt.plan = { value = 0, steps = {} }
+    end
+    rt.tl:stop() -- again after a wake-up, which shows the timeline
+    return false
+  end
+  if rt.inactive then
+    rt.inactive = false
+    rt.tl:start()
+    ev = { kind = "target" }
+  end
   local now = GetTime()
   rt.ctx.now = now
   local S = snapshot.build(rt.ctx)
