@@ -22,6 +22,8 @@ M.EVENTS = {
 M.RESCAN = { SPELLS_CHANGED = true, LEARNED_SPELL_IN_TAB = true, PLAYER_LEVEL_UP = true, CHARACTER_POINTS_CHANGED = true, PLAYER_TALENT_UPDATE = true }
 M.PRIORITY = { cast = 6, target = 5, swing = 4, aura = 3, totem = 2, power = 1, pulse = 0 }
 M.WAIT_KEYS = { waitSwing = true, wait = true }
+M.THROTTLED = { aura = true, power = true, swing = true }
+M.MIN_GAP = 0.1
 M.LUST_IDS = { 2825, 32182 }
 M.DEATH = { UNIT_DIED = true, UNIT_DESTROYED = true, PARTY_KILL = true }
 M.WOLVES = spells.byKey.feralSpirit.duration or 45
@@ -244,6 +246,8 @@ function M.update(rt, dt)
     WeakAuras.ScanEvents("ENHROT_SHOW")
   end
   if not rt.pending and rt.elapsed < M.PULSE then return false end
+  -- in raids target auras change nearly every frame: minor events wait a little, casts do not
+  if rt.pending and M.THROTTLED[rt.pending.kind] and rt.elapsed < M.MIN_GAP then return false end
   local ev = rt.pending or { kind = "pulse" }
   rt.pending, rt.elapsed = nil, 0
   local now = GetTime()
