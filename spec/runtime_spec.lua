@@ -452,17 +452,36 @@ describe("runtime", function()
     end)
   end
 
-  -- talents are matched by their English names
-  it("warns once in chat when no talent is read at level 10 or above (non-English client?)", function()
+  -- talents are matched by localized names (GetSpellInfo of each talent's rank-1 spell) and English names
+  it("warns once in chat when points are spent but no talent is recognized", function()
     local rt = start(nil, { level = 80, talents = { { { "Elementarschutz", 3 } } } })
     assert.are.equal(1, #G.printed)
-    assert.truthy(G.printed[1]:find("talents not detected (non-English client?)", 1, true))
+    assert.truthy(G.printed[1]:find("talents not recognized", 1, true))
     runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
     assert.are.equal(1, #G.printed)
   end)
 
-  it("does not warn below level 10 or when a talent is read", function()
+  it("reads talents on a Russian client through the spell-id names, without a warning", function()
+    local rt = start(nil, { level = 80, spellNames = { [51528] = "Оружие водоворота", [16256] = "Шквал" },
+                            talents = { { { "Оружие водоворота", 5 }, { "Шквал", 5 } } } })
+    assert.are.equal(0, #G.printed)
+    assert.are.equal(5, rt.ctx.cache.talents.maelstromWeapon)
+    assert.are.equal(5, rt.ctx.cache.talents.flurry)
+    runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
+    assert.are.equal(5, rt.ctx.cache.talents.maelstromWeapon)
+  end)
+
+  it("does not warn with no points spent, before talents load, or when a talent is read", function()
     start(nil, { level = 9, talents = {} })
+    assert.are.equal(0, #G.printed)
+    -- a fresh level 10 (or 80) that has not spent a point, talents listed in any language
+    start(nil, { level = 10, talents = { { { "Elementarschutz", 0 }, { "Konvektion", 0 } } } })
+    assert.are.equal(0, #G.printed)
+    -- at login the client may list no talents yet
+    local rt = start(nil, { level = 80, talents = {} })
+    assert.are.equal(0, #G.printed)
+    G.cfg.talents = { { { "Maelstrom Weapon", 5 } } }
+    runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
     assert.are.equal(0, #G.printed)
     start(nil, { level = 80, talents = { { { "Maelstrom Weapon", 5 } } } })
     assert.are.equal(0, #G.printed)

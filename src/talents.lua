@@ -1,55 +1,82 @@
 local M = {}
 
--- Talents that change enhancement damage, costs or cooldowns. Matched by English name,
--- so tab and position do not matter (the client is enGB).
+-- Talents that change enhancement damage, costs or cooldowns. Matched by name, so tab and
+-- position do not matter. `id` is the talent's rank-1 spell (3.3.5a): GetTalentInfo takes the
+-- talent's name from that spell, so GetSpellInfo(id) gives the same text in the client's
+-- language (see M.localNames). The English `name` is always matched too, as a fallback.
 M.KEYS = {
-  { key = "convection", name = "Convection" },
-  { key = "concussion", name = "Concussion" },
-  { key = "callOfFlame", name = "Call of Flame" },
-  { key = "elementalDevastation", name = "Elemental Devastation" },
-  { key = "reverberation", name = "Reverberation" },
-  { key = "elementalFocus", name = "Elemental Focus" },
-  { key = "elementalFury", name = "Elemental Fury" },
-  { key = "improvedFireNova", name = "Improved Fire Nova" },
-  { key = "elementalPrecision", name = "Elemental Precision" },
-  { key = "stormEarthAndFire", name = "Storm, Earth and Fire" },
-  { key = "enhancingTotems", name = "Enhancing Totems" },
-  { key = "ancestralKnowledge", name = "Ancestral Knowledge" },
-  { key = "thunderingStrikes", name = "Thundering Strikes" },
-  { key = "improvedShields", name = "Improved Shields" },
-  { key = "elementalWeapons", name = "Elemental Weapons" },
-  { key = "shamanisticFocus", name = "Shamanistic Focus" },
-  { key = "flurry", name = "Flurry" },
-  { key = "weaponMastery", name = "Weapon Mastery" },
-  { key = "dualWieldSpecialization", name = "Dual Wield Specialization" },
-  { key = "dualWield", name = "Dual Wield" },
-  { key = "stormstrike", name = "Stormstrike" },
-  { key = "staticShock", name = "Static Shock" },
-  { key = "lavaLash", name = "Lava Lash" },
-  { key = "improvedStormstrike", name = "Improved Stormstrike" },
-  { key = "mentalQuickness", name = "Mental Quickness" },
-  { key = "mentalDexterity", name = "Mental Dexterity" },
-  { key = "unleashedRage", name = "Unleashed Rage" },
-  { key = "shamanisticRage", name = "Shamanistic Rage" },
-  { key = "maelstromWeapon", name = "Maelstrom Weapon" },
-  { key = "feralSpirit", name = "Feral Spirit" },
-  { key = "spiritWeapons", name = "Spirit Weapons" },
+  { key = "convection", id = 16039, name = "Convection" },
+  { key = "concussion", id = 16035, name = "Concussion" },
+  { key = "callOfFlame", id = 16038, name = "Call of Flame" },
+  { key = "elementalDevastation", id = 30160, name = "Elemental Devastation" },
+  { key = "reverberation", id = 16040, name = "Reverberation" },
+  { key = "elementalFocus", id = 16164, name = "Elemental Focus" },
+  { key = "elementalFury", id = 16089, name = "Elemental Fury" },
+  { key = "improvedFireNova", id = 16086, name = "Improved Fire Nova" },
+  { key = "elementalPrecision", id = 30672, name = "Elemental Precision" },
+  { key = "stormEarthAndFire", id = 51483, name = "Storm, Earth and Fire" },
+  { key = "enhancingTotems", id = 16259, name = "Enhancing Totems" },
+  { key = "ancestralKnowledge", id = 17485, name = "Ancestral Knowledge" },
+  { key = "thunderingStrikes", id = 16255, name = "Thundering Strikes" },
+  { key = "improvedShields", id = 16261, name = "Improved Shields" },
+  { key = "elementalWeapons", id = 16266, name = "Elemental Weapons" },
+  { key = "shamanisticFocus", id = 43338, name = "Shamanistic Focus" },
+  { key = "flurry", id = 16256, name = "Flurry" },
+  { key = "weaponMastery", id = 29082, name = "Weapon Mastery" },
+  { key = "dualWieldSpecialization", id = 30816, name = "Dual Wield Specialization" },
+  { key = "dualWield", id = 30798, name = "Dual Wield" },
+  { key = "stormstrike", id = 17364, name = "Stormstrike" },
+  { key = "staticShock", id = 51525, name = "Static Shock" },
+  { key = "lavaLash", id = 60103, name = "Lava Lash" },
+  { key = "improvedStormstrike", id = 51521, name = "Improved Stormstrike" },
+  { key = "mentalQuickness", id = 30812, name = "Mental Quickness" },
+  { key = "mentalDexterity", id = 51883, name = "Mental Dexterity" },
+  { key = "unleashedRage", id = 30802, name = "Unleashed Rage" },
+  { key = "shamanisticRage", id = 30823, name = "Shamanistic Rage" },
+  { key = "maelstromWeapon", id = 51528, name = "Maelstrom Weapon" },
+  { key = "feralSpirit", id = 51533, name = "Feral Spirit" },
+  { key = "spiritWeapons", id = 16268, name = "Spirit Weapons" },
 }
 
 local byName = {}
 for _, k in ipairs(M.KEYS) do byName[k.name] = k.key end
 
-function M.read(numTabs, numTalents, info)
+-- localized name -> key, from a GetSpellInfo-like function (the caller passes the game's one)
+function M.localNames(spellInfo)
+  local out = {}
+  for _, k in ipairs(M.KEYS) do
+    local name = spellInfo(k.id)
+    if name then out[name] = k.key end
+  end
+  return out
+end
+
+-- names: optional localized name -> key (M.localNames); the English names are the fallback
+function M.read(numTabs, numTalents, info, names)
   local out = {}
   for _, k in ipairs(M.KEYS) do out[k.key] = 0 end
   for tab = 1, numTabs() or 0 do
     for i = 1, numTalents(tab) or 0 do
       local name, _, _, _, rank = info(tab, i)
-      local key = name and byName[name]
+      local key = name and (names and names[name] or byName[name])
       if key then out[key] = rank or 0 end
     end
   end
   return out
+end
+
+-- Points spent in all talents, known to M.KEYS or not, and how many talents the client listed
+-- (0 while the talent data has not loaded yet).
+function M.spent(numTabs, numTalents, info)
+  local points, listed = 0, 0
+  for tab = 1, numTabs() or 0 do
+    for i = 1, numTalents(tab) or 0 do
+      listed = listed + 1
+      local _, _, _, _, rank = info(tab, i)
+      points = points + (rank or 0)
+    end
+  end
+  return points, listed
 end
 
 -- A typical leveling enhancement path (3.3.5a), one point per level from 10: key and ranks

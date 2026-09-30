@@ -47,7 +47,7 @@ local function namesOf(ids, strip)
   return out
 end
 
-function M.scan()
+function M.scan(talentNames)
   local c = {
     names = {}, keyByName = {}, known = {},
     buffNames = namesOf(M.BUFFS), debuffNames = namesOf(M.DEBUFFS),
@@ -74,7 +74,7 @@ function M.scan()
       end
     end
   end
-  c.talents = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo)
+  c.talents = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo, talentNames)
   return c
 end
 
