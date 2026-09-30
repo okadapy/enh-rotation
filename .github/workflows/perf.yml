@@ -1,0 +1,45 @@
+# Скорость поиска (spec/perf_spec.lua) — отдельно от релиза: Release её не ждёт, сбой здесь
+# релиз не останавливает, а виден в PR и в Actions.
+# * Работа поиска в инструкциях Lua и мусор на поиск от машины не зависят: превышение лимита —
+#   настоящая регрессия (поиск стал делать заметно больше работы или снова выделяет состояния),
+#   шаг падает.
+# * Время зависит от машины: общий раннер GitHub медленнее и шумнее контейнера, поэтому лимиты
+#   времени умножены на ENHROT_PERF_FACTOR=2 (и кадр — 2 × BUDGET_MS). Шум это проходит, поиск
+#   вдвое медленнее — нет; но и тогда только предупреждение: по времени на чужой машине решать
+#   нельзя, решают шаг выше и локальный прогон (docker compose run --rm test busted --tags=perf).
+name: Perf
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Работа и мусор поиска (от машины не зависят)
+        run: docker compose run --rm test busted --tags=perf --exclude-tags=timing
+
+      - name: Время поиска (лимиты × 2)
+        id: timing
+        continue-on-error: true
+        shell: bash # с -o pipefail: шаг падает вместе с busted, а не по tee
+        run: docker compose run --rm -e ENHROT_PERF_FACTOR=2 test busted --tags=timing | tee timing.log
+
+      - name: Предупреждение о времени
+        if: steps.timing.outcome == 'failure'
+        run: |
+          line=$(grep -m1 '^perf:' timing.log || echo "perf: см. лог шага")
+          echo "::warning title=Время поиска::${line} — даже с лимитами × 2. Проверить локально: docker compose run --rm test busted --tags=perf"

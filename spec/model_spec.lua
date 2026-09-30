@@ -965,6 +965,59 @@ describe("model working copies (search speed)", function()
     assert.are_not.equal(S.target.ss, n.target.ss)
     assert.are_not.equal(S.swing.mh, n.swing.mh)
   end)
+
+  -- a search's real states are filled into arena tables (fillState) instead of cloneState's new
+  -- ones: every field cloneState reads must come over the same way. The sentinel marks any field
+  -- of S, S.target or S.buffs a model version reads, so a field added to cloneState only fails here.
+  it("an arena state carries exactly cloneState's fields", function()
+    local function sentinel(t)
+      return setmetatable(t, { __index = function(_, k) return "sentinel " .. tostring(k) end })
+    end
+    for _, over in ipairs({ {}, { totems = { fire = { kind = "searing", remains = 3 } }, target = { range = "30", meleeIn = 2 } },
+                            { buffs = { rage = 5, flurry = { charges = 2, remains = 10 } }, pets = { wolves = 20 },
+                              inflight = { flameShock = 0.5 } } }) do
+      local S = fixtures.state(over)
+      S.memo = { arena = model.newArena() }
+      sentinel(S.target)
+      sentinel(S.buffs)
+      sentinel(S)
+      local want = model.cloneState(S)
+      for _ = 1, 2 do -- a new arena table, then a reused one
+        local got = model.clone(S)
+        assert.is_table(got.pool)
+        local view = {}
+        for k, v in pairs(got) do if k ~= "pool" then view[k] = v end end
+        assert.are.same(want, view)
+        model.release(S.memo.arena)
+        S.memo.arena = model.newArena()
+      end
+    end
+  end)
+
+  it("apply and wait on arena states give exactly what they give on new tables, reused or not", function()
+    local arena = model.newArena()
+    for _ = 1, 2 do
+      for _, S in ipairs(states()) do
+        local A = util.copy(S)
+        A.memo = { arena = arena }
+        for _, a in ipairs(model.actions(S)) do
+          if a.key ~= "waitSwing" then
+            local S2, d2, t2 = model.apply(S, a.key)
+            local A2, dA, tA = model.apply(A, a.key)
+            assert.are.equal(d2, dA, a.key)
+            assert.are.equal(t2, tA, a.key)
+            assert.are.same(view(S2), view(A2), a.key)
+            local W, dw = model.wait(S2, 2.3)
+            local V, dv = model.wait(A2, 2.3)
+            assert.are.equal(dw, dv, a.key)
+            assert.are.same(view(W), view(V), a.key)
+          end
+        end
+      end
+      model.release(arena) -- every table goes back and is filled again in the second round
+      arena = model.newArena()
+    end
+  end)
 end)
 
 describe("model.cooldownAllowed", function()

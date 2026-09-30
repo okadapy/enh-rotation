@@ -375,6 +375,35 @@ describe("search on the real model (wowsims rules) #integration", function()
     end
   end)
 
+  -- the model's states of a search come from an arena that goes back when it ends: a search paused
+  -- while others run whole (and give their tables back), and the same search again, change nothing
+  it("level 80: searches interleaved with other searches, and repeated, give the same plans", function()
+    local Sc = require("scenario")
+    local list = { Sc.state(80), busy({ buffs = { mw = { stacks = 3, remains = 20 } } }),
+                   busy({ buffs = { rage = 10 }, target = { fs = 0 } }), Sc.state(54, { target = { range = "30" } }) }
+    local whole = {}
+    for i, S in ipairs(list) do whole[i] = search.best(S) end
+    local t = 0
+    local jobs = {}
+    for i, S in ipairs(list) do jobs[i] = search.start(S, { clock = function() t = t + 0.3; return t end }) end
+    local done = 0
+    while done < #list do
+      done = 0
+      for i, job in ipairs(jobs) do
+        if job:run(2) then done = done + 1 end
+        search.best(list[#list + 1 - i]) -- a whole search in between, on the scratch buffers and free lists too
+      end
+    end
+    for i, S in ipairs(list) do
+      local again = search.best(S)
+      for _, p in ipairs({ jobs[i].result, again }) do
+        assert.are.equal(keys(whole[i]), keys(p), "state " .. i)
+        assert.are.equal(whole[i].value, p.value, "state " .. i)
+        assert.are.equal(whole[i].nodes, p.nodes, "state " .. i)
+      end
+    end
+  end)
+
   -- the best plan whose first press is `key` (only that button at the root)
   local function forcedFirst(S, key)
     local real, rootNow = require("model"), S.now

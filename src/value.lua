@@ -115,21 +115,8 @@ function M.step(S, S2, dmg, manaSpent, price)
   return v
 end
 
-local function alive(S)
-  local t = S.target
-  return t and t.exists ~= false and t.enemy ~= false and not t.dead and (t.hp == nil or t.hp > 0)
-end
-
--- seconds of `remains` that still count: at most `cap` (TAIL), and not after the target dies
-local function lifetime(S, remains, cap)
-  remains = remains or 0
-  cap = cap or M.TAIL
-  if remains > cap then remains = cap end
-  local ttd = S.target.ttd
-  if ttd and ttd < remains then remains = ttd end
-  if remains < 0 then return 0 end
-  return remains
-end
+-- lifetime(S, remains, cap), written out where it is needed (every end state runs it): the
+-- seconds of `remains` that still count, at most `cap` (TAIL) and not after the target dies (ttd)
 
 -- Flame Shock is not capped at TAIL: "it can simply be recast later" does not hold for a DoT
 -- that a recast overwrites (3.3.5a: the ticks left are lost). Its whole remaining duration counts,
@@ -148,8 +135,10 @@ local function fsCap(S, damage)
 end
 
 -- remaining periodic damage (continuous dps, same as model.advance), at the discount
+-- (lifetime() and fsCap's memo inlined: this runs for every end state)
 local function periodicValue(S, damage)
-  local fs = S.target.fs or 0
+  local t = S.target
+  local fs = t.fs or 0
   local fire = S.totems and S.totems.fire
   local src = fire and fire.kind and M.FIRE_SOURCE[fire.kind]
   local fireLeft = src and (fire.remains or 0) or 0
@@ -157,27 +146,32 @@ local function periodicValue(S, damage)
   if fs <= 0 and fireLeft <= 0 and wolves <= 0 then return 0 end
   -- one lookup for all sources when the damage module offers it (the search's memo)
   local r = damage.rates and damage.rates(S)
+  local ttd = t.ttd
   local v = 0
-  if fs > 0 then v = v + (r and r.flameShock or damage.periodic(S, "flameShock")) * lifetime(S, fs, fsCap(S, damage)) end
+  if fs > 0 then
+    local m = S.memo
+    local cap = m and m.fsCap
+    if not cap then cap = fsCap(S, damage) end
+    local left = fs > cap and cap or fs -- lifetime(S, fs, cap)
+    if ttd and ttd < left then left = ttd end
+    if left < 0 then left = 0 end
+    v = v + (r and r.flameShock or damage.periodic(S, "flameShock")) * left
+  end
   if fireLeft > 0 then
     -- Searing Totem out of reach: only the time after the target comes within 20 yards counts
-    local span = lifetime(S, fireLeft)
+    local span = fireLeft > M.TAIL and M.TAIL or fireLeft -- lifetime(S, fireLeft)
+    if ttd and ttd < span then span = ttd end
+    if span < 0 then span = 0 end
     if src == "searingTotem" and damage.fireUptime then span = damage.fireUptime(S, src, span) end
     v = v + (r and r[src] or damage.periodic(S, src)) * span
   end
-  if wolves > 0 then v = v + (r and r.feralSpirit or damage.periodic(S, "feralSpirit")) * lifetime(S, wolves) end
+  if wolves > 0 then
+    local left = wolves > M.TAIL and M.TAIL or wolves -- lifetime(S, wolves)
+    if ttd and ttd < left then left = ttd end
+    if left < 0 then left = 0 end
+    v = v + (r and r.feralSpirit or damage.periodic(S, "feralSpirit")) * left
+  end
   return v * M.DISCOUNT
-end
-
--- A: damage.actionTable(S) (nil without the search's memo), looked up once in terminal
-local function maelstromValue(S, damage, A)
-  local mw = S.buffs and S.buffs.mw
-  local stacks = (mw and mw.stacks) or 0
-  if stacks > 5 then stacks = 5 end
-  if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
-  local lb = A and A.lightningBolt
-  if lb == nil then lb = damage.action(S, "lightningBolt") end
-  return stacks * M.MW_SHARE * lb * M.DISCOUNT
 end
 
 -- The shock slot (Earth and Flame Shock share the cooldown) is worth its better use: Earth Shock,
@@ -273,7 +267,11 @@ local function autoValue(S, damage)
   local water = S.totems and S.totems.water
   if water and (water.remains or 0) > 0 then
     local dps = (amh > 0 and amh / mh.speed or 0) + (aoh > 0 and aoh / oh.speed or 0)
-    v = v + lifetime(S, water.remains) * M.SUPPORT * dps * M.DISCOUNT
+    local left = water.remains > M.TAIL and M.TAIL or water.remains -- lifetime(S, water.remains)
+    local ttd = S.target.ttd
+    if ttd and ttd < left then left = ttd end
+    if left < 0 then left = 0 end
+    v = v + left * M.SUPPORT * dps * M.DISCOUNT
   end
   return v
 end
@@ -362,7 +360,9 @@ function M.rageValue(S, damage, live)
   local left = S.buffs and S.buffs.rage or 0
   if left > 0 and live and S.target.range == "melee" and S.swing and S.swing.attacking then
     local p = S.player
-    local now = rate * lifetime(S, left, M.RAGE_DURATION)
+    local ttd = S.target.ttd
+    if ttd and ttd < left then left = ttd end
+    local now = left > 0 and rate * left or 0
     local room = (p.manaMax or 0) - (p.mana or 0)
     if now > room then now = room > 0 and room or 0 end
     mana = mana + now
@@ -391,10 +391,24 @@ function M.terminal(S)
   local damage = D()
   -- one lookup of the per-buff action table for all parts (nothing below changes S's buffs)
   local A = damage.actionTable and damage.actionTable(S)
-  local live = alive(S)
-  local v = maelstromValue(S, damage, A) + readyValue(S, damage, A, live)
+  -- whether the target is alive, and Maelstrom stacks as a share of an instant Lightning Bolt
+  -- (inlined: this runs for every end state)
+  local t = S.target
+  local live = t and t.exists ~= false and t.enemy ~= false and not t.dead and (t.hp == nil or t.hp > 0)
+  local mael = 0
+  local mw = S.buffs and S.buffs.mw
+  local stacks = (mw and mw.stacks) or 0
+  if stacks > 5 then stacks = 5 end
+  if stacks > 0 and S.spells and S.spells.lightningBolt then
+    local lb = A and A.lightningBolt
+    if lb == nil then lb = damage.action(S, "lightningBolt") end
+    mael = stacks * M.MW_SHARE * lb * M.DISCOUNT
+  end
+  local v = mael + readyValue(S, damage, A, live)
   if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
-  if live then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage, A) end
+  if live then
+    v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
+  end
   return v
 end
 
