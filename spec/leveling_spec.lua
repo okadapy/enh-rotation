@@ -77,6 +77,28 @@ describe("leveling #integration", function()
     assert.is_true(keys.stormstrike == true, "no Stormstrike in the plan")
   end)
 
+  -- recorded in game (level 54, solo): Flame Shock and Lightning Bolts on the pull at 20-30 yd
+  -- spent the bar, and in melee Stormstrike, Earth Shock and Lava Lash could not be paid. The
+  -- mana for one press of each is kept while the mob is on its way; a Bolt that keeps the bar
+  -- above it is still fine. Mana: the reserve + one Bolt + a little, so a second Bolt dips below.
+  it("level 54 solo at 20 yd: no Lightning Bolt that leaves too little mana for Stormstrike", function()
+    local S = midFight(54)
+    S.target.range = "20"
+    assert.is_not_nil(S.spells.stormstrike)
+    local reserve = S.spells.stormstrike.cost + S.spells.earthShock.cost + S.spells.lavaLash.cost
+    S.player.mana = reserve + S.spells.lightningBolt.cost + 10
+    local mana, bolts = S.player.mana, 0
+    for _, st in ipairs(Sc.best(S).steps) do
+      local sp = S.spells[st.key]
+      mana = mana - (sp and sp.cost or 0)
+      if st.key == "lightningBolt" or st.key == "chainLightning" then
+        bolts = bolts + 1
+        assert.is_true(mana >= reserve, ("%s at %.1f s leaves %d mana, reserve %d"):format(st.key, st.at, mana, reserve))
+      end
+    end
+    assert.is_true(bolts >= 1, "the Bolt the mana above the reserve pays for is still cast")
+  end)
+
   it("level 25: Earth Shock while Flame Shock ticks", function()
     local S = midFight(25)
     S.target.fs = 10

@@ -93,6 +93,21 @@ describe("value.manaPrice", function()
   end)
 end)
 
+describe("value.manaReserve", function()
+  it("solo: one press of each known Stormstrike, Earth Shock and Lava Lash", function()
+    local S = fixtures.state({ mode = "solo" })
+    local sp = S.spells
+    assert.are.equal(sp.stormstrike.cost + sp.earthShock.cost + sp.lavaLash.cost, value.manaReserve(S))
+    S.spells.lavaLash, S.spells.stormstrike = nil, nil -- before level 40
+    assert.are.equal(sp.earthShock.cost, value.manaReserve(S))
+  end)
+
+  it("group and raid keep no reserve: mana is nearly free there", function()
+    assert.are.equal(0, value.manaReserve(fixtures.state({ mode = "group" })))
+    assert.are.equal(0, value.manaReserve(fixtures.state({ mode = "raid" })))
+  end)
+end)
+
 describe("value.terminal", function()
   local function base(over)
     -- Fire Nova just pressed (full 10 s cooldown) so a fire totem does not also add Fire Nova value
@@ -209,6 +224,44 @@ describe("value.terminal", function()
     local dps = damage.auto(long, "mh") / long.swing.mh.speed + damage.auto(long, "oh") / long.swing.oh.speed
     assert.is_true(value.SUPPORT > 0 and value.SUPPORT <= 0.1)
     assert.are.near((value.TAIL - 2) * value.SUPPORT * dps * value.DISCOUNT, value.terminal(long) - value.terminal(short), 1e-6)
+  end)
+
+  -- stub damage: Stormstrike 2000 (351 mana), Earth Shock 1800 (791), Lava Lash 1500 (176)
+  describe("solo mana reserve while the target is on its way", function()
+    local function at(mana, over)
+      local o = { mode = "solo", player = { mana = mana }, target = { range = "20", fs = 0 } }
+      for k, v in pairs(over or {}) do o[k] = v end
+      return base(o)
+    end
+
+    it("mana the end state lacks costs the melee presses it cannot pay for, at full damage", function()
+      local full = value.terminal(at(2000))
+      assert.are.near(full, value.terminal(at(value.manaReserve(at(0)))), 1e-6)
+      -- 600 buys Stormstrike + Lava Lash (527): Earth Shock is lost
+      assert.are.near(full - 1800, value.terminal(at(600)), 1e-6)
+      -- 400 buys Stormstrike (351) or Lava Lash, the better one: Earth Shock and Lava Lash are lost
+      assert.are.near(full - 3300, value.terminal(at(400)), 1e-6)
+      assert.are.near(full - 5300, value.terminal(at(100)), 1e-6)
+    end)
+
+    it("only buttons the character knows are kept for", function()
+      local function known(mana)
+        local S = at(mana); S.spells.stormstrike = nil -- before level 40
+        return S
+      end
+      assert.are.equal(967, value.manaReserve(known(0)))
+      -- 900 buys Earth Shock (791) or Lava Lash (176), not both: Lava Lash is lost
+      assert.are.near(value.terminal(known(967)) - 1500, value.terminal(known(900)), 1e-6)
+    end)
+
+    it("not in melee, not for a dead target, not in a group", function()
+      local melee = function(m) return at(m, { target = { range = "melee", fs = 0 } }) end
+      assert.are.near(value.terminal(melee(2000)), value.terminal(melee(100)), 1e-6)
+      local dead = function(m) return at(m, { target = { range = "20", fs = 0, dead = true } }) end
+      assert.are.near(value.terminal(dead(2000)), value.terminal(dead(100)), 1e-6)
+      local group = function(m) return at(m, { mode = "group" }) end
+      assert.are.near(value.terminal(group(2000)), value.terminal(group(100)), 1e-6)
+    end)
   end)
 
   it("survives a state without pets, spells, totems or auto-attack", function()
