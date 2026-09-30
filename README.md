@@ -22,8 +22,20 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 - **Зелёная полоса** — окно, в котором можно начать Lightning Bolt при 1–4 стаках Maelstrom Weapon, и удар оружием не задержится.
 - **Светлая полоса** — текущая общая перезарядка (GCD).
 - **5 точек справа сверху** — стаки Maelstrom Weapon.
-- **Иконка слева от черты** — предупреждение: нет Lightning Shield, нет чар на оружии, мало маны (пора Shamanistic Rage), цель слишком далеко, а в группе — «Bloodlust готов» (не показывается, если на тебе Sated/Exhaustion).
-- **Текст под крупной иконкой** — почему это действие, например `5 Maelstrom stacks` или `after swing - no clip`.
+- **Иконка слева от черты с текстом** — предупреждение или подсказка, когда жать нечего:
+  - `Auto-attack is off` — в ближнем бою без автоатаки нет ударов, стаков Maelstrom и маны от Shamanistic Rage;
+  - `Lightning Shield missing` / `Water Shield missing` (какой щит держать — настройка **Shield**);
+  - `Main-hand imbue missing` / `Off-hand imbue missing` — нет чар на оружии;
+  - `Low mana: Shamanistic Rage`, `Out of mana` (в ближнем бою ни на что не хватает маны и Rage не готов), `Drink` (вне боя без цели, маны меньше половины);
+  - `Target out of range`, `Move into melee`;
+  - `Bloodlust ready` / `Heroism ready` — только в группе, в бою с врагом, без Sated/Exhaustion и если включено в настройках.
+- **Текст под крупной иконкой** — почему это действие:
+  - Bolt / Chain Lightning: `5 stacks: instant`, `pull: target out of melee`, `3 stacks, fits before swing` (каст влезает до удара), `2 stacks: hard-cast`;
+  - шоки: `Flame Shock not ticking`, `refresh Flame Shock`, `Flame Shock up: Earth Shock`;
+  - тотемы огня: `1 target: Searing Totem`, `3 targets: Magma Totem`, `3 targets: Fire Nova`;
+  - `mana: Shamanistic Rage`, `Stormstrike: +20% nature`, `big cooldown`, `totems expiring`.
+
+Без цели видна только иконка предупреждения, сама лента скрыта.
 
 Когда подсказка меняется:
 
@@ -44,8 +56,13 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 - **Mode** — `auto` (сам выбирает соло/группа/рейд), `solo`, `group`, `raid`. `pvp` зарезервирован и пока работает как группа.
   - В соло мана дорогая (её потом придётся пить), урон сверх здоровья моба ничего не стоит.
   - В группе и рейде мана почти бесплатная, пока её хватает до конца боя.
-- **Show reason under icon** — текст под крупной иконкой.
-- **Show Bloodlust ready in group** — значок «Bloodlust готов».
+- **Feral Spirit / Fire Elemental / Shamanistic Rage** — когда предлагать большие кулдауны:
+  - `auto` — на боссе, или если цель проживёт дольше половины действия кулдауна (волки 22,5 с, элементаль 60 с, Rage 7,5 с); если время жизни неизвестно, только на боссе;
+  - `boss only`, `always`, `never`.
+  По умолчанию волки и элементаль — `auto` (не тратить их на трэш), Rage — `always` (в соло это инструмент маны).
+- **Show reason under icon** — текст под крупной иконкой и у предупреждения.
+- **Show Bloodlust ready in group** — значок «Bloodlust готов» (по умолчанию выключен).
+- **Shield** — какой щит держать: `auto` (Lightning Shield, если не висит Water Shield), `Lightning Shield`, `Water Shield`. С Water Shield подсказчик не предлагает Lightning Shield.
 - **Record snapshots for bug reports** — записывать ситуации для отчёта об ошибке (до 30 штук) и журнал нажатий (последние 200).
 - **Export snapshots (copy window)** — открыть окно со строкой записанных данных для копирования в issue.
 - **Print debug to chat** — печатать план в чат при каждой смене первого действия.
@@ -79,7 +96,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 4. Разработчик: `docker compose run --rm test lua tools/build.lua import-snapshots <файл>` — файл со строкой экспорта или `WeakAuras.lua` (строку сохранённых данных WeakAuras 5.22 он раскодирует сам). В `spec/fixtures/recorded.lua` у нужного снимка дописать `expect = "<правильное действие>"` с комментарием, почему оно правильное. Потом `docker compose run --rm test busted spec/recorded_spec.lua`.
    Сводка по нажатиям: `docker compose run --rm test lua tools/build.lua presses <файл>` — версия, сколько нажатий последовало подсказке, медианная задержка реакции и самые частые расхождения («нажал X, подсказано Y»).
 
-Если в чате появилось `EnhRot stopped after an error - /reload to retry` — в расчёте случилась ошибка Lua. Подсказчик остановился, чтобы не сыпать ошибками каждый кадр. Сделать `/reload`, а если повторяется — прислать снимки и текст ошибки.
+Если в чате появилось `EnhRot error: …` — в расчёте случилась ошибка Lua. Подсказчик сбрасывает план и работает дальше; каждая ошибка печатается один раз. Если ошибок 5 за 10 с, он останавливается с сообщением `EnhRot stopped after an error - /reload to retry`. В обоих случаях прислать текст ошибки и снимки.
 
 ## Чем отличается от wowsims
 
@@ -94,7 +111,8 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 
 ## Ограничения
 
-- **Нужен английский клиент** (enUS/enGB). Таланты читаются по английским названиям. На клиенте на другом языке все таланты читаются как 0, и расчёт идёт так, будто их нет. Тогда в чате один раз появится `EnhRot: talents not detected (non-English client?)`.
+- **Только клиент 3.3.5a** (build 30300). На другом клиенте (WotLK Classic, Retail) аура не запускается и один раз пишет об этом в чат.
+- Таланты читаются на клиенте любого языка: названия берутся из самого клиента по номерам заклинаний. Если очки вложены, а ни одного нужного таланта не нашлось, в чате один раз появится `EnhRot: talents not recognized (unsupported client language?)`.
 
 - Число врагов рядом клиент 3.3.5a не отдаёт. Оно оценивается по боевому логу: кто бил тебя и кого бил ты за последние секунды.
 - Проки тринкетов, Flurry и расход зарядов Lightning Shield в расчёт пока не входят.
