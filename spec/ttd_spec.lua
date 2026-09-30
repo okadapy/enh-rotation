@@ -141,3 +141,89 @@ describe("ttd smoothed", function()
     assert.are.near(7, t:smoothed(106, "0xA"), 1e-6)
   end)
 end)
+
+describe("ttd with a prior", function()
+  it("nil prior: the same numbers as without one", function()
+    local a, b = ttd.new(), ttd.new()
+    local hp = 1.0
+    for i, h in ipairs({ 0.07, 0, 0.02, 0.09, 0, 0, 0.08, 0.01, 0.06, 0, 0.1 }) do
+      hp = hp - h
+      local now = 100 + 0.5 * i
+      a:add(now, "0xA", hp); b:add(now, "0xA", hp)
+      assert.are.equal(a:estimate(now, "0xA"), b:estimate(now, "0xA", nil))
+      assert.are.equal(a:smoothed(now, "0xA"), b:smoothed(now, "0xA", nil))
+    end
+  end)
+
+  it("before the regression has enough data it is the prior, not unknown", function()
+    local t = ttd.new()
+    t:add(100, "0xA", 0.9)
+    local v, src = t:smoothed(100, "0xA", 9)
+    assert.are.equal(9, v)
+    assert.are.equal("prior", src)
+    t:add(100.5, "0xA", 0.85)
+    t:add(101, "0xA", 0.8) -- 3 samples but 1 s of span: still the prior
+    assert.are.equal("prior", select(2, t:estimate(101, "0xA", 8)))
+    assert.are.near(8, t:estimate(101, "0xA", 8), 1e-9)
+  end)
+
+  -- recorded: a mob at 88% said 128 s (whole-percent steps, a swing or two in the samples); it
+  -- was at 45% 2.8 s later. The young regression must not outweigh the expected kill rate.
+  it("a young regression that sees almost no decline is pulled to the prior", function()
+    local t = ttd.new()
+    feed(t, "0xA", 100, { 0.89, 0.89, 0.88 }) -- 2 s, 1% down: the regression alone says ~176 s
+    assert.is_true(t:estimate(102, "0xA") > 100)
+    local v, src = t:smoothed(102, "0xA", 7)
+    assert.are.equal("blend", src)
+    assert.is_true(v < 12, ("%.1f"):format(v))
+  end)
+
+  it("the regression wins as data accumulates", function()
+    -- the mob loses 5%/s; the prior thinks twice as fast
+    local function share(seconds)
+      local t = ttd.new()
+      local n = seconds * 4
+      for i = 0, n do t:add(100 + i * 0.25, "0xA", 1 - 0.05 * i * 0.25) end
+      local now = 100 + seconds
+      local hp = 1 - 0.05 * seconds
+      local truth, prior = hp / 0.05, hp / 0.1
+      local v = t:estimate(now, "0xA", prior)
+      local rate = 1 / v
+      return (rate - 1 / prior) / (1 / truth - 1 / prior) -- 0: the prior, 1: the regression
+    end
+    local s2, s5, s10 = share(2), share(5), share(10)
+    assert.is_true(s2 > 0 and s2 < 0.5, ("%.2f"):format(s2))
+    assert.is_true(s5 > s2 and s10 > s5, ("%.2f %.2f %.2f"):format(s2, s5, s10))
+    assert.is_true(s10 > 0.7, ("%.2f"):format(s10))
+  end)
+
+  it("a flat regression (nothing is killing the mob) lengthens the prior", function()
+    local t = ttd.new()
+    feed(t, "0xA", 100, { 0.8, 0.8, 0.8, 0.8, 0.8 })
+    assert.is_nil(t:estimate(104, "0xA"))
+    local v = t:estimate(104, "0xA", 10)
+    assert.is_true(v > 15, ("%.1f"):format(v))
+  end)
+
+  it("a prior of zero or a dead mob gives zero", function()
+    local t = ttd.new()
+    t:add(100, "0xA", 0.5)
+    assert.are.equal(0, t:estimate(100, "0xA", 0))
+    t:add(101, "0xA", 0)
+    assert.are.equal(0, t:estimate(101, "0xA", 5))
+  end)
+
+  it("smoothing runs across the switch from prior to blend", function()
+    local t = ttd.new()
+    local hp, now = 1.0, 100
+    local last
+    for i = 1, 12 do
+      t:add(now, "0xA", hp)
+      local v = t:smoothed(now, "0xA", hp / 0.1) -- the prior agrees with the real 10%/s
+      assert.are.near(hp / 0.1, v, 1.0)
+      if last then assert.is_true(v < last) end
+      last = v
+      hp, now = hp - 0.05, now + 0.5
+    end
+  end)
+end)
