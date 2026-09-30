@@ -2,6 +2,7 @@ local spells = require("spells")
 local talents = require("talents")
 local damage = require("damage")
 local value = require("value")
+local util = require("util")
 
 local M = {}
 
@@ -297,6 +298,9 @@ function M.targetInfo(ctx, c, now, playerLevel)
   if deb.fs then t.fs = deb.fs.remains end
   if deb.ss then t.ss = { charges = deb.ss.count, remains = deb.ss.remains } end
   t.range = M.heldRange(ctx, guid, M.range(c), now)
+  -- fighting us: both in combat, or our Flame Shock on it (model: a mob like that runs in)
+  t.isPlayer = UnitIsPlayer("target") and true or false
+  t.inCombat = (t.fs > 0 or (UnitAffectingCombat("target") and UnitAffectingCombat("player"))) and true or false
   return t
 end
 
@@ -327,6 +331,16 @@ function M.targetTtd(ctx, S, now)
   local guid = t.enemy and ctx.ttd and UnitGUID("target")
   if not guid then return end
   t.ttd, t.ttdSource = ctx.ttd:smoothed(now, guid, M.ttdPrior(S))
+end
+
+-- A mob fighting us at 20-30 yards comes to melee (model.advance counts meleeIn down); as
+-- model.canApproach: solo only (in a group it runs to the tank), never a player. A mob not in
+-- combat stays where it is: it comes only when pulled (model.applyOn), or the player walks in.
+function M.meleeIn(S)
+  local t = S.target
+  local eta = util.approachEta(t.range)
+  if eta and S.mode == "solo" and t.exists and t.enemy and t.inCombat and not t.isPlayer then return eta end
+  return nil
 end
 
 function M.swingInfo(ctx, now, weapons)
@@ -380,6 +394,7 @@ function M.build(ctx)
     rage = remains(mine.rage), lust = remains(mine.lust), em = remains(mine.em),
   }
   S.target = M.targetInfo(ctx, c, now, S.player.level)
+  S.target.meleeIn = M.meleeIn(S)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }

@@ -603,6 +603,120 @@ describe("model", function()
   end)
 end)
 
+describe("model: a mob running in (target.meleeIn)", function()
+  local ETA20, ETA30 = 20 / 7, 30 / 7
+
+  local function coming(range, meleeIn)
+    local S = base()
+    S.mode = "solo"
+    S.target.range, S.target.inCombat, S.target.meleeIn = range, true, meleeIn
+    S.enemies = { melee = 0, nearby = 1 }
+    return S
+  end
+
+  it("counts meleeIn down: 30 yards -> 20 yards -> melee", function()
+    local S = coming("30", ETA30)
+    local S1 = model.wait(S, 1)
+    assert.are.near(ETA30 - 1, S1.target.meleeIn, 1e-9)
+    assert.are.equal("30", S1.target.range)
+    local S2 = model.wait(S1, 1)
+    assert.are.near(ETA30 - 2, S2.target.meleeIn, 1e-9)
+    assert.are.equal("20", S2.target.range) -- 10 yards run, within 20 now
+    local S3 = model.wait(S2, 3)
+    assert.is_nil(S3.target.meleeIn)
+    assert.are.equal("melee", S3.target.range)
+    -- the input states are untouched
+    assert.are.equal("30", S.target.range)
+    assert.are.near(ETA30, S.target.meleeIn, 1e-9)
+  end)
+
+  it("swings start when the mob arrives, not before (a ready swing timer fires at once)", function()
+    local S = coming("20", 1.0)
+    S.swing.mh.next, S.swing.oh.next = 0, 0.5
+    local S2, dmg = model.wait(S, 2)
+    -- both hands ready at the arrival (1.0 s), next ones 2.6 s later
+    assert.are.near(damage.auto(S2, "mh") + damage.auto(S2, "oh"), dmg, 1e-6)
+    assert.are.near(2.6 - 1.0, S2.swing.mh.next, 1e-9)
+    -- one step or two around the arrival: the same numbers
+    local A, d1 = model.wait(S, 1.0)
+    local B, d2 = model.wait(A, 1.0)
+    assert.are.near(dmg, d1 + d2, 1e-6)
+    assert.are.near(S2.swing.mh.next, B.swing.mh.next, 1e-9)
+    assert.are.near(S2.swing.oh.next, B.swing.oh.next, 1e-9)
+    -- a static target at 20 yards gets no swings at all
+    S.target.meleeIn = nil
+    local _, none = model.wait(S, 2)
+    assert.are.equal(0, none)
+  end)
+
+  it("a cast still running when the mob arrives holds its swings until the cast ends", function()
+    local S = coming("20", 1.0)
+    S.swing.mh.next, S.swing.oh.next = 0, 0
+    local S2, dmg = model.apply(S, "lightningBolt") -- 0 stacks: 2.5 s, swings reset at 2.5 + latency
+    assert.are.near(damage.action(S, "lightningBolt"), dmg, 1e-6)
+    assert.are.equal("melee", S2.target.range)
+    assert.are.near(2.6 - (2.5 - 2.5 - 0.15), S2.swing.mh.next, 1e-9)
+  end)
+
+  it("melee buttons are ready when it arrives, shocks when it is within 20 yards", function()
+    local S = coming("30", ETA30)
+    assert.are.near(ETA30, model.readyIn(S, "stormstrike"), 1e-9)
+    assert.are.near(ETA30, model.readyIn(S, "lavaLash"), 1e-9)
+    assert.are.near(ETA30 - ETA20, model.readyIn(S, "earthShock"), 1e-9)
+    assert.are.equal(0, model.readyIn(S, "lightningBolt"))
+    S.gcdRemains = 2.0 -- the later of the two
+    assert.are.near(2.0, model.readyIn(S, "earthShock"), 1e-9)
+    assert.are.near(ETA30, model.readyIn(S, "stormstrike"), 1e-9)
+    S.target.meleeIn = 6.5 -- past the horizon
+    assert.is_nil(model.readyIn(S, "stormstrike"))
+  end)
+
+  it("the pull: a spell on a solo mob at range brings it in from the moment it lands", function()
+    local S = coming("20", nil)
+    S.target.inCombat = false
+    local F = model.apply(S, "flameShock")
+    assert.are.near(ETA20 - 1.5, F.target.meleeIn, 1e-9)
+    S.target.range = "30"
+    local L = model.apply(S, "lightningBolt")
+    assert.are.near(2.5 + 0.15 + ETA30 - 2.5, L.target.meleeIn, 1e-9)
+    assert.are.equal("30", L.target.range)
+    -- nothing on the target: nothing comes
+    assert.is_nil(model.apply(S, "lightningShield").target.meleeIn)
+    -- an approach already on its way is not restarted
+    S.target.meleeIn = 1.0
+    assert.are.equal("melee", model.apply(S, "lightningBolt").target.range)
+  end)
+
+  it("no approach for players, in a group or from far away", function()
+    local S = coming("20", nil)
+    S.target.isPlayer = true
+    assert.is_nil(model.apply(S, "flameShock").target.meleeIn)
+    S.target.isPlayer, S.mode = false, "group"
+    assert.is_nil(model.apply(S, "flameShock").target.meleeIn)
+    S.mode, S.target.range = "solo", "far"
+    assert.is_nil(model.apply(S, "lightningShield").target.meleeIn)
+  end)
+
+  it("the damage memo follows the range: Fire Nova hits the arrived mob", function()
+    local S = coming("20", 1.0)
+    S.memo = {}
+    S.totems.fire = { kind = "searing", remains = 30 }
+    -- at range nothing stands by the totem: 0 goes into the memo of this search
+    assert.are.equal(0, damage.targets(S, "fireNova"))
+    assert.are.equal(0, damage.action(S, "fireNova"))
+    assert.are.equal(0, damage.rates(S).magmaTotem)
+    local W = model.wait(S, 1.5)
+    assert.are.equal("melee", W.target.range)
+    assert.are.equal(1, damage.targets(W, "fireNova"))
+    local fresh = util.copy(W); fresh.memo = nil
+    assert.is_true(damage.action(fresh, "fireNova") > 0)
+    assert.are.near(damage.action(fresh, "fireNova"), damage.action(W, "fireNova"), 1e-9)
+    assert.is_true(damage.rates(fresh).magmaTotem > 0)
+    assert.are.near(damage.rates(fresh).magmaTotem, damage.rates(W).magmaTotem, 1e-9)
+    assert.is_true(model.readyIn(W, "fireNova") ~= nil)
+  end)
+end)
+
 describe("model working copies (search speed)", function()
   -- contract part of a state, without the scratch bookkeeping
   local function view(S)
@@ -627,7 +741,13 @@ describe("model working copies (search speed)", function()
                            { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
                            { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } },
                            { target = { range = "far" }, enemies = { melee = 0, nearby = 1 },
-                             totems = { fire = { kind = "searing", remains = 30 } } } }) do
+                             totems = { fire = { kind = "searing", remains = 30 } } } },
+                           -- a mob running in: arriving inside a GCD, inside a cast, after it; a pull
+                           { mode = "solo", target = { range = "20", meleeIn = 0.9, inCombat = true }, enemies = { melee = 0 } },
+                           { mode = "solo", target = { range = "30", meleeIn = 3.1, inCombat = true }, enemies = { melee = 0 },
+                             swing = { mh = { next = 0.2 } } },
+                           { mode = "solo", target = { range = "20" }, enemies = { melee = 0 }, buffs = { mw = { stacks = 2, remains = 20 } } },
+                           { mode = "solo", target = { range = "30" }, enemies = { melee = 0 } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S
@@ -662,6 +782,17 @@ describe("model working copies (search speed)", function()
     assert.are.equal(d1, e1)
     assert.are.equal(d2, e2)
     assert.are.same(view(S2), view(P2))
+  end)
+
+  it("a peek does not leave the mob's arrival in the scratch buffer for the next peek of the same state", function()
+    local S = fixtures.state({ mode = "solo", target = { range = "20", meleeIn = 0.5, inCombat = true }, enemies = { melee = 0 } })
+    S.memo = {}
+    local P = model.peekWait(S, 1)
+    assert.are.equal("melee", P.target.range)
+    P = model.peekWait(S, 0.2)
+    assert.are.equal("20", P.target.range)
+    assert.are.near(0.3, P.target.meleeIn, 1e-9)
+    assert.are.same(view(model.wait(S, 0.2)), view(P))
   end)
 
   it("advancing a scratch state in place equals wait", function()

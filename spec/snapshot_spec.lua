@@ -141,6 +141,55 @@ describe("snapshot", function()
     assert.are.equal("melee", snapshot.build(ctx()).target.range)
   end)
 
+  describe("a mob running in", function()
+    local known = { [top("stormstrike")] = true, [top("earthShock")] = true, [top("lightningBolt")] = true }
+    local TWENTY = { Stormstrike = 0, ["Earth Shock"] = 1, ["Lightning Bolt"] = 1 }
+    local THIRTY = { Stormstrike = 0, ["Earth Shock"] = 0, ["Lightning Bolt"] = 1 }
+    local function target(extra)
+      local t = { level = 54, hp = 3000, hpMax = 3000, guid = "Creature-9" }
+      for k, v in pairs(extra or {}) do t[k] = v end
+      return t
+    end
+
+    it("a mob fighting us at 20 or 30 yards is in melee in distance / 7 yd/s", function()
+      install({ known = known, inRange = TWENTY, target = target({ inCombat = true }) })
+      local t = snapshot.build(ctx()).target
+      assert.is_true(t.inCombat)
+      assert.is_false(t.isPlayer)
+      assert.are.near(20 / 7, t.meleeIn, 1e-9)
+      install({ known = known, inRange = THIRTY, target = target({ inCombat = true }) })
+      assert.are.near(30 / 7, snapshot.build(ctx()).target.meleeIn, 1e-9)
+    end)
+
+    it("our Flame Shock on it counts as fighting us", function()
+      install({ known = known, inRange = TWENTY, inCombat = false, target = target({ inCombat = false }),
+                auras = { target = { HARMFUL = { { name = "Flame Shock", expires = 109, caster = "player" } } } } })
+      local t = snapshot.build(ctx()).target
+      assert.is_true(t.inCombat)
+      assert.are.near(20 / 7, t.meleeIn, 1e-9)
+    end)
+
+    it("stays put: out of combat, a player, in a group, in melee or far away", function()
+      install({ known = known, inRange = TWENTY, target = target({ inCombat = false }) })
+      local t = snapshot.build(ctx()).target
+      assert.is_false(t.inCombat)
+      assert.is_nil(t.meleeIn)
+      -- the mob fights someone else while we are out of combat
+      install({ known = known, inRange = TWENTY, inCombat = false, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+      install({ known = known, inRange = TWENTY, target = target({ inCombat = true, player = true }) })
+      t = snapshot.build(ctx()).target
+      assert.is_true(t.isPlayer)
+      assert.is_nil(t.meleeIn)
+      install({ known = known, inRange = TWENTY, party = 2, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+      install({ known = known, inRange = { Stormstrike = 1 }, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+      install({ known = known, inRange = { Stormstrike = 0, ["Earth Shock"] = 0, ["Lightning Bolt"] = 0 }, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+    end)
+  end)
+
   describe("range hysteresis", function()
     local known = { [top("stormstrike")] = true, [top("earthShock")] = true, [top("lightningBolt")] = true }
     local MELEE = { Stormstrike = 1, ["Earth Shock"] = 1, ["Lightning Bolt"] = 1 }

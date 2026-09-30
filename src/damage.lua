@@ -218,7 +218,8 @@ end
 --   in a group the pack is on the tank, not hitting the shaman, so `melee` would miss it);
 -- * target not in melee: the fight is at range, only enemies hitting the shaman in melee (within
 --   5 yards) stand in reach; 0 = the totem hits nothing.
--- Depends only on target range and enemy counts, which stay the same inside one search (memo).
+-- Depends only on target range and enemy counts. The counts stay the same inside one search, the
+-- range can change (a mob running in, model.advance): memo keys carry "target in melee" (flags).
 function M.totemTargets(S)
   local e, t = S.enemies, S.target
   if t and t.exists and t.enemy and t.range == "melee" then
@@ -334,9 +335,22 @@ end
 
 -- Per-search memo. search.best puts a fresh S.memo on its root state; model.clone shares it
 -- along the whole tree. Inside one search player stats, weapons, talents, target level and
--- enemy counts never change, so these results depend only on their argument and on whether
--- Lightning Shield charges (Static Shock) and Stormstrike charges (+20% nature) are up.
+-- enemy counts never change, so these results depend only on their argument, on whether
+-- Lightning Shield charges (Static Shock) and Stormstrike charges (+20% nature) are up and on
+-- whether the target is in melee (totemTargets: a mob running in reaches melee mid-search).
 -- Without S.memo (direct calls, tests) everything is computed as before.
+-- memo slot of S's buffs: Lightning Shield charges up (+1), Stormstrike charges up (+2),
+-- target in melee (+4). Auto attacks (swingStats) do not depend on the range.
+local function flags(S)
+  local f = 1
+  local t = S.target
+  local ls, ss = S.buffs.ls, t.ss
+  if ls and ls.charges and ls.charges > 0 then f = 2 end
+  if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+  if t.range == "melee" then f = f + 4 end
+  return f
+end
+
 -- memo[name][arg] for results that depend only on the argument
 local function memoize(name)
   local raw = M[name]
@@ -347,22 +361,21 @@ local function memoize(name)
     if not slot then slot = {}; m[name] = slot end
     local k = a
     if k == nil then k = 0 end
+    -- Magma Totem hits what stands by the totem: that depends on the target being in melee
+    if k == "magmaTotem" and S.target.range == "melee" then k = "magmaTotem@melee" end
     local v = slot[k]
     if v == nil then v = raw(S, a); slot[k] = v end
     return v
   end
 end
 
--- memo[name][flags][arg]: flags = Lightning Shield charges up (+1), Stormstrike charges up (+2)
+-- memo[name][flags][arg], flags(S) above
 local function memoizeFlags(name)
   local raw = M[name]
   M[name] = function(S, a)
     local m = S.memo
     if not m then return raw(S, a) end
-    local f = 1
-    local ls, ss = S.buffs.ls, S.target.ss
-    if ls and ls.charges and ls.charges > 0 then f = 2 end
-    if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    local f = flags(S)
     local slot = m[name]
     if not slot then slot = {}; m[name] = slot end
     local sub = slot[f]
@@ -377,10 +390,7 @@ end
 function M.actionTable(S)
   local m = S.memo
   if not m then return nil end
-  local f = 1
-  local ls, ss = S.buffs.ls, S.target.ss
-  if ls and ls.charges and ls.charges > 0 then f = 2 end
-  if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+  local f = flags(S)
   local slot = m.action
   if not slot then slot = {}; m.action = slot end
   local sub = slot[f]
@@ -400,11 +410,12 @@ memoizeFlags("action")
 M.PERIODIC = { "flameShock", "searingTotem", "magmaTotem", "fireElemental", "feralSpirit" }
 function M.rates(S)
   local m = S.memo
-  local r = m and m.rates
+  local slot = S.target.range == "melee" and "ratesMelee" or "rates" -- Magma Totem (totemTargets)
+  local r = m and m[slot]
   if r then return r end
   r = {}
   for _, src in ipairs(M.PERIODIC) do r[src] = M.periodic(S, src) end
-  if m then m.rates = r end
+  if m then m[slot] = r end
   return r
 end
 
