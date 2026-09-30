@@ -18,6 +18,7 @@ M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightnin
 M.OOM_WEIGHT = 0.5           -- group/raid mana weight when the fight outlasts the mana
 M.FIGHT_MANA_PER_SEC = 0.003 -- net share of max mana spent per second (after regen), for the OOM projection
 M.READY_KEYS = { "stormstrike", "lavaLash", "earthShock", "fireNova" }
+M.RESERVE_KEYS = { "stormstrike", "earthShock", "lavaLash" } -- solo: the melee buttons the mana is kept for
 M.COOLDOWN = {}  -- base cooldowns of READY_KEYS (spells data)
 do
   local spells = require("spells")
@@ -182,10 +183,72 @@ local function autoValue(S, damage)
   return v
 end
 
+-- Solo: mana the core melee buttons need soon, one press of each known one: Stormstrike and Lava
+-- Lash come back in 8 and 6 s, Earth Shock shares its 6 s with Flame Shock, so about one of
+-- each per Stormstrike cycle. 0 outside solo: in a group the mana is nearly free.
+-- Pure and allocation-free.
+function M.manaReserve(S)
+  if S.mode ~= "solo" or not S.spells then return 0 end
+  local spells, keys = S.spells, M.RESERVE_KEYS
+  local cost = 0
+  for i = 1, #keys do
+    local sp = spells[keys[i]]
+    if sp and (sp.cost or 0) > 0 then cost = cost + sp.cost end
+  end
+  return cost
+end
+
+-- Damage of the reserve's presses that `mana` cannot pay for: the best set of them it still buys
+-- (at most 3 buttons, 8 sets, no allocation) against all of them.
+local function unpaid(S, mana, damage)
+  local spells, keys = S.spells, M.RESERVE_KEYS
+  local A = damage.actionTable and damage.actionTable(S)
+  local c1, c2, c3, d1, d2, d3 = 0, 0, 0, 0, 0, 0
+  local n = 0
+  for i = 1, #keys do
+    local key = keys[i]
+    local sp = spells[key]
+    if sp and (sp.cost or 0) > 0 then
+      local d = A and A[key]
+      if d == nil then d = damage.action(S, key) end
+      n = n + 1
+      if n == 1 then c1, d1 = sp.cost, d elseif n == 2 then c2, d2 = sp.cost, d else c3, d3 = sp.cost, d end
+    end
+  end
+  local all, best = d1 + d2 + d3, 0
+  for m1 = 0, 1 do
+    for m2 = 0, 1 do
+      for m3 = 0, 1 do
+        if m1 * c1 + m2 * c2 + m3 * c3 <= mana then
+          local d = m1 * d1 + m2 * d2 + m3 * d3
+          if d > best then best = d end
+        end
+      end
+    end
+  end
+  return all - best
+end
+
+-- Solo, while the target is still on its way (alive, not in melee): mana is priced by what it
+-- buys. The search sees 6 s ahead, so a Lightning Bolt on the pull that leaves the bar below the
+-- reserve costs only its drinking time inside the horizon; the melee buttons it starves come
+-- after. On arrival they are all ready at once and there is no drinking in the fight, so the
+-- presses the end state's mana cannot pay for are lost, not delayed: their full damage counts
+-- (no DISCOUNT), on top of the drinking manaPrice charged in step when the mana was spent.
+-- Above the reserve nothing changes. In melee it does not apply: the search itself weighs the
+-- melee buttons against each other and against idling there, and a press is what the reserve
+-- is for. A dead target leaves the next pull to the drinking price.
+local function reserveValue(S, damage)
+  if S.target.range == "melee" then return 0 end
+  local mana = S.player.mana or 0
+  if mana >= M.manaReserve(S) then return 0 end
+  return -unpaid(S, mana, damage)
+end
+
 function M.terminal(S)
   local damage = D()
   local v = maelstromValue(S, damage) + readyValue(S, damage)
-  if alive(S) then v = v + periodicValue(S, damage) + autoValue(S, damage) end
+  if alive(S) then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage) end
   return v
 end
 
