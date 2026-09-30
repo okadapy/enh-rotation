@@ -4,7 +4,7 @@ M.HORIZON = 6.0
 M.BEAM = 7
 M.DEPTH = 4
 M.BUDGET_MS = 2 -- per frame: a search runs in slices (search.start), never cut by the clock
-M.NODE_CAP = 220 -- the whole search stops after this many candidates (deterministic)
+M.NODE_CAP = 300 -- the whole search stops after this many candidates (deterministic)
 M.READY_EPS = 0.05
 M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
 M.PER_FIRST = 1 -- beam places kept for the best chains of every first button (diversity)
@@ -252,6 +252,10 @@ local function root(S)
   return r
 end
 
+-- stands in for the state before a step in value.step (manaSpent = 0, or its price given,
+-- reads only these): the tail to the horizon, a press in the buffer of the wait before it
+local PRE = { target = {} }
+
 -- Candidates are first evaluated on the model's scratch states (peekApply/peekWait, no
 -- allocation); only the few that enter the beam get a real state again (materialize).
 -- Both paths run the same model code on the same input, so the numbers are identical.
@@ -287,8 +291,19 @@ local function candidate(o, node, a, rootNow)
   else
     c.pre = S
   end
+  local val = o.value
+  if waited and m.peekApplyOver and val.manaPrice then
+    -- the waited state is read by nothing else: press in its own buffer (no second fill); what
+    -- value.step reads of the state before the press is taken first
+    local t = S.target
+    PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = S.mode, t.hp, t.hpMax, t.dead
+    local mana0, price = S.player.mana or 0, val.manaPrice(S)
+    local S2, dmg = m.peekApplyOver(S, a.key, o.horizon - at)
+    c.v = v + val.step(PRE, S2, dmg, mana0 - (S2.player.mana or 0), price)
+    return c, S2
+  end
   local S2, dmg = peekApply(S, a.key, o.horizon - at)
-  c.v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
+  c.v = v + val.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   return c, S2
 end
 
@@ -324,9 +339,6 @@ local function materialize(o, c)
   c.S = o.model.apply(pre, c.a.key, o.horizon - c.at)
 end
 
--- stands in for the state before the tail in value.step (manaSpent = 0 reads only these)
-local PRE = { target = {} }
-
 -- CS comes from a peek (a scratch state): pad it to the horizon in place
 -- the candidate's state again, as a scratch state
 local function peekState(o, c)
@@ -336,6 +348,8 @@ local function peekState(o, c)
   if not pre then
     if parent.virtual then
       pre = m.peekWait(parent.parent.S, parent.a.readyIn) -- weave children have no wait of their own
+    elseif m.peekApplyOver then
+      return (m.peekApplyOver(m.peekWait(parent.S, c.a.readyIn), c.a.key, o.horizon - c.at))
     else
       pre = m.peekWait(parent.S, c.a.readyIn)
     end
@@ -548,6 +562,15 @@ local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
   for i = i0, #steps do
     local st = steps[i]
     local r = o.model.readyIn(node.S, st.key)
+    if r == nil and st.afterSwing and o.model.swingIn then
+      -- the search tries a weave on the state after the swing: the mana Shamanistic Rage returns
+      -- with it can pay for a Bolt the state before cannot (a scratch state, read only here)
+      local sw = o.model.swingIn(node.S)
+      if sw and node.S.now + sw - rootNow < o.horizon then
+        local r2 = o.model.readyIn((o.model.peekWait or o.model.wait)(node.S, sw), st.key)
+        if r2 then r = sw + r2 end
+      end
+    end
     if r == nil then
       if not truncate then return nil end
       return node
@@ -600,17 +623,29 @@ function M.idle(S, opts)
   return finalScore(o, { S = r, v = 0, steps = {}, depth = 0 }, r.now)
 end
 
+-- A replay presses every step at its planned time or later, so a wait of IDLE_MIN before
+-- steps[i] needs one in the plan itself: none from steps[from] on, no replay needed.
+local function planHasGap(steps, from)
+  for i = from, #steps do
+    local prev = i > 1 and steps[i - 1].at or 0
+    if steps[i].at - prev >= M.IDLE_MIN - 1e-6 then return true end
+  end
+  return false
+end
+
 -- A wait of at least IDLE_MIN inside the plan (before its first step or between two steps): try
 -- each button that is ready when the wait starts in it. The beam compares chains by the number
 -- of buttons, so "the big ones later" can win the cut against "a small one in the gap, then the
 -- big ones" although the second is the better plan. Bounded: one replay per gap and ready button.
 function fillIdle(o, S, value, steps, check, budget)
   local rootNow = S.now
-  local start = { S = S, v = 0, steps = {}, depth = 0 }
+  -- the replay goes on from the last gap's (real, never changed) state: the steps before it stay
+  local node, i = { S = S, v = 0, steps = {}, depth = 0 }, 1
   local from = 1
-  while budget.replays > 0 do
-    local gapNode, gapAt = replay(o, start, steps, 1, rootNow, true, from)
+  while budget.replays > 0 and planHasGap(steps, from) do
+    local gapNode, gapAt = replay(o, node, steps, i, rootNow, true, from)
     if not gapAt then break end
+    node, i = gapNode, gapAt
     local ready = {}
     for _, a in ipairs(o.model.actions(gapNode.S)) do
       if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= steps[gapAt].key then ready[#ready + 1] = a.key end
