@@ -37,6 +37,11 @@ M.COOLDOWN_TTD = {
   fireElemental = M.TOTEM_DURATION.fireElemental / 2,
   shamanisticRage = M.RAGE_DURATION / 2,
 }
+-- "auto" is decided once per snapshot (snapshot.cooldownGate -> S.cdAllowed), with a latch per
+-- target: allowed at ttd >= need, it stays allowed on that target until ttd < need x RELEASE. A
+-- noisy estimate around the line (24, 21, 23, ...) flipped the first button on every update, and
+-- a gate read along the plan (ttd counts down) allowed a cooldown early in the plan only.
+M.COOLDOWN_RELEASE = 0.75
 M.LS_DURATION = duration("lightningShield", 600)
 M.INFLIGHT = 1.0
 M.TOTEM_REDROP = 12 -- = value.TAIL: remaining totem time past this is not valued
@@ -129,7 +134,7 @@ function M.cloneState(S)
   return {
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
-    cooldowns = S.cooldowns, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
@@ -286,7 +291,10 @@ local SPECIAL = {
 
 -- false: the search must not suggest key now (the player's option for that cooldown). Pure,
 -- no allocation; keys without an option are always allowed.
-function M.cooldownAllowed(S, key)
+-- latched: "auto" already allowed key on this target (snapshot's latch); it then holds down to
+-- need x COOLDOWN_RELEASE. An unknown ttd releases nothing (the estimate restarting says nothing
+-- new about the mob).
+function M.cooldownDecide(S, key, latched)
   local cds = S.cooldowns
   local mode = cds and cds[key]
   if mode == nil or mode == "always" then return true end
@@ -295,7 +303,17 @@ function M.cooldownAllowed(S, key)
   if t and t.isBoss then return true end
   if mode ~= "auto" then return false end -- "boss"
   local need, ttd = M.COOLDOWN_TTD[key], t and t.ttd
-  return need ~= nil and ttd ~= nil and ttd >= need
+  if need == nil then return false end
+  if latched then return ttd == nil or ttd >= need * M.COOLDOWN_RELEASE end
+  return ttd ~= nil and ttd >= need
+end
+
+-- the snapshot's decision (S.cdAllowed, carried unchanged along the plan) when there is one;
+-- a state without it (tests, old recordings) decides from its own target
+function M.cooldownAllowed(S, key)
+  local a = S.cdAllowed
+  if a then return a[key] ~= false end
+  return M.cooldownDecide(S, key, false)
 end
 
 function M.readyIn(S, key)
@@ -596,7 +614,7 @@ local function fillScratch(S, dt)
     n.gcd, n.latency = S.gcd, S.latency
     n.mode, n.weapons, n.talents, n.enemies, n.memo = S.mode, S.weapons, S.talents, S.enemies, S.memo
     n.shieldPref = S.shieldPref
-    n.cooldowns = S.cooldowns
+    n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant

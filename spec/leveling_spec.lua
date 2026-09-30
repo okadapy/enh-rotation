@@ -244,4 +244,26 @@ describe("long cooldowns by target #integration", function()
     local keys = planKeys(S)
     assert.is_true(keys.fireElemental or keys.feralSpirit or false)
   end)
+
+  -- the model counts ttd down along the plan: read per state, the gate let a target just above
+  -- the line have Feral Spirit now but not 2 s later (the plan waited for it in front). The
+  -- snapshot's decision (S.cdAllowed) holds for the whole plan.
+  it("auto: a target just above the line plans the cooldown as one far above it does", function()
+    local function steps(ttd)
+      local S = trash(DEFAULTS)
+      S.target.hpMax, S.target.hp, S.target.hpPct = 200000, 100000, 0.5
+      for _, sp in pairs(S.spells) do sp.cd = 10 end
+      Sc.cd(S, { feralSpirit = 2, stormstrike = 0, lavaLash = 0, shock = 0 })
+      S.target.fs, S.totems.fire = 15, { kind = "magma", remains = 30 }
+      S.target.ttd = ttd
+      S.cdAllowed = require("snapshot").cooldownGate({}, S, "Creature-1")
+      local out = {}
+      for i, st in ipairs(Sc.best(S).steps) do out[i] = ("%s@%.2f"):format(st.key, st.at) end
+      return table.concat(out, " ")
+    end
+    local far = steps(200)
+    assert.is_truthy(far:find("feralSpirit", 1, true), far)
+    assert.are.equal(far, steps(23))
+    assert.are.equal(far, steps(22.6))
+  end)
 end)

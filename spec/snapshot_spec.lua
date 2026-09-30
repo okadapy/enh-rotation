@@ -130,6 +130,60 @@ describe("snapshot", function()
     assert.are.equal(cds, snapshot.build(ctx({ cooldowns = cds })).cooldowns)
   end)
 
+  it("decides the long cooldowns' gate once per snapshot (S.cdAllowed), latched per target", function()
+    local cds = { feralSpirit = "auto", fireElemental = "never", shamanisticRage = "always" }
+    local ttd = 42
+    local c = ctx({ cooldowns = cds, ttd = { add = function() end, smoothed = function() return ttd end } })
+    install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-7" } })
+    assert.is_nil(snapshot.build(ctx()).cdAllowed) -- no options: nothing decided (model decides as before)
+    local S = snapshot.build(c)
+    assert.are.same({ feralSpirit = true, fireElemental = false, shamanisticRage = true }, S.cdAllowed)
+    assert.are.equal("Creature-7", c.cdLatch.guid)
+    ttd = 20 -- below 22.5, above 22.5 x 0.75: the latch holds
+    assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
+    ttd = 16 -- below 16.875: released
+    assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
+    ttd = 20 -- released: back to the plain line
+    assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
+    ttd = 23
+    assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
+    -- another target: a fresh latch
+    install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-8" } })
+    ttd = 20
+    assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
+    assert.are.equal("Creature-8", c.cdLatch.guid)
+  end)
+
+  it("cooldownGate: latch per GUID, reset on a target change or without options", function()
+    local model = require("model")
+    local need = model.COOLDOWN_TTD.feralSpirit
+    local function S(ttd, boss)
+      return { cooldowns = { feralSpirit = "auto", fireElemental = "boss" }, target = { ttd = ttd, isBoss = boss } }
+    end
+    local c = {}
+    assert.are.same({ feralSpirit = false, fireElemental = false, shamanisticRage = true }, snapshot.cooldownGate(c, S(need - 1), "A"))
+    assert.is_true(snapshot.cooldownGate(c, S(need), "A").feralSpirit)
+    for _, t in ipairs({ 24, 21, 23, 22, 25, 21, 17 }) do
+      assert.is_true(snapshot.cooldownGate(c, S(t), "A").feralSpirit, "ttd " .. t)
+    end
+    assert.is_true(snapshot.cooldownGate(c, S(nil), "A").feralSpirit) -- unknown ttd does not release
+    assert.is_false(snapshot.cooldownGate(c, S(need * 0.75 - 0.01), "A").feralSpirit)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "A").feralSpirit)
+    assert.is_true(snapshot.cooldownGate(c, S(30), "A").feralSpirit)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "B").feralSpirit) -- new target: no latch
+    snapshot.cooldownGate(c, S(30), "B")
+    assert.is_nil(snapshot.cooldownGate(c, { target = { ttd = 30 } }, "B"))
+    assert.is_nil(c.cdLatch)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "B").feralSpirit)
+    -- no target (nil GUID): nothing latches
+    snapshot.cooldownGate(c, S(30), nil)
+    assert.is_false(snapshot.cooldownGate(c, S(21), nil).feralSpirit)
+    -- a boss: allowed whatever the ttd, "boss" too
+    local b = snapshot.cooldownGate(c, S(1, true), "Boss")
+    assert.is_true(b.feralSpirit)
+    assert.is_true(b.fireElemental)
+  end)
+
   it("guesses mob health when the client only gives percent", function()
     install({ target = { level = 80, hp = 50, hpMax = 100 } })
     local S = snapshot.build(ctx())

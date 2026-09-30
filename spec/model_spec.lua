@@ -980,4 +980,48 @@ describe("model.cooldownAllowed", function()
     assert.is_true(p.target.isBoss)
     assert.is_true(model.cooldownAllowed(p, "feralSpirit"))
   end)
+
+  it("latched (snapshot's latch): auto holds down to need x COOLDOWN_RELEASE; unknown ttd holds too", function()
+    assert.are.equal(0.75, model.COOLDOWN_RELEASE)
+    local need = model.COOLDOWN_TTD.feralSpirit
+    assert.is_false(model.cooldownDecide(gated("auto", { ttd = need - 0.5 }), "feralSpirit", false))
+    assert.is_true(model.cooldownDecide(gated("auto", { ttd = need - 0.5 }), "feralSpirit", true))
+    assert.is_true(model.cooldownDecide(gated("auto", { ttd = need * 0.75 }), "feralSpirit", true))
+    assert.is_false(model.cooldownDecide(gated("auto", { ttd = need * 0.75 - 0.1 }), "feralSpirit", true))
+    assert.is_true(model.cooldownDecide(gated("auto", { ttd = nil }), "feralSpirit", true))
+    -- the latch changes only "auto"
+    assert.is_false(model.cooldownDecide(gated("never", { ttd = 600 }), "feralSpirit", true))
+    assert.is_false(model.cooldownDecide(gated("boss", { ttd = 600 }), "feralSpirit", true))
+  end)
+
+  it("S.cdAllowed (the snapshot's decision) wins over the state's own target", function()
+    local S = gated("auto", { ttd = 5 })
+    S.cdAllowed = { feralSpirit = true, fireElemental = false }
+    assert.is_true(model.cooldownAllowed(S, "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(S, "fireElemental"))
+    assert.is_true(model.cooldownAllowed(S, "stormstrike")) -- not in the table: not gated
+    S.cdAllowed.shamanisticRage = true
+    assert.are.equal(0, model.readyIn(S, "shamanisticRage"))
+    S.cdAllowed.shamanisticRage = false
+    assert.is_nil(model.readyIn(S, "shamanisticRage"))
+  end)
+
+  it("S.cdAllowed carries over along the plan (clone, apply, wait, peeks, a scratch refill)", function()
+    local S = gated("auto", { ttd = 23 })
+    S.cdAllowed = { feralSpirit = true, fireElemental = false, shamanisticRage = true }
+    local W = model.wait(S, 3) -- ttd 20 < 22.5 in the deeper state: the snapshot's decision stays
+    assert.are.equal(S.cdAllowed, W.cdAllowed)
+    assert.is_true(model.cooldownAllowed(W, "feralSpirit"))
+    assert.are.equal(S.cdAllowed, model.apply(S, "stormstrike").cdAllowed)
+    assert.are.equal(S.cdAllowed, model.clone(S, 1).cdAllowed)
+    local P = model.peekWait(S, 3)
+    assert.are.equal(S.cdAllowed, P.cdAllowed)
+    assert.are.equal(S.cdAllowed, model.peekApply(P, "stormstrike").cdAllowed)
+    -- a refill from another source without the decision drops it (fillScratch's "not same" path)
+    local O = gated("auto", { ttd = 23 })
+    model.peekWait(O, 0.1)
+    local Q = model.peekWait(O, 0.1)
+    assert.is_nil(Q.cdAllowed)
+    assert.are.equal(S.cdAllowed, model.peekWait(S, 0.1).cdAllowed)
+  end)
 end)

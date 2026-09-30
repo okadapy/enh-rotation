@@ -31,7 +31,9 @@ package.loaded.ttd = { new = function()
   return t
 end }
 package.loaded.planner = { new = function() return { update = function() return { value = 0, steps = {} } end } end }
-package.loaded.model = { castTime = function() return 1.0 end }
+-- snapshot decides the long cooldowns' gate through the model (snapshot_spec tests it)
+package.loaded.model = { castTime = function() return 1.0 end, COOLDOWN_TTD = { feralSpirit = 22.5 },
+                         cooldownDecide = function() return true end }
 local runtime = require("runtime")
 local planner = package.loaded.planner
 for _, n in ipairs(NEIGHBOURS) do package.loaded[n] = real[n] end
