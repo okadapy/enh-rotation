@@ -89,7 +89,10 @@ local CASES = {
   { name = "Phase 3: Flame Shock missing with 5 stacks",
     setup = function(S) S.buffs.mw = { stacks = 5, remains = 20 }; Sc.cd(S, { stormstrike = 4 }) end,
     expect = "lightningBolt",
-    alt = { flameShock = "Phase 3 preset puts Flame Shock (fight >= 8 s) above 5-stack LB; Default WF does the opposite" } },
+    alt = { flameShock = "wowsims Phase 3 preset puts Flame Shock (fight >= 8 s) above the 5-stack Bolt, Default WF " ..
+                         "the other way round. The model agrees with Phase 3 by a small margin: Flame Shock, then " ..
+                         "Chain Lightning 16128 against 15978 the other way (6 s horizon); with a 7 s horizon it " ..
+                         "would be Chain Lightning first (17201 against 17182)" } },
   { name = "Call of the Elements when the water totem is expiring",
     setup = function(S)
       S.totems.water.remains = 5; S.target.fs = 9; S.totems.fire = { kind = "magma", remains = 3 }
