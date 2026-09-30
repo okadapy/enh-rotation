@@ -3,7 +3,8 @@ local model = require("model")
 
 local M = {}
 
-M.DEFAULTS = { width = 340, height = 120, nowX = 60, seconds = 6, big = 64, small = 38, icons = 4, gap = 2, lerp = 12, showReason = true }
+M.DEFAULTS = { width = 340, height = 120, nowX = 60, seconds = 6, big = 64, small = 38, icons = 4, gap = 2, lerp = 12, showReason = true,
+               fade = 0.15 }
 M.ICON_Y = 70
 M.TICK_Y = 22
 M.WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -175,7 +176,7 @@ function TL:setup(parent, opts)
   self.alert:Hide()
   self.glow:Hide()
   self.reason:Hide()
-  self.plan, self.S, self.cur, self.busy = nil, nil, {}, false
+  self.plan, self.S, self.cur, self.alpha, self.busy = nil, nil, {}, {}, false
   self:start()
 end
 
@@ -231,16 +232,24 @@ function TL:tick(dt)
       if x then x = x + (it.x - x) * k else x = it.x end
       self.cur[id] = x
       seen[id] = true
+      -- a new icon fades in over o.fade seconds where it belongs instead of popping up
+      local a = self.alpha[id]
+      a = a and math.min(1, a + (dt or 0) / o.fade) or math.min(1, (dt or 0) / o.fade)
+      self.alpha[id] = a
       ic:SetTexture(it.icon)
+      ic:SetAlpha(a)
       place(ic, f, x, M.ICON_Y, it.size, it.size)
-      if it.big then place(self.glow, f, x, M.ICON_Y, it.size * 1.7, it.size * 1.7) end
+      if it.big then
+        place(self.glow, f, x, M.ICON_Y, it.size * 1.7, it.size * 1.7)
+        self.glow:SetAlpha(a)
+      end
     else
       ic:Hide()
     end
   end
   if not L.icons[1] then self.glow:Hide() end
   for key in pairs(self.cur) do
-    if not seen[key] then self.cur[key] = nil end
+    if not seen[key] then self.cur[key], self.alpha[key] = nil, nil end
   end
   for i, tk in ipairs(L.ticks) do
     local t = self.ticks[i]
