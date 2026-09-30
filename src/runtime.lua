@@ -176,7 +176,8 @@ function M.onCombatLog(rt, now, _, sub, src, _, _, dst, _, _, _, a2, _, a4)
     return
   end
   -- totems and wolves hit enemies too; enemies counts them as the player's
-  if sub == "SPELL_SUMMON" and src == pg and dst then mine[dst] = true end
+  -- Fire Elemental Totem summons the elemental itself: the totem's summons are ours too
+  if sub == "SPELL_SUMMON" and dst and (src == pg or (src and mine[src])) then mine[dst] = true end
   if src ~= pg and dst ~= pg and not (src and mine[src]) and not (dst and mine[dst]) then return end
   ctx.enemies:onEvent(now, sub, src, dst, pg)
   if src ~= pg then return end

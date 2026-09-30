@@ -373,6 +373,15 @@ describe("runtime", function()
     assert.are.equal(0, #rt.ctx.swing.calls)
   end)
 
+  it("keeps the Fire Elemental that the player's totem summons", function()
+    local rt = start()
+    runtime.onEvent(rt, "COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_SUMMON", "Player-1", "Me", 0x511, "Creature-78", "Fire Elemental Totem", 0x2111, 2894, "Fire Elemental Totem", 4)
+    runtime.onEvent(rt, "COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_SUMMON", "Creature-78", "Fire Elemental Totem", 0x2111, "Creature-79", "Greater Fire Elemental", 0x1111, 32982, "Fire Elemental Totem", 4)
+    assert.is_true(rt.mine["Creature-79"])
+    runtime.onEvent(rt, "COMBAT_LOG_EVENT_UNFILTERED", 0, "SWING_DAMAGE", "Creature-79", "Greater Fire Elemental", 0x1111, "Creature-3", "B", 0xa48, 500)
+    assert.are.equal("Creature-79", rt.ctx.enemies.calls[#rt.ctx.enemies.calls][3])
+  end)
+
   it("forgets time-to-die and summons when combat ends", function()
     local rt = start()
     rt.mine["Creature-77"] = true
