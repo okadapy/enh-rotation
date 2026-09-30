@@ -273,7 +273,7 @@ end
 
 function M.targetInfo(ctx, c, now, playerLevel)
   local t = { exists = false, enemy = false, level = 0, hp = 0, hpMax = 0, hpPct = 0, ttd = nil, range = "far",
-              fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
+              isBoss = false, fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
   if not UnitExists("target") or UnitIsDeadOrGhost("target") then
     if ctx.rangeHold then ctx.rangeHold.guid = nil end
     return t
@@ -281,6 +281,7 @@ function M.targetInfo(ctx, c, now, playerLevel)
   t.exists = true
   t.enemy = UnitCanAttack("player", "target") and true or false
   local level = UnitLevel("target") or 0
+  t.isBoss = level == -1 or UnitClassification("target") == "worldboss"
   if level <= 0 then
     level = playerLevel + 3
     t.guessed = true
@@ -401,6 +402,7 @@ function M.build(ctx)
   S.shieldPref = M.SHIELD_PREFS[ctx.shield] and ctx.shield or "auto"
   S.target = M.targetInfo(ctx, c, now, S.player.level)
   S.target.meleeIn = M.meleeIn(S)
+  S.cooldowns = ctx.cooldowns -- the player's options for the long cooldowns (read-only, shared)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }

@@ -25,6 +25,18 @@ M.WATER_DURATION = 300
 M.WOLVES_DURATION = duration("feralSpirit", 45)
 M.RAGE_DURATION = duration("shamanisticRage", 15)
 M.RAGE_MANA_AP = 0.15
+-- Long cooldowns the player gates in the options (S.cooldowns[key]; nil = "always", the old
+-- behaviour). "auto" allows one on a boss, or on a target expected to live at least this long:
+-- half of what the cooldown summons or buffs (wolves 45 s, Fire Elemental 120 s, Rage 15 s).
+-- A mob that dies sooner gets less than half of it, and a 3 or 10 minute cooldown spent there is
+-- missing on the next pull or the boss. Unknown ttd off a boss: not allowed (a trash pull in a
+-- group has none until it has taken damage for a while). The number of enemies does not count:
+-- a trash pack dies together, so more mobs do not make the fight longer.
+M.COOLDOWN_TTD = {
+  feralSpirit = M.WOLVES_DURATION / 2,
+  fireElemental = M.TOTEM_DURATION.fireElemental / 2,
+  shamanisticRage = M.RAGE_DURATION / 2,
+}
 M.LS_DURATION = duration("lightningShield", 600)
 M.INFLIGHT = 1.0
 M.TOTEM_REDROP = 12 -- = value.TAIL: remaining totem time past this is not valued
@@ -112,14 +124,14 @@ function M.cloneState(S)
   return {
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
-    memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    cooldowns = S.cooldowns, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
               rage = b.rage, lust = b.lust, em = b.em },
     target = { exists = t.exists, enemy = t.enemy, level = t.level, hp = t.hp, hpMax = t.hpMax, hpPct = t.hpPct,
                ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, armor = t.armor,
-               inCombat = t.inCombat, isPlayer = t.isPlayer, meleeIn = t.meleeIn,
+               inCombat = t.inCombat, isPlayer = t.isPlayer, meleeIn = t.meleeIn, isBoss = t.isBoss,
                ss = ss and { charges = ss.charges, remains = ss.remains } },
     totems = { fire = fire and { kind = fire.kind, remains = fire.remains },
                water = water and { remains = water.remains } },
@@ -249,9 +261,24 @@ local SPECIAL = {
   end,
 }
 
+-- false: the search must not suggest key now (the player's option for that cooldown). Pure,
+-- no allocation; keys without an option are always allowed.
+function M.cooldownAllowed(S, key)
+  local cds = S.cooldowns
+  local mode = cds and cds[key]
+  if mode == nil or mode == "always" then return true end
+  if mode == "never" then return false end
+  local t = S.target
+  if t and t.isBoss then return true end
+  if mode ~= "auto" then return false end -- "boss"
+  local need, ttd = M.COOLDOWN_TTD[key], t and t.ttd
+  return need ~= nil and ttd ~= nil and ttd >= need
+end
+
 function M.readyIn(S, key)
   local meta, sp = spells.byKey[key], S.spells and S.spells[key]
   if not meta or not sp then return nil end
+  if S.cooldowns and not M.cooldownAllowed(S, key) then return nil end
   -- cheapest tests first: most buttons are simply on cooldown
   local r = sp.cd or 0
   local c, g = S.castRemains or 0, S.gcdRemains or 0
@@ -513,8 +540,9 @@ local function fillScratch(S, dt)
     n.gcd, n.latency = S.gcd, S.latency
     n.mode, n.weapons, n.talents, n.enemies, n.memo = S.mode, S.weapons, S.talents, S.enemies, S.memo
     n.shieldPref = S.shieldPref
+    n.cooldowns = S.cooldowns
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
-    t.guessed, t.armor, t.inCombat, t.isPlayer = st.guessed, st.armor, st.inCombat, st.isPlayer
+    t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant
   end
   n.now, n.gcdRemains, n.castRemains = S.now, S.gcdRemains, S.castRemains

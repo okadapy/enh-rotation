@@ -83,7 +83,7 @@ function M.alert(S)
   end
   -- Shamanistic Rage returns mana only through melee hits: not at range, not without auto-attack
   local rage = sp.shamanisticRage
-  if rage and melee and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2
+  if rage and melee and not (S.cooldowns and S.cooldowns.shamanisticRage == "never") and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2
     and rage.cd <= (S.gcdRemains or 0) + 0.1 then
     return withIcon({ key = "shamanisticRage", reason = "Low mana: Shamanistic Rage" })
   end
@@ -581,6 +581,16 @@ function M.supported()
   return false, ("EnhRot supports only WotLK 3.3.5a (build %d); this client is %s (%s)"):format(M.BUILD, tostring(version), tostring(toc))
 end
 
+-- the options for the long cooldowns (tools/aura.lua: select index) -> S.cooldowns
+M.COOLDOWN_MODES = { "auto", "boss", "always", "never" }
+M.COOLDOWN_OPTIONS = { feralSpirit = { "cdFeralSpirit", 1 }, fireElemental = { "cdFireElemental", 1 },
+                       shamanisticRage = { "cdShamanisticRage", 3 } }
+function M.cooldowns(config)
+  local out = {}
+  for key, o in pairs(M.COOLDOWN_OPTIONS) do out[key] = M.COOLDOWN_MODES[config[o[1]] or o[2]] or "always" end
+  return out
+end
+
 function M.start(config, env)
   local ok, msg = M.supported()
   if not ok then
@@ -600,6 +610,7 @@ function M.start(config, env)
                 swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
                 inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
                 shield = M.SHIELDS[config.shield or 1] or "auto" }
+  ctx.cooldowns = M.cooldowns(config)
   ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   -- after /reload auto-attack may already be on; PLAYER_ENTER_COMBAT will not come again
   if IsCurrentSpell and IsCurrentSpell(M.ATTACK_ID) then
