@@ -3,7 +3,7 @@ package.path = "src/?.lua;tools/?.lua;vendor/?.lua;" .. package.path
 local B = {}
 
 B.MODULES = { "util", "spells_data", "spells", "talents", "swing", "enemies", "ttd", "damage", "model", "value",
-              "search", "planner", "snapshot", "timeline", "recorder", "runtime" }
+              "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }
 B.OUT = "dist/EnhRot.txt"
 B.FIXTURE = "spec/fixtures/recorded.lua"
 -- Слова, которые песочница WeakAuras блокирует или которые запрещены в src/ (Global Constraints),
@@ -27,19 +27,41 @@ function B.forbidden(code, words)
   return found
 end
 
-function B.bundle(srcDir)
+-- Версия аддона для отчётов: тег релиза из окружения (CI передаёт RELEASE_TAG), иначе
+-- `git describe --tags`, иначе "dev". getenv / describe подменяются в тестах.
+function B.version(getenv, describe)
+  getenv = getenv or os.getenv
+  describe = describe or function()
+    local p = io.popen("git describe --tags --always 2>/dev/null")
+    if not p then return nil end
+    local out = p:read("*a")
+    p:close()
+    return out
+  end
+  local function clean(v)
+    v = type(v) == "string" and v:match("^%s*(.-)%s*$") or ""
+    if v ~= "" and v:match("^[%w%._%+%-]+$") then return v end
+    return nil
+  end
+  return clean(getenv("RELEASE_TAG")) or clean(describe()) or "dev"
+end
+
+-- src/version.lua в сборке заменяется строкой версии (version = nil: B.version()).
+function B.bundle(srcDir, version)
+  version = version or B.version()
   local parts = {
     "local __mods = {}\n",
     "local function __require(name)\n  local m = __mods[name]\n  if m == nil then error('EnhRot: module not loaded: ' .. name) end\n  return m\nend\n",
   }
   for _, name in ipairs(B.MODULES) do
-    parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)\n'):format(name, B.readFile(srcDir .. "/" .. name .. ".lua"))
+    local code = name == "version" and ("return %q"):format(version) or B.readFile(srcDir .. "/" .. name .. ".lua")
+    parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)\n'):format(name, code)
   end
   return table.concat(parts)
 end
 
-function B.initCode(srcDir)
-  return B.bundle(srcDir) .. "__require('runtime').start(aura_env.config or {}, aura_env)\n"
+function B.initCode(srcDir, version)
+  return B.bundle(srcDir, version) .. "__require('runtime').start(aura_env.config or {}, aura_env)\n"
 end
 
 local function number(n)
@@ -84,40 +106,123 @@ function B.decodeSaved(s)
   return nil
 end
 
--- the string of the in-game export window (recorder.export) -> the snapshot list, or nil
-function B.decodeExport(s)
+-- the string of the in-game export window (recorder.export) -> { format, version, snapshots, presses },
+-- or nil. Format 1 held the bare snapshot list (no version, no presses); format 2 the whole table.
+function B.decodeExportFull(s)
   if type(s) ~= "string" then return nil end
-  local body = s:match("^%s*!ENHROT:1!(%S+)")
-  if not body then return nil end
+  local fmt, body = s:match("^%s*!ENHROT:(%d+)!(%S+)")
+  fmt = tonumber(fmt)
+  if not (body and (fmt == 1 or fmt == 2)) then return nil end
   local LibDeflate = require("LibDeflate")
   local compressed = LibDeflate:DecodeForPrint(body)
   local serialized = compressed and LibDeflate:DecompressDeflate(compressed)
   if not serialized then return nil end
   local ok, t = require("LibSerialize"):Deserialize(serialized)
-  if ok and type(t) == "table" then return t end
-  return nil
+  if not (ok and type(t) == "table") then return nil end
+  if fmt == 1 then return { format = 1, snapshots = t, presses = {} } end
+  return { format = 2, version = t.version, snapshots = t.snapshots or {}, presses = t.presses or {} }
 end
 
-function B.findSnapshots(t, seen)
+-- the string of the in-game export window -> the snapshot list (formats 1 and 2), or nil
+function B.decodeExport(s)
+  local d = B.decodeExportFull(s)
+  return d and d.snapshots
+end
+
+-- the table saved under key anywhere in t (information.saved strings of WeakAuras 5.22 decoded)
+function B.findSaved(t, key, seen)
   seen = seen or {}
   if type(t) ~= "table" or seen[t] then return nil end
   seen[t] = true
-  if type(t.enhrotSnapshots) == "table" then return t.enhrotSnapshots end
+  if type(t[key]) == "table" then return t[key] end
   for k, v in pairs(t) do
     if k == "saved" and type(v) == "string" then v = B.decodeSaved(v) end
-    local found = B.findSnapshots(v, seen)
+    local found = B.findSaved(v, key, seen)
     if found then return found end
   end
   return nil
 end
 
--- Разбирает текст SavedVariables (WeakAuras.lua) и возвращает список снимков.
-function B.parseSnapshots(text, name)
+function B.findSnapshots(t, seen)
+  return B.findSaved(t, "enhrotSnapshots", seen)
+end
+
+local function loadSaved(text, name)
   local chunk = assert(loadstring(text, name or "SavedVariables"))
   local env = {}
   setfenv(chunk, env)
   chunk()
-  return assert(B.findSnapshots(env), "no enhrotSnapshots in " .. (name or "SavedVariables"))
+  return env
+end
+
+-- Разбирает текст SavedVariables (WeakAuras.lua) и возвращает список снимков.
+function B.parseSnapshots(text, name)
+  return assert(B.findSnapshots(loadSaved(text, name)), "no enhrotSnapshots in " .. (name or "SavedVariables"))
+end
+
+-- Файл со строкой экспорта или WeakAuras.lua -> журнал нажатий и версия (если известна).
+function B.loadPresses(path)
+  local text = B.readFile(path)
+  local d = B.decodeExportFull(text)
+  if d then return d.presses, d.version end
+  return B.findSaved(loadSaved(text, path), "enhrotPresses") or {}, nil
+end
+
+-- Сводка журнала нажатий: сколько нажатий совпало с подсказкой, медиана задержки реакции
+-- (от момента, когда подсказанная кнопка стала нужна, до нажатия; только совпавшие) и
+-- самые частые расхождения «нажал X, подсказано Y».
+function B.pressSummary(presses, top)
+  local sum = { total = #presses, suggested = 0, matched = 0, unconfirmed = 0, mismatches = {} }
+  local delays, byPair = {}, {}
+  for _, p in ipairs(presses) do
+    if p.sug then
+      sum.suggested = sum.suggested + 1
+      if p.hit then
+        sum.matched = sum.matched + 1
+        if type(p.delay) == "number" then delays[#delays + 1] = p.delay end
+      else
+        local id = tostring(p.key) .. " <- " .. tostring(p.sug)
+        local m = byPair[id]
+        if not m then
+          m = { pressed = p.key, suggested = p.sug, count = 0 }
+          byPair[id] = m
+          sum.mismatches[#sum.mismatches + 1] = m
+        end
+        m.count = m.count + 1
+      end
+    end
+    if not p.cf then sum.unconfirmed = sum.unconfirmed + 1 end
+  end
+  table.sort(delays)
+  local n = #delays
+  if n > 0 then
+    sum.median = n % 2 == 1 and delays[(n + 1) / 2] or (delays[n / 2] + delays[n / 2 + 1]) / 2
+  end
+  table.sort(sum.mismatches, function(a, b)
+    if a.count ~= b.count then return a.count > b.count end
+    if a.pressed ~= b.pressed then return tostring(a.pressed) < tostring(b.pressed) end
+    return tostring(a.suggested) < tostring(b.suggested)
+  end)
+  top = top or 5
+  while #sum.mismatches > top do table.remove(sum.mismatches) end
+  return sum
+end
+
+function B.formatPresses(sum, version)
+  local share = sum.suggested > 0 and ("%d%%"):format(math.floor(sum.matched * 100 / sum.suggested + 0.5)) or "-"
+  local out = {
+    ("version: %s"):format(version or "unknown"),
+    ("presses: %d, with a suggestion: %d, followed it: %d (%s)"):format(sum.total, sum.suggested, sum.matched, share),
+    ("median reaction delay: %s"):format(sum.median and ("%.3f s"):format(sum.median) or "-"),
+    ("not confirmed by the server: %d"):format(sum.unconfirmed),
+  }
+  if #sum.mismatches > 0 then
+    out[#out + 1] = "top mismatches (pressed <- suggested):"
+    for _, m in ipairs(sum.mismatches) do
+      out[#out + 1] = ("  %3d  %s <- %s"):format(m.count, tostring(m.pressed), tostring(m.suggested))
+    end
+  end
+  return table.concat(out, "\n")
 end
 
 function B.importSnapshots(path, out)
@@ -142,13 +247,19 @@ function B.main(cmd, a, b)
     print(("%d snapshots -> %s"):format(B.importSnapshots(a, b), b or B.FIXTURE))
     return
   end
+  if cmd == "presses" then
+    local presses, version = B.loadPresses(a)
+    print(B.formatPresses(B.pressSummary(presses), version))
+    return
+  end
   local aura = require("aura")
-  local str = enc.encode(aura.transmit(B.initCode("src")))
+  local version = B.version()
+  local str = enc.encode(aura.transmit(B.initCode("src", version)))
   os.execute("mkdir -p dist")
   local f = assert(io.open(B.OUT, "wb"))
   f:write(str)
   f:close()
-  print(("%s: %d bytes"):format(B.OUT, #str))
+  print(("%s: %d bytes, version %s"):format(B.OUT, #str, version))
 end
 
 if arg and arg[0] and arg[0]:match("build%.lua$") then B.main(arg[1], arg[2], arg[3]) end

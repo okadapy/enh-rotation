@@ -506,6 +506,73 @@ describe("runtime", function()
     assert.are.equal(1, #env.saved.enhrotSnapshots)
   end)
 
+  -- the press log: the press is taken at SENT, the server's START / SUCCEEDED only confirms it
+  it("logs the press at SENT against the shown plan and confirms it at SUCCEEDED", function()
+    local rt, env = start({ record = true })
+    runtime.update(rt, 0.3) -- shows stormstrike @0 at 100
+    G.cfg.now = 100.4
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    local log = env.saved.enhrotPresses
+    assert.are.same({ t = 100.4, key = "stormstrike", sug = "stormstrike", at = 0, hit = true, delay = 0.4 }, log[1])
+    assert.are.same({ key = "stormstrike", after = 0.4, matched = true }, env.saved.enhrotSnapshots[1].pressed)
+    G.cfg.now = 100.5
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Stormstrike", "")
+    assert.are.equal(1, #log)
+    assert.is_true(log[1].cf)
+    -- SUCCEEDED without SENT: the press itself, logged once
+    G.cfg.now = 101
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    assert.are.equal(2, #log)
+    assert.are.same({ t = 101, key = "earthShock", sug = "stormstrike", at = 0, hit = false, delay = 1 }, log[2])
+  end)
+
+  it("logs a hard cast once: SENT, then START and SUCCEEDED of the same cast", function()
+    local rt, env = start({ record = true }, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500, castID = 7 } })
+    runtime.update(rt, 0.3)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Lightning Bolt", "Rank 14", "Mob")
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    local log = env.saved.enhrotPresses
+    assert.are.equal(1, #log)
+    assert.are.equal("lightningBolt", log[1].key)
+    assert.is_false(log[1].hit)
+    assert.is_true(log[1].cf)
+  end)
+
+  it("keeps no press log without recording", function()
+    local rt, env = start()
+    runtime.update(rt, 0.3)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    assert.is_nil(env.saved.enhrotPresses)
+  end)
+
+  it("counts the delay from the moment the first button became due, not from the last replan", function()
+    local rt = {}
+    local ss = { steps = { { key = "stormstrike", at = 0.5 } } }
+    runtime.trackDue(rt, ss, 100)
+    assert.are.same({ key = "stormstrike", at = 100.5 }, rt.due)
+    runtime.trackDue(rt, { steps = { { key = "stormstrike", at = 0.2 } } }, 100.4) -- not due yet: new estimate
+    assert.are.near(100.6, rt.due.at, 1e-9)
+    runtime.trackDue(rt, { steps = { { key = "stormstrike", at = 0 } } }, 101) -- due since 100.6
+    assert.are.near(100.6, rt.due.at, 1e-9)
+    runtime.trackDue(rt, { steps = { { key = "lavaLash", at = 0 } } }, 101.5)
+    assert.are.same({ key = "lavaLash", at = 101.5 }, rt.due)
+    runtime.trackDue(rt, { steps = {} }, 102)
+    assert.is_nil(rt.due)
+  end)
+
+  it("exports the addon version, snapshots and presses", function()
+    install()
+    local saved = { enhrotSnapshots = { { S = { now = 1 }, plan = { steps = {} } } },
+                    enhrotPresses = { { t = 1, key = "stormstrike" } } }
+    local w = runtime.showExport({ saved = saved })
+    local d = require("build").decodeExportFull(w.box.text)
+    assert.are.equal(runtime.VERSION, d.version)
+    assert.are.equal("dev", runtime.VERSION)
+    assert.are.same(saved.enhrotSnapshots, d.snapshots)
+    assert.are.same(saved.enhrotPresses, d.presses)
+  end)
+
   it("rescans spells after learning one", function()
     local rt = start(nil, { known = { [top("lightningBolt")] = true } })
     assert.is_nil(rt.ctx.cache.known.stormstrike)
