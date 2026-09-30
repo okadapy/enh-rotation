@@ -194,3 +194,54 @@ describe("leveling #integration", function()
     assert.are_not.equal("flameShock", (Sc.first(S)))
   end)
 end)
+
+-- the player's cooldown options (runtime defaults: wolves and Fire Elemental "auto", Rage "always")
+describe("long cooldowns by target #integration", function()
+  local DEFAULTS = { feralSpirit = "auto", fireElemental = "auto", shamanisticRage = "always" }
+
+  -- level 80 in a dungeon: a trash mob at 30% that dies in 12 s, every cooldown ready
+  local function trash(cooldowns)
+    local S = Sc.state(80, { mode = "group" })
+    S.target.isBoss, S.target.level = false, 80
+    S.target.hpMax = 60000
+    S.target.hp, S.target.hpPct, S.target.ttd = 18000, 0.3, 12
+    Sc.cd(S, { feralSpirit = 0, fireElemental = 0 })
+    S.cooldowns = cooldowns
+    return S
+  end
+
+  local function planKeys(S)
+    local out = {}
+    for _, st in ipairs(Sc.best(S).steps) do out[st.key] = true end
+    return out
+  end
+
+  it("without options the search still spends them on trash (the old behaviour this gate fixes)", function()
+    local keys = planKeys(trash(nil))
+    assert.is_true(keys.fireElemental or keys.feralSpirit or false)
+  end)
+
+  it("auto: no Fire Elemental or Feral Spirit on a trash mob with 12 s to live", function()
+    local keys = planKeys(trash(DEFAULTS))
+    assert.is_nil(keys.fireElemental)
+    assert.is_nil(keys.feralSpirit)
+  end)
+
+  it("auto: unknown time to die off a boss is no either", function()
+    local S = trash(DEFAULTS)
+    S.target.ttd = nil
+    local keys = planKeys(S)
+    assert.is_nil(keys.fireElemental)
+    assert.is_nil(keys.feralSpirit)
+  end)
+
+  it("auto: a boss gets them, even before its time to die is known", function()
+    local S = Sc.state(80)
+    S.target.ttd = nil
+    Sc.cd(S, { feralSpirit = 0, fireElemental = 0 })
+    S.cooldowns = DEFAULTS
+    assert.is_true(S.target.isBoss)
+    local keys = planKeys(S)
+    assert.is_true(keys.fireElemental or keys.feralSpirit or false)
+  end)
+end)

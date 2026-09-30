@@ -83,12 +83,30 @@ describe("aura", function()
 
   it("has custom options with defaults in config", function()
     local host = t.c[1]
-    assert.are.same({ "scale", "seconds", "icons", "mode", "showReason", "showLust", "record", "export", "printDebug" },
+    assert.are.same({ "scale", "seconds", "icons", "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage",
+                      "showReason", "showLust", "record", "export", "printDebug" },
       optionKeys(host.authorOptions))
     assert.are.same(aura.defaultConfig(), host.config)
-    assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, showReason = true, showLust = true,
+    assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, cdFeralSpirit = 1, cdFireElemental = 1,
+                      cdShamanisticRage = 3, showReason = true, showLust = false,
                       record = false, export = false, printDebug = false }, aura.defaultConfig())
     assert.are.equal("auto", host.authorOptions[4].values[1])
+  end)
+
+  it("cooldown options: auto / boss only / always / never, read by runtime in the same order", function()
+    local runtime = require("runtime")
+    local byKey = {}
+    for _, o in ipairs(t.c[1].authorOptions) do byKey[o.key] = o end
+    for key, o in pairs(runtime.COOLDOWN_OPTIONS) do
+      local opt = byKey[o[1]]
+      assert.are.same({ "auto", "boss only", "always", "never" }, opt.values)
+      assert.are.equal(o[2], opt.default, key)
+    end
+    -- the defaults: wolves and the elemental on auto, Shamanistic Rage always (a mana tool solo)
+    assert.are.same({ feralSpirit = "auto", fireElemental = "auto", shamanisticRage = "always" },
+      runtime.cooldowns(aura.defaultConfig()))
+    assert.are.same({ feralSpirit = "boss", fireElemental = "never", shamanisticRage = "auto" },
+      runtime.cooldowns({ cdFeralSpirit = 2, cdFireElemental = 4, cdShamanisticRage = 1 }))
   end)
 
   it("round-trips through the import string", function()

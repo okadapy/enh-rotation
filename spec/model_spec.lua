@@ -814,3 +814,62 @@ describe("model working copies (search speed)", function()
     assert.are_not.equal(S.swing.mh, n.swing.mh)
   end)
 end)
+
+describe("model.cooldownAllowed", function()
+  local function gated(mode, target)
+    local S = base()
+    S.cooldowns = { feralSpirit = mode, fireElemental = mode, shamanisticRage = mode }
+    target = target or {}
+    S.target.isBoss, S.target.ttd = target.isBoss, target.ttd
+    return S
+  end
+
+  it("without options (nil S.cooldowns or nil entry) every key is allowed, as before", function()
+    local S = base()
+    S.target.ttd = nil
+    assert.is_true(model.cooldownAllowed(S, "fireElemental"))
+    S.cooldowns = {}
+    assert.is_true(model.cooldownAllowed(S, "feralSpirit"))
+    assert.is_true(model.cooldownAllowed(gated("never"), "stormstrike")) -- not a gated key
+  end)
+
+  it("always / never ignore the target", function()
+    assert.is_true(model.cooldownAllowed(gated("always", { ttd = 1 }), "fireElemental"))
+    assert.is_false(model.cooldownAllowed(gated("never", { isBoss = true, ttd = 600 }), "fireElemental"))
+  end)
+
+  it("boss only: the boss flag, not the time to die", function()
+    assert.is_true(model.cooldownAllowed(gated("boss", { isBoss = true, ttd = 5 }), "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(gated("boss", { ttd = 600 }), "feralSpirit"))
+  end)
+
+  it("auto: a boss, or a target that lives half the cooldown's active time; unknown ttd off a boss: no", function()
+    assert.are.equal(22.5, model.COOLDOWN_TTD.feralSpirit)
+    assert.are.equal(60, model.COOLDOWN_TTD.fireElemental)
+    assert.is_true(model.cooldownAllowed(gated("auto", { isBoss = true, ttd = nil }), "fireElemental"))
+    assert.is_false(model.cooldownAllowed(gated("auto", { ttd = nil }), "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(gated("auto", { ttd = 12 }), "feralSpirit"))
+    assert.is_true(model.cooldownAllowed(gated("auto", { ttd = 30 }), "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(gated("auto", { ttd = 30 }), "fireElemental"))
+    assert.is_true(model.cooldownAllowed(gated("auto", { ttd = 90 }), "fireElemental"))
+  end)
+
+  it("readyIn and the candidate list skip a key that is not allowed", function()
+    local S = gated("never")
+    assert.is_nil(model.readyIn(S, "shamanisticRage"))
+    for _, a in ipairs(model.actions(S)) do assert.are_not.equal("shamanisticRage", a.key) end
+    S.cooldowns.shamanisticRage = "always"
+    assert.are.equal(0, model.readyIn(S, "shamanisticRage"))
+  end)
+
+  it("the options and the boss flag carry over to the next states (apply and peek alike)", function()
+    local S = gated("boss", { isBoss = true })
+    local n = model.apply(S, "stormstrike")
+    assert.are.equal(S.cooldowns, n.cooldowns)
+    assert.is_true(n.target.isBoss)
+    local p = model.peekApply(S, "stormstrike")
+    assert.are.equal(S.cooldowns, p.cooldowns)
+    assert.is_true(p.target.isBoss)
+    assert.is_true(model.cooldownAllowed(p, "feralSpirit"))
+  end)
+end)

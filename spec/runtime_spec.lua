@@ -93,6 +93,19 @@ describe("runtime", function()
     return rt, env
   end
 
+  it("fills the cooldown options from the config (defaults without it)", function()
+    local rt = start({ cdFeralSpirit = 2, cdFireElemental = 4, cdShamanisticRage = 1 })
+    assert.are.same({ feralSpirit = "boss", fireElemental = "never", shamanisticRage = "auto" }, rt.ctx.cooldowns)
+    rt = start({})
+    assert.are.same({ feralSpirit = "auto", fireElemental = "auto", shamanisticRage = "always" }, rt.ctx.cooldowns)
+  end)
+
+  it("no low-mana Shamanistic Rage alert when the player set it to never", function()
+    local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0
+    S.cooldowns = { shamanisticRage = "never" }
+    assert.is_nil(runtime.alert(S))
+  end)
+
   it("validates plans", function()
     assert.is_true(runtime.validPlan(PLAN))
     assert.is_true(runtime.validPlan({ steps = { { key = "waitSwing", at = 0.4 } } }))
