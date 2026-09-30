@@ -13,9 +13,14 @@ M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses afte
 M.TAIL = 12                  -- s of remaining DoT/totem/pet time worth counting: later it can simply be recast
 M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightning Bolt
 M.OOM_WEIGHT = 0.5           -- group/raid mana weight when the fight outlasts the mana
-M.FIGHT_MANA_PER_SEC = 0.01  -- share of max mana spent per second, for the OOM projection
+M.FIGHT_MANA_PER_SEC = 0.003 -- net share of max mana spent per second (after regen), for the OOM projection
 M.RAGE_SCARCITY = 1.5        -- solo: mana is dearer while Shamanistic Rage is on cooldown
 M.READY_KEYS = { "stormstrike", "lavaLash", "earthShock", "fireNova" }
+M.COOLDOWN = {}  -- base cooldowns of READY_KEYS (spells data)
+do
+  local spells = require("spells")
+  for _, key in ipairs(M.READY_KEYS) do M.COOLDOWN[key] = spells.byKey[key] and spells.byKey[key].cd or 0 end
+end
 M.FIRE_SOURCE = { searing = "searingTotem", magma = "magmaTotem", fireElemental = "fireElemental" }
 
 -- looked up on every call so tests (and the build) can swap the module
@@ -94,6 +99,8 @@ local function maelstromValue(S, damage)
   return stacks * M.MW_SHARE * damage.action(S, "lightningBolt")
 end
 
+-- a button is worth its damage at the discount once ready; while on cooldown only the part
+-- of the cooldown already recovered counts (pressing it now is not free, waiting is not free either)
 local function readyValue(S, damage)
   local v = 0
   local spells = S.spells
@@ -103,8 +110,11 @@ local function readyValue(S, damage)
   for i = 1, #keys do
     local key = keys[i]
     local sp = spells[key]
-    if sp and (sp.cd or 0) <= 0 and (key ~= "fireNova" or (fire and fire.kind)) then
-      v = v + damage.action(S, key) * M.DISCOUNT
+    if sp and (key ~= "fireNova" or (fire and fire.kind)) then
+      local cd, full = sp.cd or 0, M.COOLDOWN[key] or 0
+      local share = 1
+      if cd > 0 then share = full > cd and (1 - cd / full) or 0 end
+      if share > 0 then v = v + damage.action(S, key) * M.DISCOUNT * share end
     end
   end
   return v

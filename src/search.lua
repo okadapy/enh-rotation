@@ -127,6 +127,13 @@ local function defaults(opts)
   }
 end
 
+-- A cast must end inside the horizon: its damage counts at once, while what it costs (swings
+-- held back or reset after it) would fall past the horizon and never be paid.
+local function fitsHorizon(o, S, key, at)
+  local ct = o.model.castTime and o.model.castTime(S, key) or 0
+  return ct <= 0 or at + ct <= o.horizon + 1e-9
+end
+
 -- pad the chain with waiting up to the horizon, then add what the end state is still worth
 local function finalScore(o, node, rootNow)
   local S, v = node.S, node.v
@@ -157,7 +164,7 @@ local function extend(o, node, a, rootNow)
     afterSwing = false
   end
   local at = S.now - rootNow
-  if at >= o.horizon then return nil end
+  if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
   local S2, dmg = o.model.apply(S, a.key)
   v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   local steps = {}
@@ -211,7 +218,7 @@ local function candidate(o, node, a, rootNow)
     waited = true
   end
   local at = S.now - rootNow
-  if at >= o.horizon then return nil end
+  if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
   local c = { parent = node, a = a, depth = node.depth + 1, at = at }
   if waited and m.peekWait then
     -- S is a scratch state: keep what the step text needs now, rebuild the rest on demand

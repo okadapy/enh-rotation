@@ -171,6 +171,16 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.equal("5 Maelstrom stacks", plan.steps[1].reason)
   end)
 
+  -- a cast that ends after the horizon would get its damage while its cost (the delayed swings)
+  -- falls outside the horizon: it is not planned at all
+  it("never plans a cast that would end after the horizon", function()
+    local S = busy({ talents = { maelstromWeapon = 0 }, spells = { lightningBolt = { cd = 0 } } })
+    local ct = require("model").castTime(S, "lightningBolt")
+    for _, st in ipairs(search.best(S, { budgetMs = 1e9 }).steps) do
+      if st.key == "lightningBolt" then assert.is_true(st.at + ct <= search.HORIZON + 1e-9, "at=" .. st.at) end
+    end
+  end)
+
   it("3 stacks: waits for the main-hand swing, then weaves Lightning Bolt without a clip", function()
     local S = busy({
       buffs = { mw = { stacks = 3, remains = 20 } },

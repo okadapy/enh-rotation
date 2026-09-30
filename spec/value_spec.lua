@@ -68,6 +68,12 @@ describe("value.manaPrice", function()
     assert.is_true(value.manaPrice(oom) > value.manaPrice(fine) * 5)
   end)
 
+  it("group: a long boss fight at 80% mana is no reason to save mana", function()
+    local S = fixtures.state({ mode = "raid", player = { mana = 8000, manaMax = 10000 }, target = { ttd = 180 } })
+    local fine = fixtures.state({ mode = "raid", player = { mana = 9000, manaMax = 10000 }, target = { ttd = 60 } })
+    assert.are.near(value.manaPrice(fine), value.manaPrice(S), 1e-12)
+  end)
+
   it("unknown mode falls back to group weights", function()
     local S = fixtures.state({ mode = "weird" })
     local G = fixtures.state({ mode = "group" })
@@ -77,9 +83,9 @@ end)
 
 describe("value.terminal", function()
   local function base(over)
-    -- Fire Nova on cooldown by default so a fire totem does not also add a ready Fire Nova
+    -- Fire Nova just pressed (full 10 s cooldown) so a fire totem does not also add Fire Nova value
     local o = { totems = { fire = { kind = false, remains = 0 } }, target = { fs = 0 }, buffs = { mw = { stacks = 0, remains = 0 } },
-                spells = { fireNova = { cd = 9 } } }
+                spells = { fireNova = { cd = 10 } } }
     for k, v in pairs(over or {}) do o[k] = v end
     return fixtures.state(o)
   end
@@ -107,15 +113,22 @@ describe("value.terminal", function()
 
   it("a ready Stormstrike is worth half of pressing it", function()
     local ready = base({ spells = { stormstrike = { cd = 0 } } })
-    local onCd = base({ spells = { stormstrike = { cd = 5 } } })
+    local onCd = base({ spells = { stormstrike = { cd = 8 } } }) -- just pressed: full 8 s cooldown
     local ss = damage.action(ready, "stormstrike")
     assert.are.near(ss * value.DISCOUNT, value.terminal(ready) - value.terminal(onCd), 1e-6)
+  end)
+
+  it("a button on cooldown keeps the part of its value it has already recovered", function()
+    local fresh = base({ spells = { stormstrike = { cd = 8 } } })
+    local soon = base({ spells = { stormstrike = { cd = 2 } } })
+    local ss = damage.action(soon, "stormstrike")
+    assert.are.near(ss * value.DISCOUNT * 6 / 8, value.terminal(soon) - value.terminal(fresh), 1e-6)
   end)
 
   it("a ready Fire Nova counts only with a fire totem down", function()
     local noTotem = base({ spells = { fireNova = { cd = 0 } } })
     local other = base({ spells = { fireNova = { cd = 0 } }, totems = { fire = { kind = "other", remains = 10 } } })
-    local onCd = base({ spells = { fireNova = { cd = 5 } }, totems = { fire = { kind = "other", remains = 10 } } })
+    local onCd = base({ spells = { fireNova = { cd = 10 } }, totems = { fire = { kind = "other", remains = 10 } } })
     assert.are.near(damage.action(other, "fireNova") * value.DISCOUNT, value.terminal(other) - value.terminal(onCd), 1e-6)
     assert.are.near(value.terminal(onCd), value.terminal(noTotem), 1e-6)
   end)
