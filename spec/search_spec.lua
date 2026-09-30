@@ -261,6 +261,37 @@ describe("search on the real model (wowsims rules) #integration", function()
     end
   end)
 
+  -- the best plan whose first press is `key` (only that button at the root)
+  local function forcedFirst(S, key)
+    local real, rootNow = require("model"), S.now
+    local m = setmetatable({ actions = function(X)
+      local acts = real.actions(X)
+      if X.now ~= rootNow then return acts end
+      local out = {}
+      for _, a in ipairs(acts) do if a.key == key then out[#out + 1] = a end end
+      return out
+    end }, { __index = real })
+    return search.best(S, { model = m })
+  end
+
+  -- review example: the beam used to keep only Chain Lightning lines, a Bolt line scored 17439
+  -- against the chosen 16951
+  it("nothing ready, 1 Maelstrom stack, swing in 2.0 s: no other first button leads to a better plan", function()
+    local Sc = require("scenario")
+    local S = Sc.state(80)
+    S.totems.fire = { kind = "magma", remains = 15 }
+    S.target.fs = 9
+    Sc.cd(S, { stormstrike = 4, shock = 3, fireNova = 4, lavaLash = 3 })
+    S.buffs.mw = { stacks = 1, remains = 20 }
+    S.swing.mh.next, S.swing.oh.next = 2.0, 2.3
+    local plan = search.best(S)
+    for _, key in ipairs({ "lightningBolt", "chainLightning" }) do
+      local f = forcedFirst(S, key)
+      assert.is_true(plan.value >= f.value - 1e-6, ("%s first: %.0f, chosen %s: %.0f"):format(key, f.value, plan.steps[1].key, plan.value))
+    end
+    assert.are.equal("lightningBolt", plan.steps[1].key)
+  end)
+
   it("3 stacks: waits for the main-hand swing, then weaves Lightning Bolt without a clip", function()
     local S = busy({
       buffs = { mw = { stacks = 3, remains = 20 } },

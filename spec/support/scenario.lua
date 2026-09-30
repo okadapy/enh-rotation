@@ -16,7 +16,7 @@ Sc.AP = { { 1, 20 }, { 10, 70 }, { 20, 180 }, { 30, 350 }, { 40, 600 }, { 50, 90
 Sc.SP = { { 1, 0 }, { 40, 30 }, { 50, 250 }, { 60, 420 }, { 70, 750 }, { 80, 1200 } } -- Mental Quickness from ~50
 Sc.WEAPON_2H = { { 1, 6 }, { 10, 18 }, { 20, 40 }, { 30, 70 }, { 39, 100 } }            -- average base damage, 3.5 s
 Sc.WEAPON_1H = { { 40, 50 }, { 50, 75 }, { 60, 110 }, { 70, 230 }, { 80, 540 } }         -- average base damage, 2.6 s
-Sc.OPTS = { horizon = 6, beam = 6, depth = 4, budgetMs = 2, clock = function() return 0 end }
+Sc.OPTS = {} -- the in-game search settings (search.BEAM, NODE_CAP, ...)
 
 local function interp(t, x)
   if x <= t[1][1] then return t[1][2] end

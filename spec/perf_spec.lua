@@ -7,8 +7,8 @@ describe("performance #integration", function()
     local runs = 20
     local t0 = os.clock()
     for _ = 1, runs do
-      local plan = search.best(S, { budgetMs = 1e9 })
-      assert.is_false(plan.timedOut)
+      local plan = search.best(S)
+      assert.is_true(plan.nodes <= search.NODE_CAP)
     end
     local avgMs = (os.clock() - t0) * 1000 / runs
     assert.is_true(avgMs < search.BUDGET_MS * 3, ("average %.2f ms"):format(avgMs))

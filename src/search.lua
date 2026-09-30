@@ -1,14 +1,15 @@
 local M = {}
 
 M.HORIZON = 6.0
-M.BEAM = 6
+M.BEAM = 7
 M.DEPTH = 4
 M.BUDGET_MS = 2 -- per frame: a search runs in slices (search.start), never cut by the clock
-M.NODE_CAP = 300 -- the whole search stops after this many candidates (deterministic)
+M.NODE_CAP = 240 -- the whole search stops after this many candidates (deterministic)
 M.READY_EPS = 0.05
 M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
 M.WEAVE = { lightningBolt = true, chainLightning = true }
-M.NOW_SLOTS = 3 -- beam places kept for "press now" children
+M.PER_FIRST = 1 -- beam places kept for the best chains of every first button (diversity)
+M.DIVERSITY = 0.05 -- ... if their score is within this share of the layer's best
 M.IDLE_MIN = 1.0 -- a plan whose first button waits this long gets a button tried in front of it
 
 M.REASONS = {
@@ -129,6 +130,8 @@ local function defaults(opts)
     depth = opts.depth or M.DEPTH,
     budgetMs = opts.budgetMs or M.BUDGET_MS,
     nodeCap = opts.nodeCap or M.NODE_CAP,
+    perFirst = opts.perFirst or M.PER_FIRST,
+    diversity = opts.diversity or M.DIVERSITY,
     clock = opts.clock or defaultClock,
   }
 end
@@ -230,7 +233,8 @@ local function candidate(o, node, a, rootNow)
   end
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
-  local c = { parent = node, a = a, depth = node.depth + 1, at = at }
+  local c = { parent = node, a = a, depth = node.depth + 1, at = at,
+              first = node.first or (node.virtual and node.parent.first) or a.key }
   if (waited or node.virtual) and m.peekWait then
     -- S is a scratch state: keep what the step text needs now, rebuild the rest on demand
     c.reason = M.reason(S, a.key, afterSwing)
@@ -314,8 +318,8 @@ local fillIdleStart
 
 -- The whole search as one function. It stops by the node cap only, never by the clock, so its
 -- result is the same however it is cut into frames. check() (nil = run to the end) is called
--- only between whole frontier nodes: no scratch state (model.peek*) is held there, so other code
--- may use the scratch buffers while the search is paused.
+-- only where no scratch state (model.peek*) is held, so other code may use the scratch buffers
+-- while the search is paused.
 local function run(o, S, check)
   S = root(S)
   local rootNow = S.now
@@ -363,20 +367,21 @@ local function run(o, S, check)
       if check then check() end
     end
     if capped then break end
+    -- the last layer is only scored, never expanded: no beam cut needed
+    local deeper = false
+    for i = 1, #children do if children[i].depth < o.depth then deeper = true; break end end
+    if not deeper then break end
     table.sort(children, function(x, y)
       if x.score ~= y.score then return x.score > y.score end
       return chainKey(x) < chainKey(y)
     end)
     -- best first; a state already in the beam (same signature) is skipped. Signatures are only
     -- needed for the few children looked at here, so they are taken from rebuilt states.
-    -- At most beam - NOW_SLOTS places go to children that first wait: "button now, the big one
-    -- later" must not lose the cut to a row of "wait, then the big one" (every 1-step chain idles
-    -- to the horizon, so pressing a small button now looks worse than it is).
     frontier = {}
     local taken = {}
-    local later, maxLater = 0, o.beam - math.min(o.beam, M.NOW_SLOTS)
-    local skipped = {}
     local function take(c)
+      if c.inBeam ~= nil then return c.inBeam end
+      c.inBeam = false
       local sig
       if c.depth < o.depth or not o.model.peekApply then
         materialize(o, c)
@@ -385,26 +390,27 @@ local function run(o, S, check)
         sig = M.signature(peekState(o, c)) -- never expanded: no real state needed
       end
       if c.waited then sig = sig .. "w" end
-      if taken[sig] then return end
+      if taken[sig] then return false end
       taken[sig] = true
       frontier[#frontier + 1] = c
+      c.inBeam = true
+      return true
     end
     for i = 1, #children do
       if #frontier >= o.beam then break end
-      local c = children[i]
-      local waits = c.waited or c.a.readyIn > M.READY_EPS
-      if waits and later >= maxLater then
-        skipped[#skipped + 1] = c
-      else
-        local n = #frontier
-        take(c)
-        if waits and #frontier > n then later = later + 1 end
-      end
+      take(children[i])
     end
-    -- not enough buttons to press now: the waiting ones fill the rest
-    for i = 1, #skipped do
-      if #frontier >= o.beam then break end
-      take(skipped[i])
+    -- Diversity: the best chain of every first button stays too, if it is within DIVERSITY of the
+    -- layer's best. Chains are compared after different numbers of seconds, so the cut is myopic:
+    -- a first button whose chains all lost it once could never show that it leads to the best plan.
+    local firsts = {}
+    for i = 1, #frontier do local f = frontier[i].first; firsts[f] = (firsts[f] or 0) + 1 end
+    local floor = children[1] and children[1].score - math.abs(children[1].score) * o.diversity
+    for i = 1, #children do
+      local c = children[i]
+      if c.score < floor then break end
+      local f = c.first
+      if (firsts[f] or 0) < o.perFirst and take(c) then firsts[f] = (firsts[f] or 0) + 1 end
     end
     if #frontier == 0 then break end
     if check then check() end
@@ -414,7 +420,8 @@ local function run(o, S, check)
   end
   if not bestNode then return result(0, {}) end
   local steps = stepsOf(bestNode)
-  if not capped then best, steps = fillIdleStart(o, S, best, steps, rootActions, check) end
+  -- bounded (one replay per root button), so it runs after a capped search too
+  best, steps = fillIdleStart(o, S, best, steps, rootActions, check)
   -- pressing nothing can be the best plan (solo: a mob the swings finish, mana is dear)
   local idle = finalScore(o, rootNode, rootNow)
   if idle >= best then return result(idle, {}) end
@@ -458,12 +465,16 @@ function Job:run(budgetMs)
   return false
 end
 
-local function evaluateFrom(o, S, steps)
+-- truncate: a step that is no longer possible ends the plan there (else: the plan is invalid)
+local function evaluateFrom(o, S, steps, truncate)
   local rootNow = S.now
   local node = { S = S, v = 0, steps = {}, depth = 0 }
   for _, st in ipairs(steps) do
     local r = o.model.readyIn(node.S, st.key)
-    if r == nil then return nil end
+    if r == nil then
+      if not truncate then return nil end
+      break
+    end
     local planned = st.at - (node.S.now - rootNow)
     local c = extend(o, node, { key = st.key, readyIn = math.max(r, planned) }, rootNow)
     if not c then break end
@@ -489,7 +500,8 @@ function fillIdleStart(o, S, value, steps, actions, check)
     if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= first.key then
       local tryList = { { key = a.key, at = 0, reason = M.reason(S, a.key, false) } }
       for i, st in ipairs(steps) do tryList[i + 1] = st end
-      local v, st = evaluateFrom(o, S, tryList)
+      -- the plan's own later press of the same button may no longer fit: the plan ends there
+      local v, st = evaluateFrom(o, S, tryList, true)
       if v and v > value and st[1].key == a.key then value, steps = v, st end
     end
   end
