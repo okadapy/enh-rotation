@@ -7,6 +7,7 @@ local planner = require("planner")
 local timeline = require("timeline")
 local recorder = require("recorder")
 local version = require("version")
+local util = require("util")
 
 local M = {}
 
@@ -16,6 +17,7 @@ M.RECORD_MAX = 30
 M.PRESS_MAX = 200
 M.VERSION = version
 M.MODES = { "auto", "solo", "group", "raid", "pvp" }
+M.SHIELDS = { "auto", "lightning", "water" } -- option "shield" (select index) -> S.shieldPref
 M.EVENTS = {
   "COMBAT_LOG_EVENT_UNFILTERED",
   "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_SUCCEEDED",
@@ -39,6 +41,7 @@ M.ALERT_ICONS = {
   outOfRange = "Interface\\Icons\\Ability_Rogue_Sprint",
   moveIn = "Interface\\Icons\\Ability_Rogue_Sprint",
   autoAttack = "Interface\\Icons\\INV_Sword_04",
+  waterShield = "Interface\\Icons\\Ability_Shaman_WaterShield",
 }
 
 function M.validPlan(plan)
@@ -67,8 +70,12 @@ function M.alert(S)
     return withIcon({ key = "autoAttack", reason = "Auto-attack is off" })
   end
   -- not while the cast is on its way (the aura comes a moment after the cast)
-  if sp.lightningShield and b.ls.charges <= 0 and not (S.inflight and S.inflight.lightningShield) then
-    return withIcon({ key = "lightningShield", reason = "Lightning Shield missing" })
+  if util.wantsLightningShield(S) then
+    if sp.lightningShield and b.ls.charges <= 0 and not (S.inflight and S.inflight.lightningShield) then
+      return withIcon({ key = "lightningShield", reason = "Lightning Shield missing" })
+    end
+  elseif S.shieldPref == "water" and not (S.player and S.player.shield == "water") then
+    return withIcon({ key = "waterShield", reason = "Water Shield missing" })
   end
   if (w.mh and not w.mh.enchant) or (w.oh and not w.oh.enchant) then
     return withIcon({ key = "noEnchant", reason = "Weapon imbue missing" })
@@ -511,7 +518,8 @@ function M.start(config, env)
   env.saved.swing = env.saved.swing or {}
   local now = GetTime()
   local ctx = { cache = snapshot.scan(), swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
-                inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil }
+                inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
+                shield = M.SHIELDS[config.shield or 1] or "auto" }
   ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   -- after /reload auto-attack may already be on; PLAYER_ENTER_COMBAT will not come again
   if IsCurrentSpell and IsCurrentSpell(M.ATTACK_ID) then

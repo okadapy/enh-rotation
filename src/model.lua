@@ -111,7 +111,7 @@ function M.cloneState(S)
   local fire, water, ss, pets = tot.fire, tot.water, t.ss, S.pets
   return {
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
-    mode = S.mode, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
+    mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
     memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
@@ -139,7 +139,7 @@ local function setMana(n, mana)
       o.level, o.manaMax, o.baseMana, o.hpPct, o.ap = p.level, p.manaMax, p.baseMana, p.hpPct, p.ap
       o.spNature, o.spFire, o.meleeCrit, o.spellCrit = p.spNature, p.spFire, p.meleeCrit, p.spellCrit
       o.meleeHit, o.spellHit, o.spellHaste, o.meleeHaste = p.meleeHit, p.spellHit, p.spellHaste, p.meleeHaste
-      o.moving, o.inCombat = p.moving, p.inCombat
+      o.moving, o.inCombat, o.shield = p.moving, p.inCombat, p.shield
       n.player = o
     end
     o.mana = mana
@@ -149,7 +149,7 @@ local function setMana(n, mana)
     level = p.level, mana = mana, manaMax = p.manaMax, baseMana = p.baseMana, hpPct = p.hpPct, ap = p.ap,
     spNature = p.spNature, spFire = p.spFire, meleeCrit = p.meleeCrit, spellCrit = p.spellCrit,
     meleeHit = p.meleeHit, spellHit = p.spellHit, spellHaste = p.spellHaste, meleeHaste = p.meleeHaste,
-    moving = p.moving, inCombat = p.inCombat,
+    moving = p.moving, inCombat = p.inCombat, shield = p.shield,
   }
 end
 
@@ -241,6 +241,7 @@ local SPECIAL = {
     return true
   end,
   lightningShield = function(S)
+    if not util.wantsLightningShield(S) then return false end -- Water Shield kept up instead
     local ls = S.buffs.ls
     if (ls.charges or 0) >= M.lsMaxCharges(S) then return false end
     -- charges are not spent in the model: a refresh only matters when the shield is gone or ending
@@ -511,6 +512,7 @@ local function fillScratch(S, dt)
   if not same then
     n.gcd, n.latency = S.gcd, S.latency
     n.mode, n.weapons, n.talents, n.enemies, n.memo = S.mode, S.weapons, S.talents, S.enemies, S.memo
+    n.shieldPref = S.shieldPref
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer = st.guessed, st.armor, st.inCombat, st.isPlayer
     n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant

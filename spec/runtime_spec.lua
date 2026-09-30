@@ -146,6 +146,26 @@ describe("runtime", function()
     assert.is_nil(runtime.alert(S))
   end)
 
+  it("asks for the shield the player wants kept up", function()
+    local S = Sc.state(80)
+    S.buffs.ls.charges = 0; S.player.shield = "water"; S.buffs.ws = { charges = 3, remains = 500 }
+    assert.is_nil(runtime.alert(S)) -- auto with Water Shield on
+    S.shieldPref = "water"
+    assert.is_nil(runtime.alert(S))
+    S.shieldPref = "lightning"
+    assert.are.equal("lightningShield", runtime.alert(S).key)
+    S.player.shield, S.buffs.ws = nil, nil
+    S.shieldPref = "auto"
+    assert.are.equal("lightningShield", runtime.alert(S).key) -- nothing up: as before
+    S.shieldPref = "water"
+    local a = runtime.alert(S)
+    assert.are.equal("waterShield", a.key)
+    assert.are.equal("Water Shield missing", a.reason)
+    assert.are.equal(runtime.ALERT_ICONS.waterShield, a.icon)
+    S.player.shield = "lightning"; S.buffs.ls.charges = 3
+    assert.are.equal("waterShield", runtime.alert(S).key) -- Lightning Shield up, Water wanted
+  end)
+
   -- recorded: Rage pressed at 20 yards without auto-attack on the hint - its mana comes from hits
   it("suggests Shamanistic Rage for mana only in melee with auto-attack on", function()
     local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0

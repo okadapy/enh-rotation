@@ -163,6 +163,36 @@ describe("model", function()
       S.buffs.ls = { charges = 0, remains = 0 }
       assert.are.equal(0, model.readyIn(S, "lightningShield"))
     end)
+    -- only one shield can be up: Lightning Shield over Water Shield would remove it
+    it("no Lightning Shield over Water Shield unless asked for", function()
+      local S = base()
+      S.buffs.ls = { charges = 0, remains = 0 }
+      S.buffs.ws = { charges = 3, remains = 500 }
+      S.player.shield = "water"
+      assert.is_nil(model.readyIn(S, "lightningShield")) -- nil pref = auto
+      S.shieldPref = "auto"
+      assert.is_nil(model.readyIn(S, "lightningShield"))
+      S.shieldPref = "water"
+      assert.is_nil(model.readyIn(S, "lightningShield"))
+      S.shieldPref = "lightning"
+      assert.are.equal(0, model.readyIn(S, "lightningShield"))
+      S.player.shield, S.buffs.ws, S.shieldPref = nil, nil, "water"
+      assert.is_nil(model.readyIn(S, "lightningShield")) -- wants Water Shield: never Lightning
+      S.shieldPref = "auto"
+      assert.are.equal(0, model.readyIn(S, "lightningShield")) -- nothing up: as before
+    end)
+    it("the rule survives clones and scratch states", function()
+      local S = base()
+      S.buffs.ls = { charges = 0, remains = 0 }
+      S.player.shield, S.shieldPref, S.memo = "water", "auto", {}
+      for _, a in ipairs(model.actions(model.wait(S, 0.5))) do assert.are_not.equal("lightningShield", a.key) end
+      local P = model.peekApply(model.peekWait(S, 0.5), "stormstrike")
+      assert.is_nil(model.readyIn(P, "lightningShield"))
+      S.player.mana = 5000
+      P = model.peekApply(S, "lavaLash") -- spends mana: own player table in the scratch state
+      assert.are.equal("water", P.player.shield)
+      assert.is_nil(model.readyIn(P, "lightningShield"))
+    end)
     it("the same fire totem is not dropped again while it outlasts what the value counts", function()
       local S = base()
       S.totems.fire = { kind = "magma", remains = 15 }
