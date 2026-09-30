@@ -26,8 +26,9 @@ do
 end
 M.FIRE_SOURCE = { searing = "searingTotem", magma = "magmaTotem", fireElemental = "fireElemental" }
 
--- looked up on every call so tests (and the build) can swap the module
-local function D() return package.loaded.damage or require("damage") end
+-- looked up on every call so tests can swap the module: require returns what the test preloaded
+-- (the client has no module table of its own, the build's require reads the bundled list)
+local function D() return require("damage") end
 
 local function weights(S) return M.WEIGHTS[S.mode] or M.WEIGHTS.group end
 
