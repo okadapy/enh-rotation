@@ -84,9 +84,11 @@ end)
 describe("value.terminal", function()
   local function base(over)
     -- Fire Nova just pressed (full 10 s cooldown) so a fire totem does not also add Fire Nova value
-    local o = { totems = { fire = { kind = false, remains = 0 } }, target = { fs = 0 }, buffs = { mw = { stacks = 0, remains = 0 } },
+    -- no water totem either: the support-totem value has a test of its own
+    local o = { totems = { fire = { kind = false, remains = 0 }, water = { remains = 0 } }, target = { fs = 0 }, buffs = { mw = { stacks = 0, remains = 0 } },
                 spells = { fireNova = { cd = 10 } } }
     for k, v in pairs(over or {}) do o[k] = v end
+    o.totems.water = o.totems.water or { remains = 0 }
     return fixtures.state(o)
   end
 
@@ -167,10 +169,19 @@ describe("value.terminal", function()
     assert.are.near(value.TAIL * damage.periodic(fs, "flameShock") * value.DISCOUNT, value.terminal(fs) - value.terminal(base()), 1e-6)
   end)
 
+  it("support totems (the water slot stands for the set) are worth a share of auto-attack damage", function()
+    local short = base({ totems = { fire = { kind = false, remains = 0 }, water = { remains = 2 } } })
+    local long = base({ totems = { fire = { kind = false, remains = 0 }, water = { remains = 200 } } })
+    local dps = damage.auto(long, "mh") / long.swing.mh.speed + damage.auto(long, "oh") / long.swing.oh.speed
+    assert.is_true(value.SUPPORT > 0 and value.SUPPORT <= 0.1)
+    assert.are.near((value.TAIL - 2) * value.SUPPORT * dps * value.DISCOUNT, value.terminal(long) - value.terminal(short), 1e-6)
+  end)
+
   it("survives a state without pets, spells, totems or auto-attack", function()
     local S = base()
     S.pets, S.spells = nil, {}
     S.swing.attacking = false
+    S.totems.water = nil
     assert.are.equal(0, value.terminal(S))
   end)
 end)

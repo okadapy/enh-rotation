@@ -10,6 +10,7 @@ M.WEIGHTS = {
 M.WEIGHTS.pvp = M.WEIGHTS.group
 
 M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses after the horizon
+M.SUPPORT = 0.06             -- share of auto-attack damage the support totems add (Windfury, Strength of Earth...)
 M.TAIL = 12                  -- s of remaining DoT/totem/pet time worth counting: later it can simply be recast
 M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightning Bolt
 M.OOM_WEIGHT = 0.5           -- group/raid mana weight when the fight outlasts the mana
@@ -79,15 +80,18 @@ end
 
 -- remaining periodic damage (continuous dps, same as model.advance), at the discount
 local function periodicValue(S, damage)
-  if not alive(S) then return 0 end
-  local v = 0
   local fs = S.target.fs or 0
-  if fs > 0 then v = v + damage.periodic(S, "flameShock") * lifetime(S, fs) end
   local fire = S.totems and S.totems.fire
   local src = fire and fire.kind and M.FIRE_SOURCE[fire.kind]
-  if src and (fire.remains or 0) > 0 then v = v + damage.periodic(S, src) * lifetime(S, fire.remains) end
+  local fireLeft = src and (fire.remains or 0) or 0
   local wolves = S.pets and S.pets.wolves or 0
-  if wolves > 0 then v = v + damage.periodic(S, "feralSpirit") * lifetime(S, wolves) end
+  if fs <= 0 and fireLeft <= 0 and wolves <= 0 then return 0 end
+  -- one lookup for all sources when the damage module offers it (the search's memo)
+  local r = damage.rates and damage.rates(S)
+  local v = 0
+  if fs > 0 then v = v + (r and r.flameShock or damage.periodic(S, "flameShock")) * lifetime(S, fs) end
+  if fireLeft > 0 then v = v + (r and r[src] or damage.periodic(S, src)) * lifetime(S, fireLeft) end
+  if wolves > 0 then v = v + (r and r.feralSpirit or damage.periodic(S, "feralSpirit")) * lifetime(S, wolves) end
   return v * M.DISCOUNT
 end
 
@@ -97,24 +101,6 @@ local function maelstromValue(S, damage)
   if stacks > 5 then stacks = 5 end
   if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
   return stacks * M.MW_SHARE * damage.action(S, "lightningBolt") * M.DISCOUNT
-end
-
--- how far each hand's current swing has come: a swing held back or reset by a cast shifts
--- every later swing, and that shift is exactly this much auto-attack damage
-local function swingValue(S, damage)
-  local sw = S.swing
-  if not (sw and sw.attacking and alive(S) and S.target.range == "melee") then return 0 end
-  local v = 0
-  local mh, oh = sw.mh, sw.oh
-  if mh and (mh.speed or 0) > 0 then
-    local p = 1 - (mh.next or 0) / mh.speed
-    if p > 0 then v = v + (p < 1 and p or 1) * damage.auto(S, "mh") end
-  end
-  if oh and (oh.speed or 0) > 0 then
-    local p = 1 - (oh.next or 0) / oh.speed
-    if p > 0 then v = v + (p < 1 and p or 1) * damage.auto(S, "oh") end
-  end
-  return v
 end
 
 -- a button is worth its damage at the discount once ready; while on cooldown only the part
@@ -138,9 +124,41 @@ local function readyValue(S, damage)
   return v
 end
 
+-- Auto-attack parts, one lookup of both hands' swing damage:
+-- * how far each hand's current swing has come: a swing held back or reset by a cast shifts
+--   every later swing, and that shift is exactly this much auto-attack damage;
+-- * the support totems (the water slot stands for the whole set Call of the Elements drops).
+local function autoValue(S, damage)
+  local sw = S.swing
+  if not (sw and sw.attacking) then return 0 end
+  local mh, oh = sw.mh, sw.oh
+  local st = damage.swingStats and damage.swingStats(S)
+  local amh = mh and (mh.speed or 0) > 0 and (st and st.mh or damage.auto(S, "mh")) or 0
+  local aoh = oh and (oh.speed or 0) > 0 and (st and st.oh or damage.auto(S, "oh")) or 0
+  local v = 0
+  if S.target.range == "melee" then
+    if amh > 0 then
+      local p = 1 - (mh.next or 0) / mh.speed
+      if p > 0 then v = v + (p < 1 and p or 1) * amh end
+    end
+    if aoh > 0 then
+      local p = 1 - (oh.next or 0) / oh.speed
+      if p > 0 then v = v + (p < 1 and p or 1) * aoh end
+    end
+  end
+  local water = S.totems and S.totems.water
+  if water and (water.remains or 0) > 0 then
+    local dps = (amh > 0 and amh / mh.speed or 0) + (aoh > 0 and aoh / oh.speed or 0)
+    v = v + lifetime(S, water.remains) * M.SUPPORT * dps * M.DISCOUNT
+  end
+  return v
+end
+
 function M.terminal(S)
   local damage = D()
-  return maelstromValue(S, damage) + periodicValue(S, damage) + readyValue(S, damage) + swingValue(S, damage)
+  local v = maelstromValue(S, damage) + readyValue(S, damage)
+  if alive(S) then v = v + periodicValue(S, damage) + autoValue(S, damage) end
+  return v
 end
 
 return M

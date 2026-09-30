@@ -130,6 +130,12 @@ describe("model", function()
       S.totems = { fire = { kind = false, remains = 0 }, water = { remains = 200 } }
       assert.are.equal(0, model.readyIn(S, "callOfElements"))
     end)
+    it("Call of the Elements is not offered over an active Fire Elemental (it would replace it)", function()
+      local S = base()
+      S.spells.callOfElements = { id = 66842, rank = 1, cd = 0, cost = 0, cast = 0 }
+      S.totems = { fire = { kind = "fireElemental", remains = 60 }, water = { remains = 5 } }
+      assert.is_nil(model.readyIn(S, "callOfElements"))
+    end)
     it("Lightning Shield only when charges are missing", function()
       local S = base()
       assert.is_nil(model.readyIn(S, "lightningShield"))
@@ -217,6 +223,26 @@ describe("model", function()
       local S = base(); S.swing.mh.next = 0.5; S.swing.oh.next = 0.6
       local S2 = model.apply(S, "shamanisticRage")
       assert.are.near(8000 + 2 * 0.15 * 4000, S2.player.mana, 1e-6)
+    end)
+  end)
+
+  describe("Call of the Elements", function()
+    local function coe(fire, water)
+      local S = base()
+      S.spells.callOfElements = { id = 66842, rank = 1, cd = 0, cost = 0, cast = 0 }
+      S.totems = { fire = fire, water = { remains = water } }
+      return S
+    end
+    it("drops the whole set: water refreshed, fire slot gets Magma Totem even over an old one", function()
+      local S2, _, dt = model.apply(coe({ kind = "magma", remains = 3 }, 5), "callOfElements")
+      assert.are.equal("magma", S2.totems.fire.kind)
+      assert.are.near(model.TOTEM_DURATION.magmaTotem - dt, S2.totems.fire.remains, 1e-9)
+      assert.are.near(model.WATER_DURATION - dt, S2.totems.water.remains, 1e-9)
+    end)
+    it("uses Searing Totem when Magma Totem is not learned", function()
+      local S = coe({ kind = false, remains = 0 }, 200)
+      S.spells.magmaTotem = nil
+      assert.are.equal("searing", model.apply(S, "callOfElements").totems.fire.kind)
     end)
   end)
 

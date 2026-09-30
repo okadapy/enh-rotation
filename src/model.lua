@@ -224,6 +224,7 @@ function M.readyIn(S, key)
   if key == "magmaTotem" and not hasTarget and ((S.enemies and S.enemies.nearby) or 0) < 1 then return nil end
   -- spec 5.1: Frost Shock only where it pays, i.e. without Earth Shock (same cooldown, no Stormstrike bonus)
   if key == "frostShock" and S.spells.earthShock then return nil end
+  if key == "callOfElements" and fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return nil end
   if key == "callOfElements" and fireUp(S) then
     local water = S.totems.water
     if not water or (water.remains or 0) >= M.COE_WATER then return nil end
@@ -539,8 +540,10 @@ local function applyOn(n, key, ct, dt, adv)
   elseif M.TOTEM_KIND[key] then
     n.totems.fire = { kind = M.TOTEM_KIND[key], remains = M.TOTEM_DURATION[key] }
   elseif key == "callOfElements" then
+    -- drops the whole totem set; its fire totem is taken as Magma (Searing before Magma is learned)
     if n.totems.water then n.totems.water.remains = M.WATER_DURATION end
-    if not fireUp(n) then n.totems.fire = { kind = "searing", remains = M.TOTEM_DURATION.searingTotem } end
+    local fk = n.spells.magmaTotem and "magmaTotem" or "searingTotem"
+    n.totems.fire = { kind = M.TOTEM_KIND[fk], remains = M.TOTEM_DURATION[fk] }
   elseif key == "lightningShield" then
     n.buffs.ls = { charges = M.lsMaxCharges(n), remains = M.LS_DURATION }
   elseif key == "shamanisticRage" then
