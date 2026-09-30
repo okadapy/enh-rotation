@@ -55,7 +55,7 @@ jobs:
 
       - name: Тесты
         if: steps.version.outputs.skip != 'true'
-        # perf_spec меряет время и зависит от машины: в CI не гоняется
+        # perf_spec меряет время и зависит от машины: он в отдельном workflow perf.yml, релиз его не ждёт
         run: docker compose run --rm test busted --exclude-tags=perf
 
       - name: Сборка

@@ -60,7 +60,7 @@ M.HANDS = { "mh", "oh" }
 M.BAND20_ETA = util.approachEta("20") -- a target running in from "30" is within 20 yards this long before melee
 
 -- hot-path locals (the tables are the module's own, never replaced)
-local byKey, floor = spells.byKey, math.floor
+local byKey = spells.byKey
 local NEEDS_TARGET, MELEE_ONLY, SHOCK_RANGE = M.NEEDS_TARGET, M.MELEE_ONLY, M.SHOCK_RANGE
 local TOTEM_KIND, CAST_SPELLS, HORIZON = M.TOTEM_KIND, M.CAST_SPELLS, M.HORIZON
 
@@ -106,9 +106,61 @@ local function spellKeys(S)
 end
 M.spellKeys = spellKeys
 
+-- Arena (search: S.memo.arena, model.newArena / model.release): the real states of one search,
+-- their spell entries and their player tables are taken from free lists instead of allocated,
+-- and all of them go back when the search ends. Nothing a search returns holds them, and a
+-- scratch buffer re-reads everything when the memo changes (fillScratch: fresh). Without an
+-- arena (direct calls, tests, search.evaluate) everything is allocated as before.
+local FREE_STATE, FREE_ENTRY, FREE_PLAYER, FREE_ARENA = {}, {}, {}, {}
+local nFreeState, nFreeEntry, nFreePlayer, nFreeArena = 0, 0, 0, 0
+
+function M.newArena()
+  if nFreeArena > 0 then
+    local a = FREE_ARENA[nFreeArena]
+    FREE_ARENA[nFreeArena] = nil
+    nFreeArena = nFreeArena - 1
+    return a
+  end
+  return { states = {}, nStates = 0, entries = {}, nEntries = 0, players = {}, nPlayers = 0 }
+end
+
+-- every table the arena handed out goes back to the free lists (the search that took them is over)
+function M.release(a)
+  if not a then return end
+  local list = a.states
+  for i = 1, a.nStates do nFreeState = nFreeState + 1; FREE_STATE[nFreeState] = list[i]; list[i] = nil end
+  list = a.entries
+  for i = 1, a.nEntries do nFreeEntry = nFreeEntry + 1; FREE_ENTRY[nFreeEntry] = list[i]; list[i] = nil end
+  list = a.players
+  for i = 1, a.nPlayers do nFreePlayer = nFreePlayer + 1; FREE_PLAYER[nFreePlayer] = list[i]; list[i] = nil end
+  a.nStates, a.nEntries, a.nPlayers = 0, 0, 0
+  nFreeArena = nFreeArena + 1
+  FREE_ARENA[nFreeArena] = a
+end
+
+-- a spell entry: from the arena of S's search, or a new table
+local function newEntry(memo, sp, cd)
+  local a = memo and memo.arena
+  if not a then return { id = sp.id, rank = sp.rank, cd = cd, cost = sp.cost, cast = sp.cast } end
+  local e
+  if nFreeEntry > 0 then
+    e = FREE_ENTRY[nFreeEntry]
+    FREE_ENTRY[nFreeEntry] = nil
+    nFreeEntry = nFreeEntry - 1
+  else
+    e = {}
+  end
+  e.id, e.rank, e.cd, e.cost, e.cast = sp.id, sp.rank, cd, sp.cost, sp.cast
+  local k = a.nEntries + 1
+  a.entries[k], a.nEntries = e, k
+  return e
+end
+
 -- cooldowns after dt seconds: entries still on cooldown are replaced, the rest stay shared
 local function tickSpells(S, map, dt)
   local keys = spellKeys(S)
+  local memo = S.memo
+  local a = memo and memo.arena
   for i = 1, #keys do
     local key = keys[i]
     local sp = map[key]
@@ -116,14 +168,42 @@ local function tickSpells(S, map, dt)
     if cd and cd > 0 then
       cd = cd - dt
       if cd < 0 then cd = 0 end
-      map[key] = { id = sp.id, rank = sp.rank, cd = cd, cost = sp.cost, cast = sp.cast }
+      if a and nFreeEntry > 0 then -- newEntry(memo, sp, cd), inlined for a free entry (hot)
+        local e = FREE_ENTRY[nFreeEntry]
+        FREE_ENTRY[nFreeEntry] = nil
+        nFreeEntry = nFreeEntry - 1
+        e.id, e.rank, e.cd, e.cost, e.cast = sp.id, sp.rank, cd, sp.cost, sp.cast
+        local k = a.nEntries + 1
+        a.entries[k], a.nEntries = e, k
+        map[key] = e
+      else
+        map[key] = newEntry(memo, sp, cd)
+      end
     end
   end
   return map
 end
 
+local fillState
 function M.clone(S, dt)
-  local n = M.cloneState(S)
+  local memo = S.memo
+  local a = memo and memo.arena
+  local n
+  if a then
+    if nFreeState > 0 then
+      n = FREE_STATE[nFreeState]
+      FREE_STATE[nFreeState] = nil
+      nFreeState = nFreeState - 1
+    else
+      n = { spells = {}, inflight = {}, buffs = { mw = {}, ls = {} }, target = {}, totems = {}, swing = {},
+            pool = { flurry = {}, ss = {}, fire = {}, water = {}, mh = {}, oh = {}, pets = {} } }
+    end
+    local k = a.nStates + 1
+    a.states[k], a.nStates = n, k
+    fillState(n, S)
+  else
+    n = M.cloneState(S)
+  end
   if dt then tickSpells(S, n.spells, dt) end
   return n
 end
@@ -148,6 +228,48 @@ function M.cloneState(S)
     swing = { attacking = sw.attacking, resetByInstant = sw.resetByInstant, mh = hand(sw.mh), oh = hand(sw.oh) },
     pets = pets and { wolves = pets.wolves },
   }
+end
+
+-- cloneState(S) written into an arena state n (M.clone): the same fields, n's own tables. A
+-- field that can be missing takes n.pool's table when present (applyOn / advance use it too).
+-- Keep it field for field with cloneState (spec/model_spec.lua compares them).
+local function fillPair(d, s, a, b) d[a], d[b] = s[a], s[b]; return d end
+function fillState(n, S)
+  local b, t, tot, sw = S.buffs, S.target, S.totems, S.swing
+  local fire, water, ss, pets = tot.fire, tot.water, t.ss, S.pets
+  local pool = n.pool
+  n.now, n.gcdRemains, n.castRemains, n.gcd, n.latency = S.now, S.gcdRemains, S.castRemains, S.gcd, S.latency
+  n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
+  n.cooldowns, n.cdAllowed, n.memo = S.cooldowns, S.cdAllowed, S.memo
+  local map, sp = n.spells, S.spells
+  map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
+  map.frostShock, map.lightningBolt, map.chainLightning = sp.frostShock, sp.lightningBolt, sp.chainLightning
+  map.searingTotem, map.magmaTotem, map.fireNova = sp.searingTotem, sp.magmaTotem, sp.fireNova
+  map.fireElemental, map.callOfElements, map.lightningShield = sp.fireElemental, sp.callOfElements, sp.lightningShield
+  map.shamanisticRage, map.feralSpirit = sp.shamanisticRage, sp.feralSpirit
+  local inf = n.inflight
+  if next(inf) then for k in pairs(inf) do inf[k] = nil end end
+  local sinf = S.inflight
+  if sinf then for k, v in pairs(sinf) do inf[k] = v end end
+  local nb = n.buffs
+  fillPair(nb.mw, b.mw, "stacks", "remains")
+  fillPair(nb.ls, b.ls, "charges", "remains")
+  nb.flurry = b.flurry and fillPair(pool.flurry, b.flurry, "charges", "remains") or nil
+  nb.rage, nb.lust, nb.em = b.rage, b.lust, b.em
+  local nt = n.target
+  nt.exists, nt.enemy, nt.level, nt.hp, nt.hpMax, nt.hpPct = t.exists, t.enemy, t.level, t.hp, t.hpMax, t.hpPct
+  nt.ttd, nt.range, nt.fs, nt.guessed, nt.dead, nt.armor = t.ttd, t.range, t.fs, t.guessed, t.dead, t.armor
+  nt.inCombat, nt.isPlayer, nt.meleeIn, nt.isBoss = t.inCombat, t.isPlayer, t.meleeIn, t.isBoss
+  nt.ss = ss and fillPair(pool.ss, ss, "charges", "remains") or nil
+  local ntot = n.totems
+  ntot.fire = fire and fillPair(pool.fire, fire, "kind", "remains") or nil
+  if water then local w = pool.water; w.remains = water.remains; ntot.water = w else ntot.water = nil end
+  local nsw = n.swing
+  nsw.attacking, nsw.resetByInstant = sw.attacking, sw.resetByInstant
+  nsw.mh = sw.mh and fillPair(pool.mh, sw.mh, "next", "speed") or nil
+  nsw.oh = sw.oh and fillPair(pool.oh, sw.oh, "next", "speed") or nil
+  if pets then local p = pool.pets; p.wolves = pets.wolves; n.pets = p else n.pets = nil end
+  return n
 end
 
 local SPARE_PLAYER = {} -- the scratch buffers' own player tables (newScratch)
@@ -180,12 +302,33 @@ local function setMana(n, mana)
     o.mana = mana
     return
   end
-  n.player = {
-    level = p.level, mana = mana, manaMax = p.manaMax, baseMana = p.baseMana, hpPct = p.hpPct, ap = p.ap,
-    spNature = p.spNature, spFire = p.spFire, meleeCrit = p.meleeCrit, spellCrit = p.spellCrit,
-    meleeHit = p.meleeHit, spellHit = p.spellHit, spellHaste = p.spellHaste, meleeHaste = p.meleeHaste,
-    moving = p.moving, inCombat = p.inCombat, shield = p.shield,
-  }
+  local memo = n.memo
+  local a = memo and memo.arena
+  if not a then
+    n.player = {
+      level = p.level, mana = mana, manaMax = p.manaMax, baseMana = p.baseMana, hpPct = p.hpPct, ap = p.ap,
+      spNature = p.spNature, spFire = p.spFire, meleeCrit = p.meleeCrit, spellCrit = p.spellCrit,
+      meleeHit = p.meleeHit, spellHit = p.spellHit, spellHaste = p.spellHaste, meleeHaste = p.meleeHaste,
+      moving = p.moving, inCombat = p.inCombat, shield = p.shield,
+    }
+    return
+  end
+  -- the same fields as the constructor above, in a table of the search's arena
+  local o
+  if nFreePlayer > 0 then
+    o = FREE_PLAYER[nFreePlayer]
+    FREE_PLAYER[nFreePlayer] = nil
+    nFreePlayer = nFreePlayer - 1
+  else
+    o = {}
+  end
+  o.level, o.mana, o.manaMax, o.baseMana, o.hpPct, o.ap = p.level, mana, p.manaMax, p.baseMana, p.hpPct, p.ap
+  o.spNature, o.spFire, o.meleeCrit, o.spellCrit = p.spNature, p.spFire, p.meleeCrit, p.spellCrit
+  o.meleeHit, o.spellHit, o.spellHaste, o.meleeHaste = p.meleeHit, p.spellHit, p.spellHaste, p.meleeHaste
+  o.moving, o.inCombat, o.shield = p.moving, p.inCombat, p.shield
+  local k = a.nPlayers + 1
+  a.players[k], a.nPlayers = o, k
+  n.player = o
 end
 
 -- replace n.spells[key] by a copy with the new cooldown (the old table may be shared)
@@ -205,7 +348,7 @@ local function setCd(n, key, cd)
     e.cd = cd
     return
   end
-  n.spells[key] = { id = sp.id, rank = sp.rank, cd = cd, cost = sp.cost, cast = sp.cast }
+  n.spells[key] = newEntry(n.memo, sp, cd)
 end
 
 local function talent(S, k) return (S.talents and S.talents[k]) or 0 end
@@ -244,7 +387,9 @@ function M.gcdFor(S, key)
   local g = byKey[key].gcd or 0
   if g <= 0 then return 0 end
   if g < 1.5 then return 1.0 end
-  return math.max(1.0, S.gcd or 1.5)
+  g = S.gcd or 1.5
+  if g < 1.0 then return 1.0 end -- = math.max(1.0, g), inlined (hot)
+  return g
 end
 
 -- Static Shock gives Lightning Shield 2 extra charges
@@ -255,7 +400,8 @@ end
 function M.castTime(S, key)
   local meta = byKey[key]
   if not meta or (meta.castBase or 0) <= 0 then return 0 end
-  local mw = floor(((S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0) + 1e-9)
+  local mw = ((S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0) + 1e-9
+  mw = mw - mw % 1 -- = floor(mw), without the call (hot)
   if mw >= 5 then return 0 end
   return meta.castBase * (1 - 0.2 * mw) / (S.player.spellHaste or 1)
 end
@@ -394,7 +540,8 @@ end
 -- returns RAGE_MANA_AP x AP as mana; `hits` = expected landed hits, up to manaMax
 local function rageMana(n, hits)
   local p = n.player
-  setMana(n, math.min(p.manaMax or math.huge, p.mana + hits * M.RAGE_MANA_AP * (p.ap or 0)))
+  local cap, mana = p.manaMax or math.huge, p.mana + hits * M.RAGE_MANA_AP * (p.ap or 0)
+  setMana(n, mana < cap and mana or cap) -- = math.min(cap, mana)
 end
 
 -- expected landed hits of one auto attack of `hand`: the swing itself and, for the main hand,
@@ -432,7 +579,12 @@ local function runHand(n, hand, dt, cast, life, st)
         if hand == "mh" then perSwing, mwPer = st.mh, st.mwmh else perSwing, mwPer = st.oh, st.mwoh end
       end
       dmg = dmg + perSwing
-      if mwPer > 0 then addMw(n, mwPer) end
+      if mwPer > 0 then -- addMw(n, mwPer), inlined (hot)
+        local mw = n.buffs.mw
+        local x = (mw.stacks or 0) + mwPer
+        mw.stacks = x < 5 and x or 5
+        mw.remains = M.MW_DURATION
+      end
       if (n.buffs.rage or 0) > at then
         hits = hits or hitsPerSwing(n, hand)
         rageMana(n, hits)
@@ -444,6 +596,17 @@ local function runHand(n, hand, dt, cast, life, st)
   return dmg, st
 end
 
+-- true: advance cannot change S's mana. Only Shamanistic Rage returns mana while waiting, on a
+-- swing before it runs out (runHand: rage > the swing's time, which is never negative after an
+-- advance); search skips pricing the mana of such a tail
+function M.waitKeepsMana(S)
+  if (S.buffs.rage or 0) > 0 then return false end
+  local sw = S.swing
+  local mh, oh = sw.mh, sw.oh
+  return not ((mh and (mh.next or 0) < 0) or (oh and (oh.next or 0) < 0))
+end
+
+local spareOf -- below
 local CAST2 = {} -- the rest of a cast after the target arrives inside one advance (reused)
 
 -- scratch state: a spell can be on cooldown only in its own entry, i.e. one on cooldown in the
@@ -505,7 +668,7 @@ function M.advance(n, dt, cast, cdsDone)
   local tot = n.totems
   local fire = tot.fire
   local pets = n.pets
-  if not pets then pets = { wolves = 0 }; n.pets = pets end
+  if not pets then pets = spareOf(n, "pets"); pets.wolves = 0; n.pets = pets end
   local fs, fireLeft, wolves = t.fs or 0, fire.remains or 0, pets.wolves or 0
   if live then
     local src = fire.kind and FIRE_SOURCE[fire.kind]
@@ -533,10 +696,11 @@ function M.advance(n, dt, cast, cdsDone)
       end
     end
   end
-  local x = (n.gcdRemains or 0) - dt
-  n.gcdRemains = x > 0 and x or 0
-  x = (n.castRemains or 0) - dt
-  n.castRemains = x > 0 and x or 0
+  -- timers count down to 0; one already at 0 stays as it is (the most common case: skipped)
+  local x = n.gcdRemains
+  if x ~= 0 then x = (x or 0) - dt; n.gcdRemains = x > 0 and x or 0 end
+  x = n.castRemains
+  if x ~= 0 then x = (x or 0) - dt; n.castRemains = x > 0 and x or 0 end
   local b = n.buffs
   local mw, ls, fl = b.mw, b.ls, b.flurry
   x = (mw.remains or 0) - dt
@@ -545,28 +709,33 @@ function M.advance(n, dt, cast, cdsDone)
   if x > 0 then ls.remains = x else ls.remains = 0; ls.charges = 0 end
   x = (fl.remains or 0) - dt
   if x > 0 then fl.remains = x else fl.remains = 0; fl.charges = 0 end
-  x = (b.rage or 0) - dt; b.rage = x > 0 and x or 0
-  x = (b.lust or 0) - dt; b.lust = x > 0 and x or 0
-  x = (b.em or 0) - dt; b.em = x > 0 and x or 0
-  x = fs - dt
-  t.fs = x > 0 and x or 0
+  x = b.rage
+  if x ~= 0 then x = (x or 0) - dt; b.rage = x > 0 and x or 0 end
+  x = b.lust
+  if x ~= 0 then x = (x or 0) - dt; b.lust = x > 0 and x or 0 end
+  x = b.em
+  if x ~= 0 then x = (x or 0) - dt; b.em = x > 0 and x or 0 end
+  if t.fs ~= 0 then x = fs - dt; t.fs = x > 0 and x or 0 end
   local ss = t.ss
   if ss then
     x = (ss.remains or 0) - dt
     if x > 0 then ss.remains = x else ss.remains = 0; ss.charges = 0 end
   end
-  x = fireLeft - dt
-  if x > 0 then fire.remains = x else fire.remains = 0; fire.kind = nil end
+  if fireLeft ~= 0 or fire.remains ~= 0 or fire.kind ~= nil then
+    x = fireLeft - dt
+    if x > 0 then fire.remains = x else fire.remains = 0; fire.kind = nil end
+  end
   local water = tot.water
   if water then x = (water.remains or 0) - dt; water.remains = x > 0 and x or 0 end
-  x = wolves - dt
-  pets.wolves = x > 0 and x or 0
-  local inf = n.inflight
-  if not inf then inf = {}; n.inflight = inf end
-  if next(inf) then
-    for k, v in pairs(inf) do
-      local left = v - dt
-      if left <= 0 then inf[k] = nil else inf[k] = left end
+  if pets.wolves ~= 0 then x = wolves - dt; pets.wolves = x > 0 and x or 0 end
+  if not n.ownSpells then -- a scratch state keeps no spells in flight (applyOn)
+    local inf = n.inflight
+    if not inf then inf = {}; n.inflight = inf end
+    if next(inf) then
+      for k, v in pairs(inf) do
+        local left = v - dt
+        if left <= 0 then inf[k] = nil else inf[k] = left end
+      end
     end
   end
   n.now = n.now + dt
@@ -593,7 +762,7 @@ end
 -- to the horizon). Filled field by field instead of allocated; two buffers, so a scratch state
 -- can be the input of the next peek. Spell entries on cooldown are the buffer's own (n.ownSpells:
 -- setCd edits them in place), ready ones are shared until changed; player stays shared and
--- copy-on-write; inflight starts empty.
+-- copy-on-write; inflight stays empty (spells in flight matter to the display only).
 -- A scratch result is valid only until the next peek call that writes the same buffer.
 local function newScratch()
   return {
@@ -770,6 +939,19 @@ local function fsDuration(n)
   return d
 end
 
+-- a copy's buffs, target and totem tables are its own (cloneState, fillState, fillScratch): a
+-- missing one comes from the copy's spare tables (scratch, arena) or is a new one
+function spareOf(n, name)
+  local s = n.ownSpells and n.spare or n.pool
+  return s and s[name] or {}
+end
+
+local function setFire(n, kind, remains)
+  local f = n.totems.fire or spareOf(n, "fire")
+  f.kind, f.remains = kind, remains
+  n.totems.fire = f
+end
+
 local CAST = {} -- apply's cast description for advance, reused (advance does not keep it)
 
 -- apply() on a copy n of S whose cooldowns are already lowered by adv (<= dt): the state moves
@@ -786,7 +968,8 @@ local function applyOn(n, key, ct, dt, adv)
     local ttd = t.ttd
     if not (ct > 0 and ttd and ttd < ct + (n.latency or 0)) then dmg = damage.action(n, key) end
   end
-  local mwAtCast = floor((n.buffs.mw.stacks or 0) + 1e-9)
+  local mwAtCast = (n.buffs.mw.stacks or 0) + 1e-9
+  mwAtCast = mwAtCast - mwAtCast % 1 -- = floor
   -- the pull: a spell on a mob at range brings it in, from the moment the spell lands
   if NEEDS_TARGET[key] and not t.meleeIn and t.range ~= "melee" and M.canApproach(n) then
     t.meleeIn = (ct > 0 and ct + (n.latency or 0) or 0) + util.approachEta(t.range)
@@ -812,7 +995,7 @@ local function applyOn(n, key, ct, dt, adv)
   end
   if CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
   if key == "stormstrike" then
-    local nss = n.ownSpells and n.spare.ss or {}
+    local nss = n.target.ss or spareOf(n, "ss") -- own in every copy: changed in place
     nss.charges, nss.remains = M.SS_CHARGES, M.SS_DURATION
     n.target.ss = nss
     addMw(n, damage.mwPerHit(n, "mh") + (n.weapons.oh and damage.mwPerHit(n, "oh") or 0))
@@ -825,22 +1008,25 @@ local function applyOn(n, key, ct, dt, adv)
   elseif key == "flameShock" then
     n.target.fs = fsDuration(n)
   elseif M.TOTEM_KIND[key] then
-    n.totems.fire = { kind = M.TOTEM_KIND[key], remains = M.TOTEM_DURATION[key] }
+    setFire(n, M.TOTEM_KIND[key], M.TOTEM_DURATION[key])
   elseif key == "callOfElements" then
     -- drops the whole totem set; its fire totem is taken as Magma (Searing before Magma is learned)
     if n.totems.water then n.totems.water.remains = M.WATER_DURATION end
     local fk = n.spells.magmaTotem and "magmaTotem" or "searingTotem"
-    n.totems.fire = { kind = M.TOTEM_KIND[fk], remains = M.TOTEM_DURATION[fk] }
+    setFire(n, M.TOTEM_KIND[fk], M.TOTEM_DURATION[fk])
   elseif key == "lightningShield" then
-    n.buffs.ls = { charges = M.lsMaxCharges(n), remains = M.LS_DURATION }
+    local ls = n.buffs.ls -- own in every copy
+    ls.charges, ls.remains = M.lsMaxCharges(n), M.LS_DURATION
   elseif key == "shamanisticRage" then
     n.buffs.rage = M.RAGE_DURATION
   elseif key == "feralSpirit" then
-    n.pets = n.pets or {}
+    n.pets = n.pets or spareOf(n, "pets")
     n.pets.wolves = M.WOLVES_DURATION
   end
-  n.inflight = n.inflight or {}
-  n.inflight[key] = M.INFLIGHT
+  if not n.ownSpells then -- a scratch state keeps none: nothing in the search reads them
+    n.inflight = n.inflight or {}
+    n.inflight[key] = M.INFLIGHT
+  end
   if dmg > 0 then
     local hp = (t.hp or 0) - dmg
     hp = hp > 0 and hp or 0 -- = math.max(0, hp)
@@ -872,8 +1058,9 @@ function M.apply(S, key, limit)
 end
 
 -- like apply(), but the result is a scratch state (see peekWait)
-function M.peekApply(S, key, limit)
-  local ct = M.castTime(S, key)
+-- ct (optional): castTime(S, key) when the caller already has it
+function M.peekApply(S, key, limit, ct)
+  ct = ct or M.castTime(S, key)
   local g = M.gcdFor(S, key)
   local dt = ct > g and ct or g -- = math.max(g, ct)
   local adv = (limit and limit < dt) and limit or dt
@@ -883,8 +1070,8 @@ end
 -- peekApply(n, ...) for a scratch state n, done in n itself instead of a copy in the other
 -- buffer: the same numbers, one fill less. n is gone afterwards (search: the press after a
 -- peekWait whose state nothing reads any more)
-function M.peekApplyOver(n, key, limit)
-  local ct = M.castTime(n, key)
+function M.peekApplyOver(n, key, limit, ct)
+  ct = ct or M.castTime(n, key)
   local g = M.gcdFor(n, key)
   local dt = ct > g and ct or g -- = math.max(g, ct)
   local adv = (limit and limit < dt) and limit or dt
