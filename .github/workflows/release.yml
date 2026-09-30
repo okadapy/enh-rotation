@@ -1,0 +1,97 @@
+# Каждый мердж в main — новый релиз: тесты, сборка строки импорта, тег vX.Y.Z (patch + 1),
+# релиз с EnhRot.txt. Вручную (Actions → Release → Run workflow) можно поднять minor или major.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Какую часть версии поднять
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+# релизы строго по очереди: следующий мердж ждёт, пока выйдет предыдущий
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Версия
+        id: version
+        run: |
+          if [ -n "$(git tag --points-at HEAD --list 'v*')" ]; then
+            echo "Коммит уже выпущен: $(git tag --points-at HEAD --list 'v*')"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prev=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          IFS=. read -r major minor patch <<< "${prev#v}"
+          major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+          case "${BUMP:-patch}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            *)     patch=$((patch + 1)) ;;
+          esac
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+          echo "tag=v$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        env:
+          BUMP: ${{ inputs.bump }}
+
+      - name: Тесты
+        if: steps.version.outputs.skip != 'true'
+        # perf_spec меряет время и зависит от машины: в CI не гоняется
+        run: docker compose run --rm test busted --exclude-tags=perf
+
+      - name: Сборка
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          docker compose run --rm test lua tools/build.lua
+          head -c 6 dist/EnhRot.txt | grep -qx '!WA:2!'
+
+      - name: Релиз
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PREV: ${{ steps.version.outputs.prev }}
+        run: |
+          {
+            echo "## Установка"
+            echo
+            echo '1. Скачать `EnhRot.txt` ниже (Assets) или скопировать строку из блока в конце.'
+            echo '2. В игре: `/wa` → **Import** → вставить строку → **Import**.'
+            echo '3. Появится группа `EnhRot` с аурой `EnhRot Timeline`. Настройки прежней версии WeakAuras предложит сохранить.'
+            echo
+            echo "Подробнее — [README](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/README.md)."
+            echo
+            echo "## Строка импорта"
+            echo
+            echo '```'
+            cat dist/EnhRot.txt
+            echo
+            echo '```'
+            echo
+          } > notes.md
+          args=()
+          if [ -n "$PREV" ]; then args+=(--notes-start-tag "$PREV"); fi
+          gh release create "$TAG" dist/EnhRot.txt \
+            --target "$GITHUB_SHA" \
+            --title "EnhRot $TAG" \
+            --notes-file notes.md \
+            --generate-notes \
+            "${args[@]}"
