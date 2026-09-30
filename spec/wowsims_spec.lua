@@ -93,6 +93,27 @@ local CASES = {
                          "the other way round. The model agrees with Phase 3 by a small margin: Flame Shock, then " ..
                          "Chain Lightning 16128 against 15978 the other way (6 s horizon); with a 7 s horizon it " ..
                          "would be Chain Lightning first (17201 against 17182)" } },
+  -- Flame Shock refresh (value.shockOption): a recast overwrites the DoT, the ticks left are lost.
+  -- Everything but the shocks on cooldown, as in the review that found the clip.
+  { name = "Earth Shock, not a Flame Shock refresh, with 4.5 s of it left",
+    setup = function(S) S.target.fs = 4.5; Sc.cd(S, { stormstrike = 7, lavaLash = 5.5, fireNova = 7 }) end,
+    expect = "earthShock" },
+  { name = "Earth Shock, not a Flame Shock refresh, with 3 s of it left",
+    setup = function(S) S.target.fs = 3; Sc.cd(S, { stormstrike = 7, lavaLash = 5.5, fireNova = 7 }) end,
+    expect = "earthShock",
+    alt = { flameShock = "6 s shared shock cooldown, 18 s DoT: kept up it takes one of 3 shocks, a shock is worth " ..
+                         "g = (817 + 18 x 100 + 2 x 1441) / 3 = 1834 on average. Earth Shock now keeps the 3 s of " ..
+                         "ticks a refresh clips (+300) but moves the recast to the next shock, sliding the whole " ..
+                         "rotation by one press (-(g - Earth Shock) = -393): the refresh is 93 better, and so below " ..
+                         "393 / 100 = 3.9 s left. Search 16357 against 16273; wowsims recasts only a dropped DoT" } },
+  { name = "Earth Shock, not a Flame Shock refresh, with 1.5 s of it left",
+    setup = function(S) S.target.fs = 1.5; Sc.cd(S, { stormstrike = 7, lavaLash = 5.5, fireNova = 7 }) end,
+    expect = "earthShock",
+    alt = { flameShock = "as with 3 s left: the refresh clips 150 of ticks, Earth Shock now slides the rotation by " ..
+                         "one press (-393): the refresh is 243 better. Search 16357 against 16123" } },
+  { name = "Flame Shock when it has run out and everything else is on cooldown",
+    setup = function(S) S.target.fs = 0; Sc.cd(S, { stormstrike = 7, lavaLash = 5.5, fireNova = 7 }) end,
+    expect = "flameShock" },
   { name = "Call of the Elements when the water totem is expiring",
     setup = function(S)
       S.totems.water.remains = 5; S.target.fs = 9; S.totems.fire = { kind = "magma", remains = 3 }

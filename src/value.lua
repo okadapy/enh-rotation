@@ -13,7 +13,8 @@ M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses afte
 M.SOLO_REGEN = 20            -- solo: seconds of drinking (lost damage) per full bar of mana
 M.MELEE_SHARE = 1.5          -- enhancement damage / auto-attack damage, for the damage-per-second estimate
 M.SUPPORT = 0.06             -- share of auto-attack damage the support totems add (Windfury, Strength of Earth...)
-M.TAIL = 12                  -- s of remaining DoT/totem/pet time worth counting: later it can simply be recast
+M.TAIL = 12                  -- s of remaining totem/pet time worth counting: later it can simply be recast
+                             -- (not Flame Shock: a recast overwrites the DoT, see fsCap)
 M.MW_SHARE = 0.2             -- one Maelstrom stack = 1/5 of an instant Lightning Bolt
 M.OOM_WEIGHT = 0.5           -- group/raid mana weight when the fight outlasts the mana
 M.FIGHT_MANA_PER_SEC = 0.003 -- net share of max mana spent per second (after regen), for the OOM projection
@@ -72,8 +73,9 @@ end
 function M.step(S, S2, dmg, manaSpent)
   local w = weights(S)
   dmg = dmg or 0
-  local hpLeft = math.max(0, S.target.hp or 0)
-  local useful = math.min(dmg, hpLeft)
+  local hpLeft = S.target.hp or 0
+  if hpLeft < 0 then hpLeft = 0 end
+  local useful = dmg < hpLeft and dmg or hpLeft
   local v = useful + (dmg - useful) * w.overkill
   if manaSpent and manaSpent ~= 0 then v = v - manaSpent * M.manaPrice(S) end
   if w.kill > 0 and hpLeft > 0 and not S.target.dead and ((S2.target.hp or 0) <= 0 or S2.target.dead) then
@@ -87,14 +89,31 @@ local function alive(S)
   return t and t.exists ~= false and t.enemy ~= false and not t.dead and (t.hp == nil or t.hp > 0)
 end
 
--- seconds of `remains` that still count: at most TAIL, and not after the target dies
-local function lifetime(S, remains)
+-- seconds of `remains` that still count: at most `cap` (TAIL), and not after the target dies
+local function lifetime(S, remains, cap)
   remains = remains or 0
-  if remains > M.TAIL then remains = M.TAIL end
+  cap = cap or M.TAIL
+  if remains > cap then remains = cap end
   local ttd = S.target.ttd
   if ttd and ttd < remains then remains = ttd end
   if remains < 0 then return 0 end
   return remains
+end
+
+-- Flame Shock is not capped at TAIL: "it can simply be recast later" does not hold for a DoT
+-- that a recast overwrites (3.3.5a: the ticks left are lost). Its whole remaining duration counts,
+-- and the recast is valued as the shock slot's option (shockOption), minus the ticks it clips.
+local function fsCap(S, damage)
+  local m = S.memo
+  local d = m and m.fsCap
+  if not d then
+    if not damage.dot then return M.TAIL end
+    local _, ticks, period = damage.dot(S, "flameShock")
+    d = (ticks or 0) * (period or 0)
+    if d <= 0 then d = M.TAIL end
+    if m then m.fsCap = d end
+  end
+  return d
 end
 
 -- remaining periodic damage (continuous dps, same as model.advance), at the discount
@@ -108,7 +127,7 @@ local function periodicValue(S, damage)
   -- one lookup for all sources when the damage module offers it (the search's memo)
   local r = damage.rates and damage.rates(S)
   local v = 0
-  if fs > 0 then v = v + (r and r.flameShock or damage.periodic(S, "flameShock")) * lifetime(S, fs) end
+  if fs > 0 then v = v + (r and r.flameShock or damage.periodic(S, "flameShock")) * lifetime(S, fs, fsCap(S, damage)) end
   if fireLeft > 0 then
     -- Searing Totem out of reach: only the time after the target comes within 20 yards counts
     local span = lifetime(S, fireLeft)
@@ -119,28 +138,66 @@ local function periodicValue(S, damage)
   return v * M.DISCOUNT
 end
 
-local function maelstromValue(S, damage)
+local function maelstromValue(S, damage, A)
   local mw = S.buffs and S.buffs.mw
   local stacks = (mw and mw.stacks) or 0
   if stacks > 5 then stacks = 5 end
   if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
-  local A = damage.actionTable and damage.actionTable(S)
   local lb = A and A.lightningBolt
   if lb == nil then lb = damage.action(S, "lightningBolt") end
   return stacks * M.MW_SHARE * lb * M.DISCOUNT
 end
 
+-- The shock slot (Earth and Flame Shock share the cooldown) is worth its better use: Earth Shock,
+-- or a Flame Shock recast. Kept up by recasting at expiry, Flame Shock takes one of the
+-- N = duration / cooldown shock presses its DoT spans and Earth Shock the other N - 1, so a
+-- press is worth g = (hit + full DoT + (N - 1) * Earth Shock) / N on average; the terminal sees
+-- only the next press, so the recast is credited that. A recast overwrites the DoT (3.3.5a: the
+-- ticks left are lost), and periodicValue has already counted those: they come off, g - DoT left.
+-- Earth Shock wins while the DoT left is worth more than g - Earth Shock, i.e. a DoT that still
+-- runs is not clipped unless it is about to run out (level 80: under ~4 s without Stormstrike's
+-- nature bonus, less with it). Without the recast here an end state whose DoT ran out was worth
+-- nothing for it and a refreshed one 12 s of ticks (TAIL), so clipping 4.5 s looked best.
+local function shockOption(S, damage, A, es)
+  if not S.spells.flameShock then return es end
+  -- duration, cycle length and tick rate do not change inside one search: once per memo
+  local m = S.memo
+  local c = m and m.fsShock
+  if not c then
+    local cap, cd = fsCap(S, damage), M.COOLDOWN.earthShock or 0
+    local n = cd > 0 and cap / cd or 1
+    if n < 1 then n = 1 end
+    c = { cap = cap, n = n, p = damage.periodic(S, "flameShock") }
+    if m then m.fsShock = c end
+  end
+  local cap, n, p = c.cap, c.n, c.p
+  local fs = A and A.flameShock
+  if fs == nil then fs = damage.action(S, "flameShock") end
+  -- lifetime() of the fresh DoT and of the one left, inline (this runs for every end state)
+  local ttd, left = S.target.ttd, S.target.fs or 0
+  local full = cap
+  if left > cap then left = cap end
+  if ttd then
+    if ttd < full then full = ttd end
+    if ttd < left then left = ttd end
+  end
+  if full < 0 then full = 0 end
+  if left < 0 then left = 0 end
+  local v = (fs + p * full + (n - 1) * es) / n - p * left
+  if v > es then return v end
+  return es
+end
+
 -- a button is worth its damage at the discount once ready; while on cooldown only the part
 -- of the cooldown already recovered counts (pressing it now is not free, waiting is not free either)
-local function readyValue(S, damage)
+local function readyValue(S, damage, live, A)
   local v = 0
   local spells = S.spells
   if not spells then return 0 end
   local fire = S.totems and S.totems.fire
   -- Fire Nova needs a totem, but not the one standing by a dead mob: then it counts as the others
-  local novaOk = (fire and fire.kind) or not alive(S)
+  local novaOk = (fire and fire.kind) or not live
   local keys = M.READY_KEYS
-  local A = damage.actionTable and damage.actionTable(S)
   for i = 1, #keys do
     local key = keys[i]
     local sp = spells[key]
@@ -151,11 +208,12 @@ local function readyValue(S, damage)
       if share > 0 then
         local d = A and A[key]
         if d == nil then d = damage.action(S, key) end
-        v = v + d * M.DISCOUNT * share
+        if key == "earthShock" and live then d = shockOption(S, damage, A, d) end
+        v = v + d * share
       end
     end
   end
-  return v
+  return v * M.DISCOUNT
 end
 
 -- Auto-attack parts, one lookup of both hands' swing damage:
@@ -252,8 +310,10 @@ end
 
 function M.terminal(S)
   local damage = D()
-  local v = maelstromValue(S, damage) + readyValue(S, damage)
-  if alive(S) then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage) end
+  local live = alive(S)
+  local A = damage.actionTable and damage.actionTable(S) -- per-buff action damage, shared below
+  local v = maelstromValue(S, damage, A) + readyValue(S, damage, live, A)
+  if live then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage) end
   return v
 end
 

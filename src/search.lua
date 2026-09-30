@@ -510,6 +510,10 @@ local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
     local wait = st.at - (node.S.now - rootNow)
     if gapFrom and i >= gapFrom and wait >= M.IDLE_MIN then return node, i end
     if r > M.READY_EPS and r > wait then wait = r end
+    -- a step planned at its ready time waits exactly that: "at" went through S.now - rootNow and
+    -- can differ in the last bits, which moves a swing due at that very moment (a mob arriving
+    -- into melee) to the other side of the press
+    if r > M.READY_EPS and wait - r < 1e-9 then wait = r end
     if st.afterSwing then
       local sw = o.model.swingIn and o.model.swingIn(node.S)
       if sw and sw > wait and sw <= wait + M.SWING_SLACK then wait = sw end
