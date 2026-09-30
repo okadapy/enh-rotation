@@ -50,7 +50,8 @@ local function install(extra)
   local cfg = { now = 100, known = allKnown(), castMs = { ["Lightning Bolt"] = 2500 },
                 target = { level = 83, hp = 1e6, hpMax = 1e6, guid = "Creature-9" }, inRange = { Stormstrike = 1 },
                 enchants = { mh = true, oh = true }, tooltip = { [16] = { "Windfury 8" }, [17] = { "Flametongue 10" } },
-                auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } } }
+                auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } },
+                talents = { { { "Maelstrom Weapon", 5 } } } }
   for k, v in pairs(extra or {}) do cfg[k] = v end
   return G.install(cfg)
 end
@@ -377,6 +378,22 @@ describe("runtime", function()
       assert.is_true(rt.tl.frame.shown)
     end)
   end
+
+  -- talents are matched by their English names
+  it("warns once in chat when no talent is read at level 10 or above (non-English client?)", function()
+    local rt = start(nil, { level = 80, talents = { { { "Elementarschutz", 3 } } } })
+    assert.are.equal(1, #G.printed)
+    assert.truthy(G.printed[1]:find("talents not detected (non-English client?)", 1, true))
+    runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
+    assert.are.equal(1, #G.printed)
+  end)
+
+  it("does not warn below level 10 or when a talent is read", function()
+    start(nil, { level = 9, talents = {} })
+    assert.are.equal(0, #G.printed)
+    start(nil, { level = 80, talents = { { { "Maelstrom Weapon", 5 } } } })
+    assert.are.equal(0, #G.printed)
+  end)
 
   it("plans when mounted in combat", function()
     local rt = start(nil, { mounted = true })

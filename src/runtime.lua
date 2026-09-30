@@ -242,6 +242,7 @@ function M.onEvent(rt, event, ...)
     ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   elseif M.RESCAN[event] then
     ctx.cache = snapshot.scan()
+    M.checkTalents(rt)
     M.mark(rt, "target")
   end
 end
@@ -339,6 +340,17 @@ local function work(rt)
   return M.show(rt, p:view(S.now), S, S.now)
 end
 
+-- Talents are matched by English names (talents.KEYS): on another client language every rank
+-- reads as 0. Said once per session, from level 10 (the first talent point) on.
+function M.checkTalents(rt)
+  if rt.talentsWarned or (UnitLevel("player") or 0) < 10 then return end
+  for _, rank in pairs(rt.ctx.cache.talents or {}) do
+    if rank > 0 then return end
+  end
+  rt.talentsWarned = true
+  print("|cffff5555EnhRot|r: talents not detected (non-English client?)")
+end
+
 -- nothing to suggest: dead or a ghost, on a flight path, in a vehicle, mounted out of combat
 -- (UnitInVehicle / UnitHasVehicleUI exist since 3.0; checked anyway, like IsCurrentSpell)
 function M.inactive()
@@ -420,6 +432,7 @@ function M.start(config, env)
     playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, capped = 0, errors = 0 }, reported = false,
   }
   tl.onError = function() M.fail(rt) end
+  M.checkTalents(rt)
   frame:SetScript("OnEvent", function(_, event, ...)
     if rt.stopped then return end
     if rt.busy then return M.fail(rt) end
