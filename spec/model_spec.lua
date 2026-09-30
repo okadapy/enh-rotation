@@ -304,14 +304,17 @@ describe("model", function()
       local S2 = model.apply(S, "lightningShield")
       assert.are.equal(5, S2.buffs.ls.charges)
     end)
-    it("Shamanistic Rage returns mana on every landed swing and Windfury extra attack", function()
+    -- 3.3.5a (wotlkdb.com, spell 30823): "a chance" on melee hits, 10 procs per minute
+    it("Shamanistic Rage returns mana with a 10 PPM chance on every landed swing and Windfury extra attack", function()
       local S = base(); S.swing.mh.next = 0.5; S.swing.oh.next = 0.6
       local S2 = model.apply(S, "shamanisticRage")
       local white, yellow = damage.meleeTable(S, true).landed, damage.meleeTable(S, false).landed
       local _, wfProcs = damage.wf(S)
-      local hits = 2 * white + wfProcs * 2 * yellow
+      local cmh, coh = damage.rageChance(S, "mh"), damage.rageChance(S, "oh")
+      assert.are.near(10 * S.weapons.mh.speed / 60, cmh, 1e-9)
+      local procs = (white + wfProcs * 2 * yellow) * cmh + white * coh
       assert.is_true(white < 1 and wfProcs > 0)
-      assert.are.near(8000 + hits * 0.15 * 4000, S2.player.mana, 1e-6)
+      assert.are.near(8000 + procs * 0.15 * 4000, S2.player.mana, 1e-6)
     end)
     describe("Shamanistic Rage on special attacks", function()
       local function rageState(mana)
@@ -320,21 +323,24 @@ describe("model", function()
         return S
       end
       local per = 0.15 * 4000
-      it("both Stormstrike hits return mana while Rage is up", function()
+      it("both Stormstrike hits return mana while Rage is up, each with its weapon's chance", function()
         local S = rageState(2000)
         local S2 = model.apply(S, "stormstrike")
         local landed = damage.meleeTable(S, false).landed
-        assert.are.near(2000 - 400 + 2 * per * landed, S2.player.mana, 1e-6)
+        local c = damage.rageChance(S, "mh") + damage.rageChance(S, "oh")
+        assert.are.near(2000 - 400 + c * per * landed, S2.player.mana, 1e-6)
       end)
       it("one hit without an off-hand weapon", function()
         local S = rageState(2000); S.weapons.oh = nil; S.swing.oh = nil
         local S2 = model.apply(S, "stormstrike")
-        assert.are.near(2000 - 400 + per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
+        local c = damage.rageChance(S, "mh")
+        assert.are.near(2000 - 400 + c * per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
       end)
       it("the Lava Lash hit returns mana while Rage is up", function()
         local S = rageState(2000)
         local S2 = model.apply(S, "lavaLash")
-        assert.are.near(2000 - 200 + per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
+        local c = damage.rageChance(S, "oh")
+        assert.are.near(2000 - 200 + c * per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
       end)
       it("nothing without Rage", function()
         local S = rageState(2000); S.buffs.rage = 0
@@ -346,7 +352,7 @@ describe("model", function()
         assert.are.near(2000 - 400, model.apply(S, "stormstrike").player.mana, 1e-9)
       end)
       it("capped at maximum mana", function()
-        local S = rageState(9800)
+        local S = rageState(9990); S.spells.stormstrike.cost = 0
         assert.are.equal(10000, model.apply(S, "stormstrike").player.mana)
       end)
       it("peekApply gives the same mana", function()
@@ -437,6 +443,17 @@ describe("model", function()
       S.swing.attacking = true; S.target.range = "30"
       _, dmg = model.wait(S, 2)
       assert.are.equal(0, dmg)
+    end)
+    -- 3.3.5a: a melee attack starts auto attack; a swing whose timer is up comes at once
+    it("Stormstrike and Lava Lash turn auto attack on, spells do not", function()
+      for _, key in ipairs({ "stormstrike", "lavaLash" }) do
+        local S = base(); S.swing.attacking = false; S.swing.mh.next, S.swing.oh.next = 0, 0
+        local S2, dmg = model.apply(S, key)
+        assert.is_true(S2.swing.attacking, key)
+        assert.is_true(dmg > damage.action(S, key), key) -- both hands swung inside the GCD
+      end
+      local S = base(); S.swing.attacking = false
+      assert.is_false(model.apply(S, "earthShock").swing.attacking)
     end)
     it("Flame Shock ticks continuously, limited by its remaining time", function()
       local S = base(); S.target.fs = 2
@@ -767,6 +784,8 @@ describe("model working copies (search speed)", function()
     local list = {}
     for _, over in ipairs({ {}, { buffs = { mw = { stacks = 3, remains = 20 } } }, { buffs = { rage = 10, ls = { charges = 0 } } },
                            { buffs = { rage = 10 }, player = { mana = 1500 } },
+                           -- auto attack off: Stormstrike / Lava Lash turn it on (a refill resets it)
+                           { swing = { attacking = false, mh = { next = 0 }, oh = { next = 0 } } },
                            { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } },
                            { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
                            { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } },

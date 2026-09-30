@@ -197,6 +197,46 @@ local function mwChance(S, hand)
   return math.min(1, 2 * r * w.speed / 60)
 end
 
+-- Shamanistic Rage (30823): "gives your successful melee attacks a chance to regenerate mana
+-- equal to 15% of your attack power" — a proc of 10 per minute (wotlkdb.com, 3.3.5a server data;
+-- wowsims uses 15), not every hit. Chance of one landed attack of `hand` (weapon speed, as
+-- every PPM proc).
+M.RAGE_PPM, M.RAGE_MANA_AP = 10, 0.15
+function M.rageChance(S, hand)
+  local w = S.weapons[hand]
+  if not w then return 0 end
+  local c = M.RAGE_PPM * (w.speed or 0) / 60
+  return c < 1 and c or 1
+end
+
+-- expected Rage procs of one auto attack of `hand`: the swing itself and, for the main hand,
+-- its Windfury extra attacks (counted in M.auto the same way)
+function M.rageProcsPerSwing(S, hand)
+  local hits = M.meleeTable(S, true).landed
+  if hand == "mh" then
+    local _, procs = M.wf(S)
+    hits = hits + procs * 2 * M.meleeTable(S, false).landed
+  end
+  return hits * M.rageChance(S, hand)
+end
+
+-- mana a second Shamanistic Rage returns from auto attacks (swing speeds of S.swing)
+function M.rageManaRate(S)
+  local m = S.memo
+  local r = m and m.rageManaRate
+  if r then return r end
+  r = 0
+  local sw = S.swing
+  for i = 1, 2 do
+    local hand = i == 1 and "mh" or "oh"
+    local s = sw and sw[hand]
+    if s and (s.speed or 0) > 0 and S.weapons[hand] then r = r + M.rageProcsPerSwing(S, hand) / s.speed end
+  end
+  r = r * M.RAGE_MANA_AP * (S.player.ap or 0)
+  if m then m.rageManaRate = r end
+  return r
+end
+
 function M.mwPerHit(S, hand)
   return mwChance(S, hand) * M.meleeTable(S, false).landed
 end

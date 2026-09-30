@@ -24,7 +24,7 @@ local FIRE_SOURCE = M.FIRE_SOURCE
 M.WATER_DURATION = 300
 M.WOLVES_DURATION = duration("feralSpirit", 45)
 M.RAGE_DURATION = duration("shamanisticRage", 15)
-M.RAGE_MANA_AP = 0.15
+M.RAGE_MANA_AP = damage.RAGE_MANA_AP
 -- Long cooldowns the player gates in the options (S.cooldowns[key]; nil = "always", the old
 -- behaviour). "auto" allows one on a boss, or on a target expected to live at least this long:
 -- half of what the cooldown summons or buffs (wolves 45 s, Fire Elemental 120 s, Rage 15 s).
@@ -390,22 +390,12 @@ function M.resetSwings(n)
   end
 end
 
--- Shamanistic Rage: every landed melee attack (auto, Windfury extra, Stormstrike, Lava Lash)
--- returns RAGE_MANA_AP x AP as mana; `hits` = expected landed hits, up to manaMax
+-- Shamanistic Rage: a landed melee attack (auto, Windfury extra, Stormstrike, Lava Lash) returns
+-- RAGE_MANA_AP x AP as mana with the proc chance of its weapon (damage.rageChance, 10 PPM);
+-- `hits` = expected procs, up to manaMax
 local function rageMana(n, hits)
   local p = n.player
   setMana(n, math.min(p.manaMax or math.huge, p.mana + hits * M.RAGE_MANA_AP * (p.ap or 0)))
-end
-
--- expected landed hits of one auto attack of `hand`: the swing itself and, for the main hand,
--- its Windfury extra attacks (counted in damage.auto the same way)
-local function hitsPerSwing(n, hand)
-  local hits = damage.meleeTable(n, true).landed
-  if hand == "mh" then
-    local _, procs = damage.wf(n)
-    hits = hits + procs * 2 * damage.meleeTable(n, false).landed
-  end
-  return hits
 end
 
 -- swings of one hand landing within dt; only those before `life` (time to die) deal damage.
@@ -434,7 +424,7 @@ local function runHand(n, hand, dt, cast, life, st)
       dmg = dmg + perSwing
       if mwPer > 0 then addMw(n, mwPer) end
       if (n.buffs.rage or 0) > at then
-        hits = hits or hitsPerSwing(n, hand)
+        hits = hits or damage.rageProcsPerSwing(n, hand)
         rageMana(n, hits)
       end
     end
@@ -639,8 +629,9 @@ local function fillScratch(S, dt)
     n.weaveMin = S.weaveMin
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
-    n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant
+    n.swing.resetByInstant = S.swing.resetByInstant
   end
+  n.swing.attacking = S.swing.attacking -- Stormstrike / Lava Lash turn it on (applyOn)
   n.now, n.gcdRemains, n.castRemains = S.now, S.gcdRemains, S.castRemains
   n.player, n.playerOwn = S.player, nil
   local spells, own, from, filled = n.spells, sp.spells, S.spells, n.filled
@@ -811,17 +802,19 @@ local function applyOn(n, key, ct, dt, adv)
     if ss.charges <= 0 then ss.remains = 0 end
   end
   if CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
+  -- a melee attack starts auto attack (3.3.5a): the next swing comes as soon as its timer is up
+  if MELEE_ONLY[key] then n.swing.attacking = true end
   if key == "stormstrike" then
     local nss = n.ownSpells and n.spare.ss or {}
     nss.charges, nss.remains = M.SS_CHARGES, M.SS_DURATION
     n.target.ss = nss
     addMw(n, damage.mwPerHit(n, "mh") + (n.weapons.oh and damage.mwPerHit(n, "oh") or 0))
     if (n.buffs.rage or 0) > 0 and alive(n) then
-      rageMana(n, (n.weapons.oh and 2 or 1) * damage.meleeTable(n, false).landed)
+      rageMana(n, (damage.rageChance(n, "mh") + damage.rageChance(n, "oh")) * damage.meleeTable(n, false).landed)
     end
   elseif key == "lavaLash" then
     addMw(n, damage.mwPerHit(n, "oh"))
-    if (n.buffs.rage or 0) > 0 and alive(n) then rageMana(n, damage.meleeTable(n, false).landed) end
+    if (n.buffs.rage or 0) > 0 and alive(n) then rageMana(n, damage.rageChance(n, "oh") * damage.meleeTable(n, false).landed) end
   elseif key == "flameShock" then
     n.target.fs = fsDuration(n)
   elseif M.TOTEM_KIND[key] then

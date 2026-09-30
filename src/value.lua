@@ -1,5 +1,7 @@
 -- Value of a chain of actions: useful damage now, minus mana at the mode's price,
 -- plus what the end state is still worth (Maelstrom, remaining DoT/totem/pet damage, ready buttons).
+local util = require("util")
+
 local M = {}
 
 M.WEIGHTS = {
@@ -10,7 +12,15 @@ M.WEIGHTS = {
 M.WEIGHTS.pvp = M.WEIGHTS.group
 
 M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses after the horizon
-M.SOLO_REGEN = 20            -- solo: seconds of drinking (lost damage) per full bar of mana
+-- solo: mana drunk back per second of drinking, by the level the drink needs (3.3.5a vendor and
+-- conjured water, wotlkdb.com: Morning Glory Dew 2934 mana / 30 s at 45, Conjured Crystal Water
+-- 4200 / 30 s at 55, Filtered Draenic Water 5100 / 30 s at 60, Purified Draenic Water 7200 / 30 s
+-- at 65, Pungent Seal Whey 12840 / 30 s at 70, Honeymint Tea 19200 / 30 s at 75; below 45: Moonberry
+-- Juice 1992 / 30 s, Sweet Nectar 1345 / 27 s, Melon Juice 835 / 24 s, Ice Cold Milk 437 / 21 s,
+-- Refreshing Spring Water 151 / 18 s)
+M.DRINK = { { 75, 19200 / 30 }, { 70, 12840 / 30 }, { 65, 7200 / 30 }, { 60, 5100 / 30 }, { 55, 4200 / 30 },
+            { 45, 2934 / 30 }, { 35, 1992 / 30 }, { 25, 1345 / 27 }, { 15, 835 / 24 }, { 5, 437 / 21 },
+            { 1, 151 / 18 } }
 M.MELEE_SHARE = 1.5          -- enhancement damage / auto-attack damage, for the damage-per-second estimate
 M.SUPPORT = 0.06             -- share of auto-attack damage the support totems add (Windfury, Strength of Earth...)
 M.TAIL = 12                  -- s of remaining totem/pet time worth counting: later it can simply be recast
@@ -26,6 +36,10 @@ do
   for _, key in ipairs(M.READY_KEYS) do M.COOLDOWN[key] = spells.byKey[key] and spells.byKey[key].cd or 0 end
 end
 M.FIRE_SOURCE = { searing = "searingTotem", magma = "magmaTotem", fireElemental = "fireElemental" }
+do
+  local rage = require("spells").byKey.shamanisticRage
+  M.RAGE_DURATION, M.RAGE_CD = rage.duration or 15, rage.cd or 60 -- Shamanistic Rage: 15 s window, 1 min cooldown
+end
 
 -- looked up on every call so tests can swap the module: require returns what the test preloaded
 -- (the client has no module table of its own, the build's require reads the bundled list)
@@ -44,6 +58,16 @@ function M.dpsEstimate(S)
   return dps * M.MELEE_SHARE
 end
 
+-- mana per second of drinking at the character's level (M.DRINK)
+function M.drinkRate(level)
+  local d = M.DRINK
+  level = level or 1
+  for i = 1, #d do
+    if level >= d[i][1] then return d[i][2] end
+  end
+  return d[#d][2]
+end
+
 -- damage points one mana point is worth; scales with the character through AP + SP
 function M.manaPrice(S)
   local p = S.player
@@ -51,13 +75,17 @@ function M.manaPrice(S)
   local W = M.WEIGHTS
   local w = W[S.mode] or W.group
   if S.mode == "solo" then
-    -- Mana spent now is drunk back later: a full bar costs SOLO_REGEN seconds of damage. Drinking
-    -- is linear, so the price does not grow as the bar empties: the "scarcity" and "Rage on
-    -- cooldown" multipliers left from the old AP-based price made it 4-6x the drinking time, and
-    -- a level-53 player in melee was told to idle with Stormstrike and Lava Lash ready.
-    -- A bar that runs dry needs no extra price: what cannot be paid cannot be pressed.
+    -- Mana spent now is drunk back later: every point costs 1 / drinkRate seconds of sitting,
+    -- i.e. that much of the character's damage. The drink is the best water of the character's
+    -- level: at 52-54 Morning Glory Dew gives 98 mana a second, a full bar is ~30 s. (A fixed 20 s
+    -- per bar was ~1.5x too cheap there, and Chain Lightning at 2.6x a Bolt's mana for the same
+    -- damage on one target looked worth its price.) Drinking is linear, so the price does not grow
+    -- as the bar empties: the "scarcity" and "Rage on cooldown" multipliers left from the old
+    -- AP-based price made it 4-6x the drinking time, and a level-53 player in melee was told to
+    -- idle with Stormstrike and Lava Lash ready. A bar that runs dry needs no extra price: what
+    -- cannot be paid cannot be pressed.
     local dps = M.dpsEstimate(S)
-    if dps > 0 and (p.manaMax or 0) > 0 then return w.mana * dps * M.SOLO_REGEN / p.manaMax end
+    if dps > 0 then return w.mana * dps / M.drinkRate(p.level) end
     return w.mana * ref
   end
   local ttd = S.target and S.target.ttd
@@ -311,12 +339,61 @@ local function reserveValue(S, damage, A)
   return -unpaid(S, mana, damage, A)
 end
 
+-- Shamanistic Rage is worth the mana its window returns, and it returns mana only on melee hits
+-- (10 PPM) while a target lives. Ready (or the recovered share of its 60 s cooldown, as
+-- readyValue), it is a whole 15 s window for a later fight; a window running on a live target in
+-- melee with auto attack on counts for the seconds left of it (the mob's ttd, the mana bar's
+-- room). Both at the discount, at the mana's price. Without this the ready Rage was worth nothing
+-- and a press cost nothing: its mana on a mob dying in 4 s (a quarter of the window) beat the
+-- melee buttons, and the full window was missing on the next pull. Solo only (terminal): in a
+-- group or raid mana is nearly free (manaPrice), and there the window is a small part of the plan.
+function M.rageValue(S, damage, live)
+  local sp = S.spells and S.spells.shamanisticRage
+  if not sp or not damage.rageManaRate then return 0 end
+  local rate = damage.rageManaRate(S)
+  if rate <= 0 then return 0 end
+  local cd, full = sp.cd or 0, M.RAGE_CD
+  local mana = 0
+  if cd <= 0 then
+    mana = rate * M.RAGE_DURATION
+  elseif full > cd then
+    mana = rate * M.RAGE_DURATION * (1 - cd / full)
+  end
+  local left = S.buffs and S.buffs.rage or 0
+  if left > 0 and live and S.target.range == "melee" and S.swing and S.swing.attacking then
+    local p = S.player
+    local now = rate * lifetime(S, left, M.RAGE_DURATION)
+    local room = (p.manaMax or 0) - (p.mana or 0)
+    if now > room then now = room > 0 and room or 0 end
+    mana = mana + now
+  end
+  if mana <= 0 then return 0 end
+  return mana * M.manaPrice(S) * M.DISCOUNT
+end
+
+-- Lightning Shield (free, 10 min) missing at the end: it takes a global cooldown to put back,
+-- later, when that GCD has a damage button to take from: one GCD of the character's damage, at
+-- the discount. Put up now, in a GCD with nothing better to do (a mob about to die), it costs
+-- nothing; the shield's own damage (Static Shock) is in the auto attacks. Without this the
+-- shield was worth its Static Shock procs alone, and it took the free GCD at a dying mob only by
+-- a few points, or lost it to a Flame Shock for one tick. Solo only (terminal), like rageValue: the leveling pull, where a mob about to die leaves free
+-- GCDs; a group keeps the old worth (the shield's Static Shock damage in the auto attacks).
+function M.shieldValue(S)
+  local spells = S.spells
+  if not (spells and spells.lightningShield) then return 0 end
+  local ls = S.buffs and S.buffs.ls
+  if ls and (ls.charges or 0) > 0 then return 0 end
+  if not util.wantsLightningShield(S) then return 0 end
+  return -(S.gcd or 1.5) * M.dpsEstimate(S) * M.DISCOUNT
+end
+
 function M.terminal(S)
   local damage = D()
   -- one lookup of the per-buff action table for all parts (nothing below changes S's buffs)
   local A = damage.actionTable and damage.actionTable(S)
   local live = alive(S)
   local v = maelstromValue(S, damage, A) + readyValue(S, damage, A, live)
+  if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
   if live then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage, A) end
   return v
 end
