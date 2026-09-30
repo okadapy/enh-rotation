@@ -99,3 +99,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 - В событиях `UNIT_SPELLCAST_*` клиента 3.3.5a четвёртый аргумент — castID. По нему отличается свой каст от нажатия во время каста.
 - `IsCurrentSpell(6603)` говорит, включена ли автоатака после `/reload`.
 - Задержка сети (latency) добавляется ко времени каста, когда считается, насколько каст задержит удар.
+
+## Благодарности
+
+Логика часов ударов (`src/swing.lua`) основана на паке «WOTLK Swingtimer cast weaving indicator» (Ralgathor, <https://wago.io/joURtkngg>) и его бэкпорте под 3.3.5a (chinpira, <https://wago.io/QwrJHa-h4>). Код переписан, но идеи событий и сброса удара взяты оттуда. Приоритеты для сверки — из APL [wowsims/wotlk](https://github.com/wowsims/wotlk).
