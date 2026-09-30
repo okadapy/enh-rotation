@@ -83,11 +83,11 @@ describe("aura", function()
 
   it("has custom options with defaults in config", function()
     local host = t.c[1]
-    assert.are.same({ "scale", "seconds", "icons", "mode", "showReason", "showLust", "record", "printDebug" },
+    assert.are.same({ "scale", "seconds", "icons", "mode", "showReason", "showLust", "record", "export", "printDebug" },
       optionKeys(host.authorOptions))
     assert.are.same(aura.defaultConfig(), host.config)
     assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, showReason = true, showLust = true,
-                      record = false, printDebug = false }, aura.defaultConfig())
+                      record = false, export = false, printDebug = false }, aura.defaultConfig())
     assert.are.equal("auto", host.authorOptions[4].values[1])
   end)
 
@@ -151,6 +151,19 @@ describe("build (pure)", function()
     assert.has_error(function() build.parseSnapshots("WeakAurasSaved = { displays = {} }") end)
   end)
 
+  it("imports snapshots from the in-game export string", function()
+    local list = { { S = { now = 5 }, plan = { value = 2, steps = {} } } }
+    local s = require("recorder").export(list, { serialize = require("LibSerialize"), deflate = require("LibDeflate") })
+    local path, out = os.tmpname(), os.tmpname()
+    local f = assert(io.open(path, "wb"))
+    f:write(s .. "\n")
+    f:close()
+    assert.are.equal(1, build.importSnapshots(path, out))
+    assert.are.equal(5, dofile(out)[1].S.now)
+    os.remove(path)
+    os.remove(out)
+  end)
+
   it("imports recorded snapshots into a fixture file", function()
     local out = os.tmpname()
     assert.are.equal(2, build.importSnapshots(SAMPLE, out))
@@ -211,5 +224,19 @@ describe("build #integration", function()
     assert.are.equal("ENHROT_SHOW", G.sent[1][1])
     env.rt.tl:tick(0.016)
     assert.is_true(env.rt.tl.icons[1].shown)
+  end)
+  it("opens the export window with the saved snapshots when the option is on", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    local saved = { enhrotSnapshots = { { S = { now = 42 }, plan = { value = 1, steps = {} } } } }
+    local cfg = aura.defaultConfig()
+    cfg.record, cfg.export = true, true
+    local env = { config = cfg, region = CreateFrame("Frame"), saved = saved }
+    local chunk = assert(loadstring(build.initCode("src")))
+    setfenv(chunk, clientEnv({ aura_env = env }))
+    chunk()
+    local w = EnhRotExportFrame
+    assert.is_true(w.shown)
+    assert.are.same(saved.enhrotSnapshots, build.decodeExport(w.box.text))
   end)
 end)

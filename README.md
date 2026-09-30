@@ -47,6 +47,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 - **Show reason under icon** — текст под крупной иконкой.
 - **Show Bloodlust ready in group** — значок «Bloodlust готов».
 - **Record snapshots for bug reports** — записывать ситуации для отчёта об ошибке (до 30 штук).
+- **Export snapshots (copy window)** — открыть окно со строкой записанных снимков для копирования в issue.
 - **Print debug to chat** — печатать план в чат при каждой смене первого действия.
 
 ## Проверки в игре на первом запуске
@@ -64,9 +65,10 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 
 ## Если подсказка неправильная
 
-1. Включить **Record snapshots**, повторить ситуацию и выйти из игры (данные пишутся при выходе или `/reload`).
-2. Прислать файл `WTF/Account/<АККАУНТ>/SavedVariables/WeakAuras.lua`.
-3. Разработчик: `docker compose run --rm test lua tools/build.lua import-snapshots path/to/WeakAuras.lua` (строку сохранённых данных WeakAuras 5.22 он раскодирует сам). В `spec/fixtures/recorded.lua` у нужного снимка дописать `expect = "<правильное действие>"` с комментарием, почему оно правильное. Потом `docker compose run --rm test busted spec/recorded_spec.lua`.
+1. Включить **Record snapshots** и повторить ситуацию (снимок пишется, когда меняется первая кнопка, не чаще раза в 2 с; хранятся последние 30).
+2. Включить **Export snapshots** — откроется окно со строкой `!ENHROT:1!…`, уже выделенной: `Ctrl+C` и вставить в issue (или в файл). **Refresh** обновляет строку, `Esc` закрывает окно. После разбора галочку можно снять.
+   Можно и по-старому: сделать `/reload` или выйти из игры и прислать файл `WTF/Account/<АККАУНТ>/SavedVariables/WeakAuras.lua`.
+3. Разработчик: `docker compose run --rm test lua tools/build.lua import-snapshots <файл>` — файл со строкой экспорта или `WeakAuras.lua` (строку сохранённых данных WeakAuras 5.22 он раскодирует сам). В `spec/fixtures/recorded.lua` у нужного снимка дописать `expect = "<правильное действие>"` с комментарием, почему оно правильное. Потом `docker compose run --rm test busted spec/recorded_spec.lua`.
 
 Если в чате появилось `EnhRot stopped after an error - /reload to retry` — в расчёте случилась ошибка Lua. Подсказчик остановился, чтобы не сыпать ошибками каждый кадр. Сделать `/reload`, а если повторяется — прислать снимки и текст ошибки.
 

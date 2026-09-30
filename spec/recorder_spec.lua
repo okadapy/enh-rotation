@@ -26,6 +26,16 @@ describe("recorder", function()
     assert.are.equal(30, saved.enhrotSnapshots[1].S.now)
   end)
 
+  it("exports the list as one printable string the build tool reads back", function()
+    local libs = { serialize = require("LibSerialize"), deflate = require("LibDeflate") }
+    local list = { { S = { now = 100, target = { ttd = 3.5 } }, plan = { value = 1, steps = { { key = "lavaLash", at = 0 } } } } }
+    local s = recorder.export(list, libs)
+    assert.are.equal("!ENHROT:1!", s:sub(1, 10))
+    assert.is_nil(s:find("%s"))
+    assert.are.same(list, require("build").decodeExport("  " .. s .. "\n"))
+    assert.is_nil(recorder.export(list, nil))
+  end)
+
   it("continues an existing list after reload", function()
     local saved = { enhrotSnapshots = { { S = { now = 1 }, plan = { steps = {} } } } }
     local r = recorder.new(saved, 30)

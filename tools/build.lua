@@ -84,6 +84,20 @@ function B.decodeSaved(s)
   return nil
 end
 
+-- the string of the in-game export window (recorder.export) -> the snapshot list, or nil
+function B.decodeExport(s)
+  if type(s) ~= "string" then return nil end
+  local body = s:match("^%s*!ENHROT:1!(%S+)")
+  if not body then return nil end
+  local LibDeflate = require("LibDeflate")
+  local compressed = LibDeflate:DecodeForPrint(body)
+  local serialized = compressed and LibDeflate:DecompressDeflate(compressed)
+  if not serialized then return nil end
+  local ok, t = require("LibSerialize"):Deserialize(serialized)
+  if ok and type(t) == "table" then return t end
+  return nil
+end
+
 function B.findSnapshots(t, seen)
   seen = seen or {}
   if type(t) ~= "table" or seen[t] then return nil end
@@ -107,7 +121,8 @@ function B.parseSnapshots(text, name)
 end
 
 function B.importSnapshots(path, out)
-  local list = B.parseSnapshots(B.readFile(path), path)
+  local text = B.readFile(path)
+  local list = B.decodeExport(text) or B.parseSnapshots(text, path)
   out = out or B.FIXTURE
   local dir = out:match("^(.*)/[^/]*$")
   if dir and dir ~= "" then os.execute("mkdir -p '" .. dir .. "'") end

@@ -156,6 +156,23 @@ describe("timeline render", function()
     assert.are.near(0.05 / 0.15, tl.icons[2].alpha, 1e-9)
   end)
 
+  it("opens one export window with the text selected; Refresh puts fresh text in", function()
+    G.install({})
+    local n = 0
+    local w = timeline.exportWindow("!ENHROT:1!abc", function() n = n + 1; return "!ENHROT:1!new" .. n end)
+    assert.are.equal(EnhRotExportFrame, w)
+    assert.is_true(w.shown)
+    assert.are.equal("!ENHROT:1!abc", w.box.text)
+    assert.is_true(w.box.highlighted)
+    w.again.scripts.OnClick(w.again)
+    assert.are.equal("!ENHROT:1!new1", w.box.text)
+    w.box.scripts.OnTextChanged(w.box, true) -- typing does not change it
+    assert.are.equal("!ENHROT:1!new1", w.box.text)
+    w.box.scripts.OnEscapePressed(w.box)
+    assert.is_false(w.shown)
+    assert.are.equal(w, timeline.exportWindow("x"))
+  end)
+
   it("shows and hides the alert icon", function()
     local tl = timeline.new(CreateFrame("Frame"), {})
     tl:setAlert({ icon = "Interface\\Icons\\X" })

@@ -15,6 +15,7 @@ M.OPTIONS = {
   { type = "toggle", key = "showReason", name = "Show reason under icon", default = true, width = 1, useDesc = false },
   { type = "toggle", key = "showLust", name = "Show Bloodlust ready in group", default = true, width = 1, useDesc = false },
   { type = "toggle", key = "record", name = "Record snapshots for bug reports", default = false, width = 1, useDesc = false },
+  { type = "toggle", key = "export", name = "Export snapshots (copy window)", default = false, width = 1, useDesc = false },
   { type = "toggle", key = "printDebug", name = "Print debug to chat", default = false, width = 1, useDesc = false },
 }
 
