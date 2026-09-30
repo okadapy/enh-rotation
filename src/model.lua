@@ -54,6 +54,11 @@ M.HANDS = { "mh", "oh" }
 -- target already in combat; pressing a spell on a target at range pulls it (applyOn).
 M.BAND20_ETA = util.approachEta("20") -- a target running in from "30" is within 20 yards this long before melee
 
+-- hot-path locals (the tables are the module's own, never replaced)
+local byKey, floor = spells.byKey, math.floor
+local NEEDS_TARGET, MELEE_ONLY, SHOCK_RANGE = M.NEEDS_TARGET, M.MELEE_ONLY, M.SHOCK_RANGE
+local TOTEM_KIND, CAST_SPELLS, HORIZON = M.TOTEM_KIND, M.CAST_SPELLS, M.HORIZON
+
 M.copy = util.copy
 
 local function shallow(t)
@@ -140,19 +145,32 @@ function M.cloneState(S)
   }
 end
 
+local SPARE_PLAYER = {} -- the scratch buffers' own player tables (newScratch)
+
 -- n.player is shared with the parent state: replace it before changing mana
 local function setMana(n, mana)
   local p = n.player
   if p.mana == mana then return end
   if n.ownSpells then
     -- scratch state: its own player table, no allocation
-    local o = n.spare.player
-    if o ~= p then
-      o.level, o.manaMax, o.baseMana, o.hpPct, o.ap = p.level, p.manaMax, p.baseMana, p.hpPct, p.ap
-      o.spNature, o.spFire, o.meleeCrit, o.spellCrit = p.spNature, p.spFire, p.meleeCrit, p.spellCrit
-      o.meleeHit, o.spellHit, o.spellHaste, o.meleeHaste = p.meleeHit, p.spellHit, p.spellHaste, p.meleeHaste
-      o.moving, o.inCombat, o.shield = p.moving, p.inCombat, p.shield
-      n.player = o
+    local o = n.playerOwn
+    if not o then
+      -- a scratch source may hold this buffer's own player (a chain of peeks back into this
+      -- buffer): then the other one, so the source keeps its mana
+      local spare = n.spare
+      o = spare.player
+      if o == p then o = spare.player2 end
+      local from = n.playerFrom
+      if from[o] ~= p then
+        o.level, o.manaMax, o.baseMana, o.hpPct, o.ap = p.level, p.manaMax, p.baseMana, p.hpPct, p.ap
+        o.spNature, o.spFire, o.meleeCrit, o.spellCrit = p.spNature, p.spFire, p.meleeCrit, p.spellCrit
+        o.meleeHit, o.spellHit, o.spellHaste, o.meleeHaste = p.meleeHit, p.spellHit, p.spellHaste, p.meleeHaste
+        o.moving, o.inCombat, o.shield = p.moving, p.inCombat, p.shield
+        -- a search node's player is never modified (copy-on-write): the next copy of the same one
+        -- (fillScratch forgets it with the search) only needs the mana; a scratch one is modified
+        from[o] = not SPARE_PLAYER[p] and p or nil
+      end
+      n.player, n.playerOwn = o, o
     end
     o.mana = mana
     return
@@ -173,7 +191,12 @@ local function setCd(n, key, cd)
     -- scratch state: its own entry for this key, filled from the (maybe shared) current one
     local e = n.spare.spells[key]
     if not e then e = {}; n.spare.spells[key] = e end
-    if e ~= sp then e.id, e.rank, e.cost, e.cast = sp.id, sp.rank, sp.cost, sp.cast; n.spells[key] = e end
+    if e ~= sp then
+      e.id, e.rank, e.cost, e.cast = sp.id, sp.rank, sp.cost, sp.cast
+      n.spells[key] = e
+      local d = n.nDirty + 1 -- fillScratch puts the shared entry back
+      n.dirty[d], n.nDirty = key, d
+    end
     e.cd = cd
     return
   end
@@ -213,7 +236,7 @@ function M.cooldownFor(S, key)
 end
 
 function M.gcdFor(S, key)
-  local g = spells.byKey[key].gcd or 0
+  local g = byKey[key].gcd or 0
   if g <= 0 then return 0 end
   if g < 1.5 then return 1.0 end
   return math.max(1.0, S.gcd or 1.5)
@@ -225,9 +248,9 @@ function M.lsMaxCharges(S)
 end
 
 function M.castTime(S, key)
-  local meta = spells.byKey[key]
+  local meta = byKey[key]
   if not meta or (meta.castBase or 0) <= 0 then return 0 end
-  local mw = math.floor(((S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0) + 1e-9)
+  local mw = floor(((S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0) + 1e-9)
   if mw >= 5 then return 0 end
   return meta.castBase * (1 - 0.2 * mw) / (S.player.spellHaste or 1)
 end
@@ -276,7 +299,7 @@ function M.cooldownAllowed(S, key)
 end
 
 function M.readyIn(S, key)
-  local meta, sp = spells.byKey[key], S.spells and S.spells[key]
+  local meta, sp = byKey[key], S.spells and S.spells[key]
   if not meta or not sp then return nil end
   if S.cooldowns and not M.cooldownAllowed(S, key) then return nil end
   -- cheapest tests first: most buttons are simply on cooldown
@@ -284,40 +307,46 @@ function M.readyIn(S, key)
   local c, g = S.castRemains or 0, S.gcdRemains or 0
   if c > r then r = c end
   if g > r then r = g end
-  if r >= M.HORIZON then return nil end
-  if (sp.cost or 0) > (S.player.mana or 0) then return nil end
+  if r >= HORIZON then return nil end
+  local p = S.player
+  if (sp.cost or 0) > (p.mana or 0) then return nil end
   local t = S.target
-  local live = alive(S)
-  if M.NEEDS_TARGET[key] then
-    if not live or t.range == "far" then return nil end
+  if NEEDS_TARGET[key] then
+    -- alive(S), inlined
+    if not (t and t.exists and t.enemy and not t.dead) or t.range == "far" then return nil end
     -- a target on its way in: melee buttons once it arrives, shocks once it is within 20 yards
-    local mi = t.meleeIn
-    if M.MELEE_ONLY[key] and t.range ~= "melee" then
-      if not mi then return nil end
-      if mi > r then r = mi end
+    local range = t.range
+    if range ~= "melee" then
+      local mi = t.meleeIn
+      if MELEE_ONLY[key] then
+        if not mi then return nil end
+        if mi > r then r = mi end
+      end
+      if SHOCK_RANGE[key] and range ~= "20" then
+        if not mi then return nil end
+        if mi - M.BAND20_ETA > r then r = mi - M.BAND20_ETA end
+      end
+      if r >= HORIZON then return nil end
     end
-    if M.SHOCK_RANGE[key] and t.range ~= "melee" and t.range ~= "20" then
-      if not mi then return nil end
-      if mi - M.BAND20_ETA > r then r = mi - M.BAND20_ETA end
-    end
-    if r >= M.HORIZON then return nil end
   end
   local fire = S.totems.fire
   local special = SPECIAL[key]
-  if special and not special(S, fire, live) then return nil end
+  if special and not special(S, fire) then return nil end
   -- the same fire totem again changes nothing while it still stands longer than value.TAIL counts
-  local kind = M.TOTEM_KIND[key]
+  local kind = TOTEM_KIND[key]
   if kind and kind == fire.kind and (fire.remains or 0) >= M.TOTEM_REDROP then return nil end
-  if S.player.moving and M.CAST_SPELLS[key] and M.castTime(S, key) > 0 then return nil end
+  if p.moving and CAST_SPELLS[key] and M.castTime(S, key) > 0 then return nil end
   return r
 end
 
-function M.addMw(n, x)
+local function addMw(n, x)
   if x <= 0 then return end
   local mw = n.buffs.mw
-  mw.stacks = math.min(5, (mw.stacks or 0) + x)
+  x = (mw.stacks or 0) + x
+  mw.stacks = x < 5 and x or 5 -- = math.min(5, x)
   mw.remains = M.MW_DURATION
 end
+M.addMw = addMw
 
 function M.resetSwings(n)
   for _, h in ipairs(M.HANDS) do
@@ -344,10 +373,11 @@ local function hitsPerSwing(n, hand)
   return hits
 end
 
--- swings of one hand landing within dt; only those before `life` (time to die) deal damage
-local function runHand(n, hand, dt, cast, life)
+-- swings of one hand landing within dt; only those before `life` (time to die) deal damage.
+-- st: damage.swingStats(n) if the caller already has it -> damage, swingStats (nil = not looked up)
+local function runHand(n, hand, dt, cast, life, st)
   local s = n.swing[hand]
-  if not s or (s.speed or 0) <= 0 then return 0 end
+  if not s or (s.speed or 0) <= 0 then return 0, st end
   local dmg, speed = 0, s.speed
   local at = s.next or 0
   if cast then
@@ -359,14 +389,15 @@ local function runHand(n, hand, dt, cast, life)
   end
   -- per-swing numbers do not change inside one advance (buffs only expire at its end)
   local perSwing, mwPer, hits
-  while at <= dt + 1e-9 do
-    if at <= life + 1e-9 then
+  local dtEnd, lifeEnd = dt + 1e-9, life + 1e-9
+  while at <= dtEnd do
+    if at <= lifeEnd then
       if not perSwing then
-        local st = damage.swingStats(n)
-        perSwing, mwPer = st[hand], st["mw" .. hand]
+        st = st or damage.swingStats(n)
+        if hand == "mh" then perSwing, mwPer = st.mh, st.mwmh else perSwing, mwPer = st.oh, st.mwoh end
       end
       dmg = dmg + perSwing
-      M.addMw(n, mwPer)
+      if mwPer > 0 then addMw(n, mwPer) end
       if (n.buffs.rage or 0) > at then
         hits = hits or hitsPerSwing(n, hand)
         rageMana(n, hits)
@@ -375,7 +406,7 @@ local function runHand(n, hand, dt, cast, life)
     at = at + speed
   end
   s.next = at - dt
-  return dmg
+  return dmg, st
 end
 
 local CAST2 = {} -- the rest of a cast after the target arrives inside one advance (reused)
@@ -404,7 +435,10 @@ function M.advance(n, dt, cast, cdsDone)
   local dmg = 0
   local mh, oh = sw.mh, sw.oh
   if sw.attacking and live and t.range == "melee" then
-    dmg = runHand(n, "mh", dt, cast, life) + runHand(n, "oh", dt, cast, life)
+    -- with the memo both hands read the same swingStats table (its slot depends on Lightning
+    -- Shield / Stormstrike charges and range, which a swing does not change): looked up once
+    local dmh, st = runHand(n, "mh", dt, cast, life)
+    dmg = dmh + (runHand(n, "oh", dt, cast, life, n.memo and st or nil))
   else
     if mh then local x = (mh.next or 0) - dt; mh.next = x > 0 and x or 0 end
     if oh then local x = (oh.next or 0) - dt; oh.next = x > 0 and x or 0 end
@@ -426,20 +460,37 @@ function M.advance(n, dt, cast, cdsDone)
     if fs > 0 or wolves > 0 or (src and fireLeft > 0) then
       local r = damage.rates(n)
       if fs > 0 then dmg = dmg + r.flameShock * (fs < life and fs or life) end
-      if src and fireLeft > 0 then dmg = dmg + r[src] * damage.fireUptime(n, src, fireLeft < life and fireLeft or life) end
+      if src and fireLeft > 0 then
+        local span = fireLeft < life and fireLeft or life
+        -- only Searing Totem can be out of reach (damage.fireUptime is the identity for the rest)
+        if src == "searingTotem" then span = damage.fireUptime(n, src, span) end
+        dmg = dmg + r[src] * span
+      end
       if wolves > 0 then dmg = dmg + r.feralSpirit * (wolves < life and wolves or life) end
     end
   end
   if not cdsDone then
-    local keys, map = spellKeys(n), n.spells
-    local own = n.ownSpells and n.spare.spells
-    for i = 1, #keys do
-      local key = keys[i]
-      local sp = map[key]
-      local cd = sp.cd
-      if cd and cd > 0 then
-        cd = cd > dt and cd - dt or 0
-        if own and own[key] == sp then sp.cd = cd else setCd(n, key, cd) end
+    if n.ownSpells then
+      -- scratch state: a spell can be on cooldown only in its own entry, i.e. one on cooldown in
+      -- the source (onCd) or one setCd has switched since the fill (dirty); lowered in place
+      local map, list = n.spells, n.onCd
+      for i = 1, n.nOnCd do
+        local sp = map[list[i]]
+        local cd = sp.cd
+        if cd and cd > 0 then sp.cd = cd > dt and cd - dt or 0 end
+      end
+      list = n.dirty
+      for i = 1, n.nDirty do
+        local sp = map[list[i]]
+        local cd = sp.cd
+        if cd and cd > 0 then sp.cd = cd > dt and cd - dt or 0 end
+      end
+    else
+      local keys, map = spellKeys(n), n.spells
+      for i = 1, #keys do
+        local key = keys[i]
+        local cd = map[key].cd
+        if cd and cd > 0 then setCd(n, key, cd > dt and cd - dt or 0) end
       end
     end
   end
@@ -510,31 +561,36 @@ local function newScratch()
     ownSpells = true, spells = {}, inflight = {},
     buffs = { mw = {}, ls = {} },
     target = {}, totems = {}, swing = {}, pets = {},
-    spare = { ss = {}, fire = {}, water = {}, mh = {}, oh = {}, flurry = {}, spells = {}, player = {} },
+    spare = { ss = {}, fire = {}, water = {}, mh = {}, oh = {}, flurry = {}, spells = {}, player = {}, player2 = {} },
+    playerFrom = {}, -- spare player -> the node's player whose stats it holds (setMana)
+    filled = {}, -- key -> the spare spell entry already holds id/rank/cost/cast of this search (memo)
+    onCd = {}, nOnCd = 0, -- keys whose entry is the buffer's own after the fill (on cooldown in n.src)
+    dirty = {}, nDirty = 0, -- keys setCd switched from the shared entry to the own one since the fill
   }
 end
 local SCR1, SCR2 = newScratch(), newScratch()
-
-local function fillHand(dst, src)
-  if not src then return nil end
-  dst.next, dst.speed = src.next, src.speed
-  return dst
-end
+for _, n in ipairs({ SCR1, SCR2 }) do SPARE_PLAYER[n.spare.player], SPARE_PLAYER[n.spare.player2] = true, true end
 
 -- copy S into a scratch buffer (not the one S itself lives in), cooldowns lowered by dt
 local function fillScratch(S, dt)
   local n = S == SCR1 and SCR2 or SCR1
   local sp = n.spare
-  if n.memo ~= S.memo or not S.memo then
-    -- another search (or none): the spell key set may differ
+  local memo = S.memo
+  local fresh = n.memo ~= memo or not memo
+  if fresh then
+    -- another search (or none): the spell key set and the spells' ranks may differ
     for k in pairs(n.spells) do n.spells[k] = nil end
+    local filled = n.filled
+    for k in pairs(filled) do filled[k] = nil end
+    local from = n.playerFrom
+    for k in pairs(from) do from[k] = nil end
   end
   local inf = n.inflight
   if next(inf) then for k in pairs(inf) do inf[k] = nil end end
   -- fields the model never changes: copied only when the source state changes
   -- (sources are search nodes, which are never modified; a scratch source always recopies)
   local t, st = n.target, S.target
-  local same = n.src == S and S.memo and S ~= SCR1 and S ~= SCR2
+  local same = not fresh and n.src == S and S ~= SCR1 and S ~= SCR2
   n.src = S
   if not same then
     n.gcd, n.latency = S.gcd, S.latency
@@ -546,24 +602,58 @@ local function fillScratch(S, dt)
     n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant
   end
   n.now, n.gcdRemains, n.castRemains = S.now, S.gcdRemains, S.castRemains
-  n.player = S.player
-  local spells, own, from = n.spells, sp.spells, S.spells
-  local keys = spellKeys(S)
-  for i = 1, #keys do
-    local key = keys[i]
-    local src = from[key]
-    local cd = src.cd
-    if cd and cd > 0 then
-      local e = own[key]
-      if not e then e = {}; own[key] = e end
-      cd = cd - dt
-      if cd < 0 then cd = 0 end
-      e.id, e.rank, e.cd, e.cost, e.cast = src.id, src.rank, cd, src.cost, src.cast
-      spells[key] = e
-    else
-      spells[key] = src -- ready: shared, setCd switches to the own entry before a change
+  n.player, n.playerOwn = S.player, nil
+  local spells, own, from, filled = n.spells, sp.spells, S.spells, n.filled
+  local onCd = n.onCd
+  if same then
+    -- the same (never modified) source as the last fill: every ready spell still points at its
+    -- shared entry except those setCd switched to the own one (dirty); the ones on cooldown get
+    -- their own entry's cd again (its id/rank/cost/cast are already this search's: filled)
+    local dirty = n.dirty
+    for i = 1, n.nDirty do
+      local key = dirty[i]
+      spells[key] = from[key] -- on cooldown in the source: set again just below
     end
+    for i = 1, n.nOnCd do
+      local key = onCd[i]
+      local e = own[key]
+      local cd = from[key].cd - dt
+      if cd < 0 then cd = 0 end
+      e.cd = cd
+      spells[key] = e
+    end
+  else
+    local keys = spellKeys(S)
+    local nOn = 0
+    for i = 1, #keys do
+      local key = keys[i]
+      local src = from[key]
+      local cd = src.cd
+      if cd and cd > 0 then
+        nOn = nOn + 1
+        onCd[nOn] = key
+        local e = own[key]
+        if not e then e = {}; own[key] = e end
+        cd = cd - dt
+        if cd < 0 then cd = 0 end
+        -- id, rank, cost and cast of a spell never change inside one search: copied once per memo
+        if filled[key] then
+          e.cd = cd
+        else
+          e.id, e.rank, e.cd, e.cost, e.cast = src.id, src.rank, cd, src.cost, src.cast
+          if memo then filled[key] = true end
+        end
+        spells[key] = e
+      else
+        spells[key] = src -- ready: shared, setCd switches to the own entry before a change
+        -- a scratch source can hand over this buffer's own entry (ready): setCd then changes
+        -- it in place, without switching, so advance must find it among the own ones
+        if src == own[key] then nOn = nOn + 1; onCd[nOn] = key end
+      end
+    end
+    n.nOnCd = nOn
   end
+  n.nDirty = 0
   local b, sb = n.buffs, S.buffs
   b.mw.stacks, b.mw.remains = sb.mw.stacks, sb.mw.remains
   b.ls.charges, b.ls.remains = sb.ls.charges, sb.ls.remains
@@ -598,7 +688,10 @@ local function fillScratch(S, dt)
     n.totems.water = nil
   end
   local sw, nsw = S.swing, n.swing
-  nsw.mh, nsw.oh = fillHand(sp.mh, sw.mh), fillHand(sp.oh, sw.oh)
+  local h = sw.mh
+  if h then local d = sp.mh; d.next, d.speed = h.next, h.speed; nsw.mh = d else nsw.mh = nil end
+  h = sw.oh
+  if h then local d = sp.oh; d.next, d.speed = h.next, h.speed; nsw.oh = d else nsw.oh = nil end
   n.pets.wolves = S.pets and S.pets.wolves or 0
   return n
 end
@@ -642,20 +735,20 @@ local CAST = {} -- apply's cast description for advance, reused (advance does no
 -- apply() on a copy n of S whose cooldowns are already lowered by adv (<= dt): the state moves
 -- adv seconds on; if adv < dt the rest of the GCD / cast stays in gcdRemains / castRemains
 local function applyOn(n, key, ct, dt, adv)
-  local meta = spells.byKey[key]
+  local meta = byKey[key]
   local sp = n.spells[key]
   -- a cast lands when the server ends it, castTime + latency after the press (as the swing clock
   -- below); a target dying before that takes nothing: no damage and no kill by it (the mana and
   -- the cooldown are still counted)
   local dmg = 0
-  if alive(n) then
-    local ttd = n.target.ttd
+  local t = n.target
+  if t and t.exists and t.enemy and not t.dead then -- alive(n), inlined
+    local ttd = t.ttd
     if not (ct > 0 and ttd and ttd < ct + (n.latency or 0)) then dmg = damage.action(n, key) end
   end
-  local mwAtCast = math.floor((n.buffs.mw.stacks or 0) + 1e-9)
+  local mwAtCast = floor((n.buffs.mw.stacks or 0) + 1e-9)
   -- the pull: a spell on a mob at range brings it in, from the moment the spell lands
-  local t = n.target
-  if M.NEEDS_TARGET[key] and not t.meleeIn and t.range ~= "melee" and M.canApproach(n) then
+  if NEEDS_TARGET[key] and not t.meleeIn and t.range ~= "melee" and M.canApproach(n) then
     t.meleeIn = (ct > 0 and ct + (n.latency or 0) or 0) + util.approachEta(t.range)
   end
 
@@ -663,7 +756,9 @@ local function applyOn(n, key, ct, dt, adv)
   local cd = M.cooldownFor(n, key) - adv
   if cd < 0 then cd = 0 end
   if meta.sharedCd then
-    for _, k in ipairs(M.SHARED[meta.sharedCd]) do
+    local group = M.SHARED[meta.sharedCd]
+    for i = 1, #group do
+      local k = group[i]
       if n.spells[k] then setCd(n, k, cd) end
     end
   else
@@ -675,17 +770,17 @@ local function applyOn(n, key, ct, dt, adv)
     ss.charges = ss.charges - 1
     if ss.charges <= 0 then ss.remains = 0 end
   end
-  if M.CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
+  if CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
   if key == "stormstrike" then
     local nss = n.ownSpells and n.spare.ss or {}
     nss.charges, nss.remains = M.SS_CHARGES, M.SS_DURATION
     n.target.ss = nss
-    M.addMw(n, damage.mwPerHit(n, "mh") + (n.weapons.oh and damage.mwPerHit(n, "oh") or 0))
+    addMw(n, damage.mwPerHit(n, "mh") + (n.weapons.oh and damage.mwPerHit(n, "oh") or 0))
     if (n.buffs.rage or 0) > 0 and alive(n) then
       rageMana(n, (n.weapons.oh and 2 or 1) * damage.meleeTable(n, false).landed)
     end
   elseif key == "lavaLash" then
-    M.addMw(n, damage.mwPerHit(n, "oh"))
+    addMw(n, damage.mwPerHit(n, "oh"))
     if (n.buffs.rage or 0) > 0 and alive(n) then rageMana(n, damage.meleeTable(n, false).landed) end
   elseif key == "flameShock" then
     n.target.fs = fsDuration(n)
@@ -707,8 +802,10 @@ local function applyOn(n, key, ct, dt, adv)
   n.inflight = n.inflight or {}
   n.inflight[key] = M.INFLIGHT
   if dmg > 0 then
-    n.target.hp = math.max(0, (n.target.hp or 0) - dmg)
-    if n.target.hp <= 0 then n.target.dead = true end
+    local hp = (t.hp or 0) - dmg
+    hp = hp > 0 and hp or 0 -- = math.max(0, hp)
+    t.hp = hp
+    if hp <= 0 then t.dead = true end
   end
 
   local cast
@@ -727,7 +824,8 @@ end
 -- limit (optional): move the state at most this far (search: not past its horizon)
 function M.apply(S, key, limit)
   local ct = M.castTime(S, key)
-  local dt = math.max(M.gcdFor(S, key), ct)
+  local g = M.gcdFor(S, key)
+  local dt = ct > g and ct or g -- = math.max(g, ct)
   local adv = (limit and limit < dt) and limit or dt
   -- cooldowns are lowered by adv right in the copy; advance skips them
   return applyOn(M.clone(S, adv), key, ct, dt, adv)
@@ -736,20 +834,24 @@ end
 -- like apply(), but the result is a scratch state (see peekWait)
 function M.peekApply(S, key, limit)
   local ct = M.castTime(S, key)
-  local dt = math.max(M.gcdFor(S, key), ct)
+  local g = M.gcdFor(S, key)
+  local dt = ct > g and ct or g -- = math.max(g, ct)
   local adv = (limit and limit < dt) and limit or dt
   return applyOn(fillScratch(S, adv), key, ct, dt, adv)
 end
 
 -- candidates in spells.CATALOG order, waitSwing last
+local CATALOG = spells.CATALOG
 function M.actions(S)
-  local out = {}
-  for _, meta in ipairs(spells.CATALOG) do
-    local r = M.readyIn(S, meta.key)
-    if r then out[#out + 1] = { key = meta.key, readyIn = r } end
+  local out, n = {}, 0
+  local readyIn = M.readyIn
+  for i = 1, #CATALOG do
+    local key = CATALOG[i].key
+    local r = readyIn(S, key)
+    if r then n = n + 1; out[n] = { key = key, readyIn = r } end
   end
   local r = M.swingIn(S)
-  if r and r < M.HORIZON then out[#out + 1] = { key = "waitSwing", readyIn = r } end
+  if r and r < HORIZON then out[n + 1] = { key = "waitSwing", readyIn = r } end
   return out
 end
 

@@ -803,6 +803,29 @@ describe("model working copies (search speed)", function()
     end
   end)
 
+  -- fillScratch refills a buffer from the same source faster (only cooldowns and entries setCd
+  -- switched); apply never touches the scratch buffers, so these peeks come one after another
+  it("peeks of the same state one after another give exactly what apply and wait give", function()
+    for _, S in ipairs(states()) do
+      local acts = model.actions(S)
+      for round = 1, 2 do
+        local limit = round == 2 and 0.7 or nil
+        for _, a in ipairs(acts) do
+          if a.key ~= "waitSwing" then
+            local S2, d2 = model.apply(S, a.key, limit)
+            local P, dp = model.peekApply(S, a.key, limit)
+            assert.are.equal(d2, dp, a.key)
+            assert.are.same(view(S2), view(P), a.key)
+          end
+        end
+        local W, dw = model.wait(S, 1.7 * round)
+        local Q, dq = model.peekWait(S, 1.7 * round)
+        assert.are.equal(dw, dq)
+        assert.are.same(view(W), view(Q))
+      end
+    end
+  end)
+
   it("a scratch state can be the input of the next peek", function()
     local S = states()[1]
     local W1, d1 = model.wait(S, 1.2)
@@ -832,6 +855,61 @@ describe("model working copies (search speed)", function()
     local dp = model.advance(P, 3.1)
     assert.are.equal(dw, dp)
     assert.are.same(view(W), view(P))
+  end)
+
+  -- advance lowers a scratch state's cooldowns only in its own entries (on cooldown at the fill,
+  -- or switched by setCd: a shock sets the shared cooldown of the others)
+  it("advancing any pressed scratch state in place equals advancing the applied state", function()
+    for _, S in ipairs(states()) do
+      for _, a in ipairs(model.actions(S)) do
+        if a.key ~= "waitSwing" then
+          local W = model.apply(S, a.key)
+          local dw = model.advance(W, 2.9)
+          local P = model.peekApply(S, a.key)
+          local dp = model.advance(P, 2.9)
+          assert.are.equal(dw, dp, a.key)
+          assert.are.same(view(W), view(P), a.key)
+        end
+      end
+    end
+  end)
+
+  -- a chain of scratch states through both buffers and back: the third one gets the first
+  -- buffer's own entries (cooldowns run out in the first wait) as ready ones from its source,
+  -- and setCd changes them in place
+  it("a chain of peeks back into the first buffer, advanced in place, equals the applied chain", function()
+    local list = states()
+    local S = fixtures.state({ spells = { earthShock = { cd = 0.3 }, flameShock = { cd = 0.3 }, frostShock = { cd = 0.3 },
+                                          stormstrike = { cd = 0.2 }, lavaLash = { cd = 0.35 } } })
+    S.memo = {}
+    list[#list + 1] = S
+    for _, S0 in ipairs(list) do
+      local R2 = model.wait(model.wait(S0, 0.4), 0.1)
+      for _, b in ipairs(model.actions(R2)) do
+        if b.key ~= "waitSwing" and b.readyIn <= 0 then
+          local R3, dr = model.apply(R2, b.key)
+          local dr2 = model.advance(R3, 2.2)
+          local P3, dp = model.peekApply(model.peekWait(model.peekWait(S0, 0.4), 0.1), b.key)
+          local dp2 = model.advance(P3, 2.2)
+          assert.are.equal(dr, dp, b.key)
+          assert.are.equal(dr2, dp2, b.key)
+          assert.are.same(view(R3), view(P3), b.key)
+        end
+      end
+    end
+  end)
+
+  it("a peek back into the first buffer leaves its source's mana alone", function()
+    local S = fixtures.state({ buffs = { rage = 10 }, swing = { mh = { next = 0.1 }, oh = { next = 0.2 } } })
+    S.memo = {}
+    local P1 = model.peekWait(S, 0.5)   -- both hands swing: Rage returns mana (the buffer's own player)
+    assert.is_true(P1.player ~= S.player)
+    local P2 = model.peekWait(P1, 0.01) -- no swing: the same player as P1
+    assert.are.equal(P1.player, P2.player)
+    local mana = P2.player.mana
+    local P3 = model.peekApply(P2, "earthShock") -- back into P1's buffer, mana spent
+    assert.are.equal(mana, P2.player.mana)
+    assert.are.equal(mana - S.spells.earthShock.cost, P3.player.mana)
   end)
 
   it("clone keeps every spells.CATALOG key and never shares what the model changes", function()

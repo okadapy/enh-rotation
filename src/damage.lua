@@ -375,7 +375,13 @@ local function memoizeFlags(name)
   M[name] = function(S, a)
     local m = S.memo
     if not m then return raw(S, a) end
-    local f = flags(S)
+    -- flags(S), inlined (hot)
+    local f = 1
+    local t = S.target
+    local ls, ss = S.buffs.ls, t.ss
+    if ls and ls.charges and ls.charges > 0 then f = 2 end
+    if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    if t.range == "melee" then f = f + 4 end
     local slot = m[name]
     if not slot then slot = {}; m[name] = slot end
     local sub = slot[f]
