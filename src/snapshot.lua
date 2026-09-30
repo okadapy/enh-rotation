@@ -1,5 +1,7 @@
 local spells = require("spells")
 local talents = require("talents")
+local damage = require("damage")
+local value = require("value")
 
 local M = {}
 
@@ -289,15 +291,42 @@ function M.targetInfo(ctx, c, now, playerLevel)
   end
   t.hp, t.hpMax = hp, hpMax
   local guid = UnitGUID("target")
-  if t.enemy and guid and ctx.ttd then
-    ctx.ttd:add(now, guid, t.hpPct)
-    t.ttd = ctx.ttd:smoothed(now, guid)
-  end
+  -- the estimate itself is read in build: its prior needs the whole state
+  if t.enemy and guid and ctx.ttd then ctx.ttd:add(now, guid, t.hpPct) end
   local deb = M.auras("target", "HARMFUL", c.debuffNames, true, now)
   if deb.fs then t.fs = deb.fs.remains end
   if deb.ss then t.ss = { charges = deb.ss.count, remains = deb.ss.remains } end
   t.range = M.heldRange(ctx, guid, M.range(c), now)
   return t
+end
+
+-- Expected seconds to kill the target from what the state knows, for the young regression
+-- (ttd): health / (the character's damage per second + the Flame Shock and fire totem already
+-- ticking on it). Solo only: in a group others hit the mob too, and our own rate says nothing of
+-- it. Only while the mob fights us: before the pull nothing is killing it.
+function M.ttdPrior(S)
+  local t = S.target
+  if S.mode ~= "solo" or not t.enemy or (t.hp or 0) <= 0 or not S.player.inCombat then return nil end
+  local fighting = t.inCombat
+  if fighting == nil then fighting = UnitAffectingCombat("target") or (t.fs or 0) > 0 end
+  if not fighting then return nil end
+  local dps = value.dpsEstimate(S)
+  local fire = S.totems.fire
+  local src = fire.kind and value.FIRE_SOURCE[fire.kind]
+  if (t.fs or 0) > 0 or (src and fire.remains > 0) then
+    local r = damage.rates(S)
+    if (t.fs or 0) > 0 then dps = dps + r.flameShock end
+    if src and fire.remains > 0 then dps = dps + r[src] end
+  end
+  if dps <= 0 then return nil end
+  return t.hp / dps
+end
+
+function M.targetTtd(ctx, S, now)
+  local t = S.target
+  local guid = t.enemy and ctx.ttd and UnitGUID("target")
+  if not guid then return end
+  t.ttd, t.ttdSource = ctx.ttd:smoothed(now, guid, M.ttdPrior(S))
 end
 
 function M.swingInfo(ctx, now, weapons)
@@ -364,6 +393,7 @@ function M.build(ctx)
   S.enemies = { melee = melee, nearby = nearby }
   S.inflight = M.inflight(ctx.inflight, now)
   S.pets = { wolves = math.max(0, (ctx.wolvesUntil or 0) - now) }
+  M.targetTtd(ctx, S, now)
   return S
 end
 
