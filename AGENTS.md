@@ -14,7 +14,7 @@ WeakAura-подсказчик для энх-шамана под WotLK 3.3.5a (We
 - Дизайн: `docs/superpowers/specs/2026-09-30-enh-rotation-design.md`; план: `docs/superpowers/plans/2026-09-30-enh-rotation.md`
 
 Конвенции:
-- Lua 5.1. В `src/` нельзя `pcall`, `loadstring`, `setfenv`, `getfenv`, `_G`, `SlashCmdList` — песочница WeakAuras (проверяет `spec/build_spec.lua`, даже в комментариях).
+- Lua 5.1. В `src/` нельзя `pcall`, `loadstring`, `setfenv`, `getfenv`, `_G`, `SlashCmdList` — песочница WeakAuras; и `package`, `io`, `debug` — их нет в клиенте (проверяет `spec/build_spec.lua`, даже в комментариях). Интеграционный тест сборки запускает её без этих библиотек.
 - API игры читают только `snapshot`, `runtime`, `timeline`; остальные модули — чистые функции над `S`.
 - Тексты в игре — на английском. Новый модуль в `src/` — добавить в `tools/build.lua` `B.MODULES`.
 - `src/spells_data.lua` не править руками.

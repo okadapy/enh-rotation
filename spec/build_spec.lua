@@ -15,6 +15,19 @@ local function srcModules()
   return out
 end
 
+-- globals of stock Lua that the WoW 3.3.5a client does not have (os: only time/date/clock/difftime)
+local NOT_IN_CLIENT = { package = true, require = true, module = true, io = true, debug = true, dofile = true, loadfile = true }
+local CLIENT_OS = { time = os.time, date = os.date, clock = os.clock, difftime = os.difftime }
+
+-- the environment of a WeakAuras custom action: the client's globals and nothing else
+local function clientEnv(extra)
+  return setmetatable(extra, { __index = function(_, k)
+    if NOT_IN_CLIENT[k] then return nil end
+    if k == "os" then return CLIENT_OS end
+    return _G[k]
+  end })
+end
+
 local function optionKeys(opts)
   local keys = {}
   for _, o in ipairs(opts) do keys[#keys + 1] = o.key end
@@ -99,6 +112,8 @@ describe("build (pure)", function()
     assert.are.same({ "SlashCmdList" }, build.forbidden("SlashCmdList['X'] = f"))
     assert.are.same({ "setfenv", "getfenv" }, build.forbidden("setfenv(1, getfenv(2))"))
     assert.are.same({ "xpcall", "RunScript" }, build.forbidden("xpcall(f, e) RunScript('x')"))
+    assert.are.same({ "package", "io", "debug" }, build.forbidden("package.loaded.x = io.open(debug.traceback())"))
+    assert.are.same({}, build.forbidden("local ratio, debugOn = 1, debugprofilestop"))
   end)
 
   it("dumps tables as loadable Lua", function()
@@ -183,7 +198,7 @@ describe("build #integration", function()
                 auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } } })
     local env = { config = aura.defaultConfig(), region = CreateFrame("Frame"), saved = {} }
     local chunk = assert(loadstring(build.initCode("src")))
-    setfenv(chunk, setmetatable({ aura_env = env }, { __index = _G }))
+    setfenv(chunk, clientEnv({ aura_env = env }))
     chunk()
     EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.3)
     -- the search runs in 2 ms slices, one per frame: the plan shows once it has finished
