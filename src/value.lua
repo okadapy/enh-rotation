@@ -30,7 +30,7 @@ M.FIRE_SOURCE = { searing = "searingTotem", magma = "magmaTotem", fireElemental 
 -- (the client has no module table of its own, the build's require reads the bundled list)
 local function D() return require("damage") end
 
-local function weights(S) return M.WEIGHTS[S.mode] or M.WEIGHTS.group end
+-- the mode's weights: M.WEIGHTS[S.mode] or M.WEIGHTS.group (looked up in place: hot)
 
 -- the character's damage per second: auto attacks are about MELEE_SHARE of it
 function M.dpsEstimate(S)
@@ -47,7 +47,8 @@ end
 function M.manaPrice(S)
   local p = S.player
   local ref = ((p.ap or 0) + (p.spNature or 0)) / 4000
-  local w = weights(S)
+  local W = M.WEIGHTS
+  local w = W[S.mode] or W.group
   if S.mode == "solo" then
     -- Mana spent now is drunk back later: a full bar costs SOLO_REGEN seconds of damage. Drinking
     -- is linear, so the price does not grow as the bar empties: the "scarcity" and "Rage on
@@ -70,10 +71,12 @@ end
 -- The kill counts when the target dies in this step, by our damage or at its time-to-die: the
 -- model stops counting damage there, so "killed by hp" alone flipped with every noisy estimate.
 function M.step(S, S2, dmg, manaSpent)
-  local w = weights(S)
+  local W = M.WEIGHTS
+  local w = W[S.mode] or W.group
   dmg = dmg or 0
-  local hpLeft = math.max(0, S.target.hp or 0)
-  local useful = math.min(dmg, hpLeft)
+  local hp = S.target.hp or 0
+  local hpLeft = hp > 0 and hp or 0 -- = math.max(0, hp), math.min below the same, inlined (hot)
+  local useful = hpLeft < dmg and hpLeft or dmg
   local v = useful + (dmg - useful) * w.overkill
   if manaSpent and manaSpent ~= 0 then v = v - manaSpent * M.manaPrice(S) end
   if w.kill > 0 and hpLeft > 0 and not S.target.dead and ((S2.target.hp or 0) <= 0 or S2.target.dead) then
@@ -112,19 +115,19 @@ local function periodicValue(S, damage)
   if fireLeft > 0 then
     -- Searing Totem out of reach: only the time after the target comes within 20 yards counts
     local span = lifetime(S, fireLeft)
-    if damage.fireUptime then span = damage.fireUptime(S, src, span) end
+    if src == "searingTotem" and damage.fireUptime then span = damage.fireUptime(S, src, span) end
     v = v + (r and r[src] or damage.periodic(S, src)) * span
   end
   if wolves > 0 then v = v + (r and r.feralSpirit or damage.periodic(S, "feralSpirit")) * lifetime(S, wolves) end
   return v * M.DISCOUNT
 end
 
-local function maelstromValue(S, damage)
+-- A: damage.actionTable(S) (nil without the search's memo), looked up once in terminal
+local function maelstromValue(S, damage, A)
   local mw = S.buffs and S.buffs.mw
   local stacks = (mw and mw.stacks) or 0
   if stacks > 5 then stacks = 5 end
   if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
-  local A = damage.actionTable and damage.actionTable(S)
   local lb = A and A.lightningBolt
   if lb == nil then lb = damage.action(S, "lightningBolt") end
   return stacks * M.MW_SHARE * lb * M.DISCOUNT
@@ -132,20 +135,19 @@ end
 
 -- a button is worth its damage at the discount once ready; while on cooldown only the part
 -- of the cooldown already recovered counts (pressing it now is not free, waiting is not free either)
-local function readyValue(S, damage)
+local function readyValue(S, damage, A, live)
   local v = 0
   local spells = S.spells
   if not spells then return 0 end
   local fire = S.totems and S.totems.fire
   -- Fire Nova needs a totem, but not the one standing by a dead mob: then it counts as the others
-  local novaOk = (fire and fire.kind) or not alive(S)
-  local keys = M.READY_KEYS
-  local A = damage.actionTable and damage.actionTable(S)
+  local novaOk = (fire and fire.kind) or not live
+  local keys, cooldown = M.READY_KEYS, M.COOLDOWN
   for i = 1, #keys do
     local key = keys[i]
     local sp = spells[key]
     if sp and (key ~= "fireNova" or novaOk) then
-      local cd, full = sp.cd or 0, M.COOLDOWN[key] or 0
+      local cd, full = sp.cd or 0, cooldown[key] or 0
       local share = 1
       if cd > 0 then share = full > cd and (1 - cd / full) or 0 end
       if share > 0 then
@@ -205,9 +207,8 @@ end
 
 -- Damage of the reserve's presses that `mana` cannot pay for: the best set of them it still buys
 -- (at most 3 buttons, 8 sets, no allocation) against all of them.
-local function unpaid(S, mana, damage)
+local function unpaid(S, mana, damage, A)
   local spells, keys = S.spells, M.RESERVE_KEYS
-  local A = damage.actionTable and damage.actionTable(S)
   local c1, c2, c3, d1, d2, d3 = 0, 0, 0, 0, 0, 0
   local n = 0
   for i = 1, #keys do
@@ -243,17 +244,20 @@ end
 -- Above the reserve nothing changes. In melee it does not apply: the search itself weighs the
 -- melee buttons against each other and against idling there, and a press is what the reserve
 -- is for. A dead target leaves the next pull to the drinking price.
-local function reserveValue(S, damage)
+local function reserveValue(S, damage, A)
   if S.target.range == "melee" then return 0 end
   local mana = S.player.mana or 0
   if mana >= M.manaReserve(S) then return 0 end
-  return -unpaid(S, mana, damage)
+  return -unpaid(S, mana, damage, A)
 end
 
 function M.terminal(S)
   local damage = D()
-  local v = maelstromValue(S, damage) + readyValue(S, damage)
-  if alive(S) then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage) end
+  -- one lookup of the per-buff action table for all parts (nothing below changes S's buffs)
+  local A = damage.actionTable and damage.actionTable(S)
+  local live = alive(S)
+  local v = maelstromValue(S, damage, A) + readyValue(S, damage, A, live)
+  if live then v = v + periodicValue(S, damage) + autoValue(S, damage) + reserveValue(S, damage, A) end
   return v
 end
 

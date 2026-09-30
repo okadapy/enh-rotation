@@ -169,23 +169,30 @@ local function finalScore(o, node, rootNow)
   return v + o.value.terminal(S), v
 end
 
--- replay one step: wait exactly a.readyIn (> 0), then press. Real states: a chain of scratch
--- states (model.peek*) would let a state share tables with the one two steps before it.
-local function extend(o, node, a, rootNow, afterSwing)
+-- replay one step: wait exactly a.readyIn (> 0), then press.
+-- peek: the new state is a scratch one (model.peek*), for a chain read only at its newest state
+-- and the one before (a scratch state may share tables with the one two steps before it, which
+-- the next peek changes); else a real state, which stays valid (a node extended again later).
+-- replayed: the caller sets the step's reason itself (not computed here).
+local function extend(o, node, a, rootNow, afterSwing, peek, replayed)
   local S, v = node.S, node.v
+  local m = o.model
+  local wait, apply = m.wait, m.apply
+  if peek and m.peekApply then wait, apply = m.peekWait, m.peekApply end
   if a.readyIn > 1e-9 then
     if S.now + a.readyIn - rootNow >= o.horizon then return nil end
-    local S1, d = o.model.wait(S, a.readyIn)
+    local S1, d = wait(S, a.readyIn)
     v = v + waitValue(o, S, S1, d)
     S = S1
   end
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
-  local S2, dmg = o.model.apply(S, a.key, o.horizon - at)
+  local S2, dmg = apply(S, a.key, o.horizon - at)
   v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   local steps = {}
   for i, s in ipairs(node.steps) do steps[i] = s end
-  steps[#steps + 1] = { key = a.key, at = at, reason = M.reason(S, a.key, afterSwing), afterSwing = afterSwing or nil }
+  steps[#steps + 1] = { key = a.key, at = at, reason = not replayed and M.reason(S, a.key, afterSwing) or nil,
+                        afterSwing = afterSwing or nil }
   return { S = S2, v = v, steps = steps, depth = node.depth + 1 }
 end
 
@@ -497,7 +504,11 @@ end
 -- Replay steps[i0..] from node. truncate: a step that is no longer possible ends the plan there
 -- (else: nil, the plan is invalid). gapFrom: stop before the first step i >= gapFrom whose planned
 -- wait is at least IDLE_MIN and return that node and i (fillIdle).
+-- The replayed states are scratch ones (extend: peek), except with gapFrom: the node returned at
+-- the gap is extended again and again. Without gapFrom only the last node's state is read
+-- (finalScore, which does not keep it), and only the steps outlive the call.
 local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
+  local peek = not gapFrom
   for i = i0, #steps do
     local st = steps[i]
     local r = o.model.readyIn(node.S, st.key)
@@ -514,7 +525,7 @@ local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
       local sw = o.model.swingIn and o.model.swingIn(node.S)
       if sw and sw > wait and sw <= wait + M.SWING_SLACK then wait = sw end
     end
-    local c = extend(o, node, { key = st.key, readyIn = wait }, rootNow, st.afterSwing)
+    local c = extend(o, node, { key = st.key, readyIn = wait }, rootNow, st.afterSwing, peek, true)
     if not c then return node end
     c.steps[#c.steps].reason = st.reason
     node = c
@@ -570,7 +581,8 @@ function fillIdle(o, S, value, steps, check, budget)
       if budget.replays <= 0 then break end
       budget.replays = budget.replays - 1
       -- the plan's own later press of the same button may no longer fit: the plan ends there
-      local c = extend(o, gapNode, { key = key, readyIn = 0 }, rootNow, false)
+      -- a scratch state: only the replay right below reads it
+      local c = extend(o, gapNode, { key = key, readyIn = 0 }, rootNow, false, true)
       if c then
         local node = replay(o, c, steps, gapAt, rootNow, true)
         local v = finalScore(o, node, rootNow)
