@@ -108,6 +108,7 @@ jobs:
           for old in $tags; do
             if [ "$old" != "$TAG" ]; then
               echo "Удаляю релиз $old"
-              gh release delete "$old" --yes
+              # новый релиз уже вышел: сбой уборки — предупреждение, остаток уберёт следующий запуск
+              gh release delete "$old" --yes || echo "::warning::не удалось удалить релиз $old"
             fi
           done
