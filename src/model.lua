@@ -211,11 +211,12 @@ end
 -- per-spell conditions besides cooldown, mana and range (nil = allowed)
 local SPECIAL = {
   lavaLash = function(S) return S.weapons.oh ~= nil end,
-  fireNova = function(S) return fireUp(S) end,
+  -- Fire Nova and Magma Totem hit only around the totem at the shaman's feet (damage.totemTargets)
+  fireNova = function(S) return fireUp(S) and damage.totemTargets(S) >= 1 end,
   searingTotem = function(S, fire) return not (fire.kind == "fireElemental" and (fire.remains or 0) > 0) end,
-  magmaTotem = function(S, fire, live)
+  magmaTotem = function(S, fire)
     if fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return false end
-    return live or ((S.enemies and S.enemies.nearby) or 0) >= 1
+    return damage.totemTargets(S) >= 1
   end,
   -- spec 5.1: Frost Shock only where it pays, i.e. without Earth Shock (same cooldown, no Stormstrike bonus)
   frostShock = function(S) return not S.spells.earthShock end,
@@ -543,7 +544,14 @@ local CAST = {} -- apply's cast description for advance, reused (advance does no
 local function applyOn(n, key, ct, dt, adv)
   local meta = spells.byKey[key]
   local sp = n.spells[key]
-  local dmg = alive(n) and damage.action(n, key) or 0
+  -- a cast lands when the server ends it, castTime + latency after the press (as the swing clock
+  -- below); a target dying before that takes nothing: no damage and no kill by it (the mana and
+  -- the cooldown are still counted)
+  local dmg = 0
+  if alive(n) then
+    local ttd = n.target.ttd
+    if not (ct > 0 and ttd and ttd < ct + (n.latency or 0)) then dmg = damage.action(n, key) end
+  end
   local mwAtCast = math.floor((n.buffs.mw.stacks or 0) + 1e-9)
 
   setMana(n, n.player.mana - (sp.cost or 0))

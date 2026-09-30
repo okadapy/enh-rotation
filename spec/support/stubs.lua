@@ -1,4 +1,10 @@
 local S = {}
+-- как damage.totemTargets: цель в ближнем бою — все nearby, иначе только те, кто бьёт игрока в ближнем
+local function totemTargets(S_)
+  local t = S_.target
+  if t and t.exists and t.enemy and t.range == "melee" then return math.max(1, (S_.enemies and S_.enemies.nearby) or 1) end
+  return (S_.enemies and S_.enemies.melee) or 0
+end
 -- damage: фиксированные числа, не зависят от характеристик
 function S.damage(over)
   local N = { stormstrike = 2000, lavaLash = 1500, earthShock = 1800, flameShock = 900, frostShock = 1600,
@@ -15,9 +21,11 @@ function S.damage(over)
     periodic = function(_, src) return ({ flameShock = 100, magmaTotem = 200, searingTotem = 100, fireElemental = 500, feralSpirit = 400 })[src] or 0 end,
     auto = function(_, hand) return hand == "oh" and 400 or 800 end,
     mwPerSwing = function() return 0.3 end,
+    totemTargets = totemTargets,
     targets = function(S_, key)
+      if key == "fireNova" or key == "magmaTotem" then return totemTargets(S_) end
       local n = math.max(1, (S_.enemies and S_.enemies.nearby) or 1)
-      if key == "fireNova" or key == "magmaTotem" then return n elseif key == "chainLightning" then return math.min(n, 3) end
+      if key == "chainLightning" then return math.min(n, 3) end
       return 1
     end,
   }

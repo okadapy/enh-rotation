@@ -212,9 +212,25 @@ function M.mwPerSwing(S, hand)
   return stacks
 end
 
+-- Fire Nova and Magma Totem hit around the fire totem (10 and 8 yards), and totems are dropped
+-- at the shaman's feet. The combat log gives no positions, only who fights whom (enemies.lua):
+-- * target in melee: the fight is around the shaman, so every enemy in the fight counts (nearby;
+--   in a group the pack is on the tank, not hitting the shaman, so `melee` would miss it);
+-- * target not in melee: the fight is at range, only enemies hitting the shaman in melee (within
+--   5 yards) stand in reach; 0 = the totem hits nothing.
+-- Depends only on target range and enemy counts, which stay the same inside one search (memo).
+function M.totemTargets(S)
+  local e, t = S.enemies, S.target
+  if t and t.exists and t.enemy and t.range == "melee" then
+    local n = e and e.nearby or 1
+    return n > 1 and n or 1
+  end
+  return e and e.melee or 0
+end
+
 function M.targets(S, key)
+  if key == "fireNova" or key == "magmaTotem" then return M.totemTargets(S) end
   local n = math.max(1, (S.enemies and S.enemies.nearby) or 1)
-  if key == "fireNova" or key == "magmaTotem" then return n end
   if key == "chainLightning" then return math.min(n, 3) end
   return 1
 end

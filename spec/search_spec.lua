@@ -192,6 +192,17 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.equal("Flame Shock expired", plan.steps[1].reason)
   end)
 
+  -- Fire Nova goes off around the fire totem (10 yd), and the totem stands at the shaman's feet
+  it("no Fire Nova with the target at 30 yd and nothing in melee, standing or running", function()
+    for _, moving in ipairs({ false, true }) do
+      local plan = search.best(busy({ spells = { fireNova = { cd = 0 } }, target = { range = "30" },
+                                      enemies = { melee = 0, nearby = 1 }, player = { moving = moving } }), { budgetMs = 1e9 })
+      for _, st in ipairs(plan.steps) do assert.are_not.equal("fireNova", st.key) end
+    end
+    local plan = search.best(busy({ spells = { fireNova = { cd = 0 } } }), { budgetMs = 1e9 })
+    assert.are.equal("fireNova", plan.steps[1].key)
+  end)
+
   it("5 Maelstrom stacks -> instant Lightning Bolt", function()
     local plan = search.best(busy({ buffs = { mw = { stacks = 5, remains = 20 } } }), { budgetMs = 1e9 })
     assert.are.equal("lightningBolt", plan.steps[1].key)
