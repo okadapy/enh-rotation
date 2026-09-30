@@ -5,6 +5,7 @@ M.CALIBRATE_VOTES = 3
 M.HORIZON = 6.0
 M.EXTRA_WINDOW = 0.1
 M.CAST_RESET = { lightningBolt = true, chainLightning = true }
+M.HAND_OFFSET = 0.2 -- the server swings the off hand at least 0.2 s after the main hand
 
 local HANDS = { "mh", "oh" }
 
@@ -49,8 +50,15 @@ function Clock:onSpeed(now, mhSpeed, ohSpeed)
     elseif not st then
       self.hands[h] = { speed = sp, due = now + sp }
     else
-      local left = st.due - now
-      if left > 0 then st.due = now + left * sp / st.speed end
+      local k = sp / st.speed
+      local function scale(due)
+        local left = due - now
+        if left > 0 then return now + left * k end
+        return due
+      end
+      st.due = scale(st.due)
+      local o = self.obs
+      if h == "mh" and o then o.oldDue, o.resetDue = scale(o.oldDue), scale(o.resetDue) end
       st.speed = sp
     end
   end
@@ -74,10 +82,15 @@ end
 function Clock:_calibrate(now)
   local o = self.obs
   if not o then return nil end
-  local oh = self.hands.oh
-  if oh and math.abs(now - oh.due) <= M.HAND_TOLERANCE then return nil end
-  self.obs = nil
+  if now > math.max(o.oldDue, o.resetDue) + M.HAND_TOLERANCE then
+    self.obs = nil
+    return nil
+  end
   local dOld, dReset = math.abs(now - o.oldDue), math.abs(now - o.resetDue)
+  -- the off hand trails by ~0.2 s: skip only a swing that fits it better than both hypotheses
+  local oh = self.hands.oh
+  if oh and math.abs(now - oh.due) < math.min(dOld, dReset) then return nil end
+  self.obs = nil
   if math.min(dOld, dReset) > M.HAND_TOLERANCE then return nil end
   local saved = store(self)
   local v = saved.votes[o.key]
@@ -105,23 +118,29 @@ function Clock:onSwing(now, isExtra)
   end
   local best = self:_calibrate(now)
   if not best then
-    local bestErr
+    local bestErr, early
     for _, h in ipairs(HANDS) do
       local st = self.hands[h]
       if st then
         local err = math.abs(now - st.due)
         if not bestErr or err < bestErr then best, bestErr = h, err end
+        if not early or st.due < self.hands[early].due then early = h end
       end
     end
     if not best then return nil end
+    local other = early == "mh" and "oh" or "mh"
+    local o = self.hands[other]
     if bestErr > M.HAND_TOLERANCE then
+      -- lost sync: the earliest hand swung now, shift the other one by the same amount
       self.resyncs = self.resyncs + 1
-      local early
-      for _, h in ipairs(HANDS) do
-        local st = self.hands[h]
-        if st and (not early or st.due < self.hands[early].due) then early = h end
+      local shift = now - self.hands[early].due
+      if o then
+        o.due = o.due + shift
+        if o.due < now + M.HAND_OFFSET then o.due = now + M.HAND_OFFSET end
       end
       best = early
+    elseif math.abs(now - self.hands[early].due) <= M.HAND_TOLERANCE then
+      best = early -- both hands fit: the later hand never swings first
     end
   end
   local st = self.hands[best]
@@ -134,6 +153,12 @@ function Clock:onCastStart(now, key, mwStacks, castTime)
   if not castTime or castTime <= 0 then return end
   self.obs = nil
   self.cast = { key = key, start = now, finish = now + castTime, mw = mwStacks or 0 }
+end
+
+-- spell pushback: UNIT_SPELLCAST_DELAYED, newFinish from UnitCastingInfo endTime
+function Clock:onCastDelayed(now, newFinish)
+  local c = self.cast
+  if c and newFinish and newFinish > c.finish then c.finish = newFinish end
 end
 
 function Clock:onCastEnd(now, key, mwStacks, ok)

@@ -126,7 +126,10 @@ function M.onCast(rt, event, key, now)
       rt.casting = nil
     end
     ctx.inflight[key] = nil
-  elseif event ~= "UNIT_SPELLCAST_DELAYED" then
+  elseif event == "UNIT_SPELLCAST_DELAYED" then
+    local endMs = select(6, UnitCastingInfo("player"))
+    if endMs and rt.casting and rt.casting.key == key then ctx.swing:onCastDelayed(now, endMs / 1000) end
+  else
     return
   end
   M.mark(rt, "cast", key)

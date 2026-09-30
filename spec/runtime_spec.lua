@@ -10,7 +10,7 @@ for _, n in ipairs(NEIGHBOURS) do real[n] = package.loaded[n]; package.loaded[n]
 local created = {}
 package.loaded.swing = { new = function(saved)
   local c = { saved = saved, calls = {} }
-  for _, m in ipairs({ "onSwing", "onExtraAttacks", "onSpeed", "onCastStart", "onCastEnd", "onInstant", "onAttack" }) do
+  for _, m in ipairs({ "onSwing", "onExtraAttacks", "onSpeed", "onCastStart", "onCastEnd", "onCastDelayed", "onInstant", "onAttack" }) do
     c[m] = function(self, ...) self.calls[#self.calls + 1] = { m, ... } end
   end
   c.state = function() return { attacking = false, mh = { next = 1, speed = 2.6 }, resetByInstant = {} } end
@@ -57,7 +57,7 @@ end
 
 local function spy()
   local s = { calls = {}, saved = {} }
-  for _, m in ipairs({ "onSwing", "onExtraAttacks", "onSpeed", "onCastStart", "onCastEnd", "onInstant", "onAttack" }) do
+  for _, m in ipairs({ "onSwing", "onExtraAttacks", "onSpeed", "onCastStart", "onCastEnd", "onCastDelayed", "onInstant", "onAttack" }) do
     s[m] = function(self, ...) self.calls[#self.calls + 1] = { m, ... } end
   end
   s.state = function() return { attacking = true, mh = { next = 1, speed = 2.6 }, oh = { next = 0.5, speed = 2.6 }, resetByInstant = {} } end
@@ -132,7 +132,7 @@ describe("runtime", function()
   it("feeds own swings and extra attacks to the swing clock", function()
     local rt = start()
     runtime.onEvent(rt, "COMBAT_LOG_EVENT_UNFILTERED", 0, "SWING_DAMAGE", "Player-1", "Me", 0x511, "Creature-9", "Mob", 0xa48, 1200)
-    runtime.onEvent(rt, "COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_EXTRA_ATTACKS", "Player-1", "Me", 0x511, "Player-1", "Me", 0x511, 25504, "Windfury Attack", 1, 2)
+    runtime.onEvent(rt, "COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_EXTRA_ATTACKS", "Player-1", "Me", 0x511, "Player-1", "Me", 0x511, 15600, "Hand of Justice", 1, 2)
     assert.are.same({ "onSwing", 100, false }, rt.ctx.swing.calls[1])
     assert.are.same({ "onExtraAttacks", 100, 2 }, rt.ctx.swing.calls[2])
     assert.are.equal("swing", rt.pending.kind)
@@ -160,6 +160,15 @@ describe("runtime", function()
     runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14")
     assert.are.same({ "onCastEnd", 100, "lightningBolt", 3, true }, rt.ctx.swing.calls[2])
     assert.are.equal(101, rt.ctx.inflight.lightningBolt)
+  end)
+
+  it("passes spell pushback to the swing clock with the new cast end", function()
+    local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500 } })
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14")
+    rt.ctx.swing.calls = {}
+    G.cfg.casting.endMs = 102000
+    runtime.onEvent(rt, "UNIT_SPELLCAST_DELAYED", "player", "Lightning Bolt", "Rank 14")
+    assert.are.same({ "onCastDelayed", 100, 102 }, rt.ctx.swing.calls[1])
   end)
 
   it("reports an interrupted cast and instant casts separately", function()

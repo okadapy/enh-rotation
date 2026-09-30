@@ -90,17 +90,33 @@ describe("swing", function()
       local s = c:state(103)
       assert.are.near(2.2, s.mh.next, 1e-9)
       assert.are.near(2.4, s.oh.next, 1e-9)
-      assert.are.equal("oh", c:onSwing(105.35, false))
-      assert.are.equal("mh", c:onSwing(105.25, false))
+      assert.are.equal("oh", c:onSwing(105.6, false))  -- only oh is within tolerance
       assert.are.equal(0, c.resyncs)
     end)
 
-    it("resyncs to the earliest-due hand when no hand is within tolerance", function()
+    -- the server never swings the later hand first (off hand trails by >= 0.2 s),
+    -- so with jitter the earlier-due hand takes the swing even if the other one is nearer
+    it("both hands within tolerance: the earlier-due hand swings first", function()
+      local c = dual()                 -- mh 105.2, oh 105.4
+      assert.are.equal("mh", c:onSwing(105.31, false))
+      assert.are.equal("oh", c:onSwing(105.5, false))
+      assert.are.equal(0, c.resyncs)
+    end)
+
+    it("resync moves both hands, keeping their offset", function()
       local c = dual()                 -- mh 105.2, oh 105.4
       assert.are.equal("mh", c:onSwing(104.0, false))
       assert.are.equal(1, c.resyncs)
       assert.are.near(2.6, c:state(104.0).mh.next, 1e-9)
-      assert.are.near(1.4, c:state(104.0).oh.next, 1e-9)
+      assert.are.near(0.2, c:state(104.0).oh.next, 1e-9) -- was 0.2 s behind mh, still is
+    end)
+
+    it("resync keeps at least 0.2 s between hands of equal speed", function()
+      local c = swing.new()
+      c:onSpeed(100, 2.6, 2.6)         -- both due 102.6
+      c:onAttack(100, true)
+      assert.are.equal("mh", c:onSwing(101.0, false))
+      assert.are.near(0.2, c:state(101.0).oh.next, 1e-9)
     end)
 
     it("returns nil when no weapon speed is known", function()
@@ -118,7 +134,7 @@ describe("swing", function()
 
     it("swing right after SPELL_EXTRA_ATTACKS is the extra one", function()
       local c = dual()                 -- mh 105.2
-      assert.are.equal("mh", c:onSwing(105.2, false))  -- real swing, procs Windfury
+      assert.are.equal("mh", c:onSwing(105.2, false))  -- real swing, procs Hand of Justice
       c:onExtraAttacks(105.2, 1)
       assert.are.equal("extra", c:onSwing(105.22, false))
       assert.are.near(107.8 - 105.3, c:state(105.3).mh.next, 1e-9)
@@ -177,6 +193,21 @@ describe("swing", function()
       local s = c:state(105.3)
       assert.are.equal(0, s.mh.next)
       assert.are.near(0.1, s.oh.next, 1e-9)
+    end)
+
+    it("pushback moves the cast end and the delayed swings with it", function()
+      local c = dual()                 -- mh 105.2, oh 105.4
+      c:onCastStart(104.0, "lightningBolt", 3, 1.5) -- ends 105.5
+      c:onCastDelayed(104.5, 106.0)
+      local s = c:state(104.5)
+      assert.are.near(1.5, s.mh.next, 1e-9)
+      assert.are.near(1.5, s.oh.next, 1e-9)
+    end)
+
+    it("pushback without a tracked cast is ignored", function()
+      local c = dual()
+      c:onCastDelayed(104.5, 106.0)
+      assert.are.near(0.7, c:state(104.5).mh.next, 1e-9)
     end)
 
     it("instant (5 stacks) cast start is ignored", function()
@@ -249,6 +280,53 @@ describe("swing", function()
       for _ = 1, 3 do instantThenSwing(c, "earthShock", "reset") end
       assert.is_true(fresh.reset.earthShock)
       assert.are.equal(3, fresh.votes.earthShock.reset)
+    end)
+
+    -- dual wield: the off hand trails by 0.2 s, closer than HAND_TOLERANCE
+    local function dualRound(c, arrive)
+      local mh, oh = c.hands.mh.due, c.hands.oh.due
+      local t = mh - 1.2
+      c:onInstant(t, "earthShock")
+      if arrive == "keep" then
+        c:onSwing(mh, false)
+        c:onSwing(oh, false)
+      else
+        c:onSwing(oh, false)
+        c:onSwing(t + 2.6, false)
+      end
+    end
+
+    it("dual wield: keep observations count although the off hand is due 0.2 s later", function()
+      local c = dual()
+      for _ = 1, 3 do dualRound(c, "keep") end
+      assert.are.equal(3, c.saved.votes.earthShock.keep)
+      assert.is_false(c.saved.reset.earthShock)
+    end)
+
+    it("dual wield: an off-hand swing before the reset moment does not settle the observation", function()
+      local c = dual()
+      for _ = 1, 3 do dualRound(c, "reset") end
+      assert.are.equal(3, c.saved.votes.earthShock.reset)
+      assert.is_true(c.saved.reset.earthShock)
+    end)
+
+    it("drops the observation once both moments have passed", function()
+      local c = dual()                 -- mh 105.2, oh 105.4
+      c:onInstant(104.0, "earthShock") -- old 105.2, reset 106.6
+      c.hands.oh.due = 107.0
+      c:onSwing(107.0, false)          -- off hand, long after both moments
+      assert.is_nil(c.obs)
+      assert.is_nil(c.saved.votes.earthShock)
+    end)
+
+    it("a speed change rescales both calibration moments", function()
+      local c = twoHand()              -- due 107.2
+      c:onInstant(105.0, "earthShock") -- old 107.2, reset 108.6
+      c:onSpeed(105.5, 2.7, nil)       -- Flurry: 3.6 -> 2.7
+      assert.are.near(105.5 + 1.7 * 0.75, c.obs.oldDue, 1e-9)
+      assert.are.near(105.5 + 3.1 * 0.75, c.obs.resetDue, 1e-9)
+      c:onSwing(105.5 + 3.1 * 0.75, false)
+      assert.are.equal(1, c.saved.votes.earthShock.reset)
     end)
 
     it("a cast between instant and swing cancels the observation", function()
