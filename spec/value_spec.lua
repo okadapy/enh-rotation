@@ -94,7 +94,17 @@ describe("value.terminal", function()
     local s0 = base()
     local s4 = base({ buffs = { mw = { stacks = 4, remains = 20 } } })
     local lb = damage.action(s4, "lightningBolt")
-    assert.are.near(4 * value.MW_SHARE * lb, value.terminal(s4) - value.terminal(s0), 1e-6)
+    -- future damage like a ready button, so at the same discount
+    assert.are.near(4 * value.MW_SHARE * lb * value.DISCOUNT, value.terminal(s4) - value.terminal(s0), 1e-6)
+  end)
+
+  it("counts how far each hand's swing has come: a delayed swing is lost auto-attack time", function()
+    local function at(mh, oh) return base({ swing = { attacking = true, mh = { next = mh, speed = 2.6 }, oh = { next = oh, speed = 2.6 } } }) end
+    local fresh, near = at(2.6, 2.6), at(0.26, 1.3)
+    local expect = 0.9 * damage.auto(near, "mh") + 0.5 * damage.auto(near, "oh")
+    assert.are.near(expect, value.terminal(near) - value.terminal(fresh), 1e-6)
+    local idle = at(0.26, 1.3); idle.swing.attacking = false
+    assert.are.near(value.terminal(fresh), value.terminal(idle), 1e-6)
   end)
 
   it("counts remaining Flame Shock damage at the discount, limited by time to die", function()
@@ -157,9 +167,10 @@ describe("value.terminal", function()
     assert.are.near(value.TAIL * damage.periodic(fs, "flameShock") * value.DISCOUNT, value.terminal(fs) - value.terminal(base()), 1e-6)
   end)
 
-  it("survives a state without pets, spells or totems", function()
+  it("survives a state without pets, spells, totems or auto-attack", function()
     local S = base()
     S.pets, S.spells = nil, {}
+    S.swing.attacking = false
     assert.are.equal(0, value.terminal(S))
   end)
 end)

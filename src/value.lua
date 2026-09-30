@@ -96,7 +96,25 @@ local function maelstromValue(S, damage)
   local stacks = (mw and mw.stacks) or 0
   if stacks > 5 then stacks = 5 end
   if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
-  return stacks * M.MW_SHARE * damage.action(S, "lightningBolt")
+  return stacks * M.MW_SHARE * damage.action(S, "lightningBolt") * M.DISCOUNT
+end
+
+-- how far each hand's current swing has come: a swing held back or reset by a cast shifts
+-- every later swing, and that shift is exactly this much auto-attack damage
+local function swingValue(S, damage)
+  local sw = S.swing
+  if not (sw and sw.attacking and alive(S) and S.target.range == "melee") then return 0 end
+  local v = 0
+  local mh, oh = sw.mh, sw.oh
+  if mh and (mh.speed or 0) > 0 then
+    local p = 1 - (mh.next or 0) / mh.speed
+    if p > 0 then v = v + (p < 1 and p or 1) * damage.auto(S, "mh") end
+  end
+  if oh and (oh.speed or 0) > 0 then
+    local p = 1 - (oh.next or 0) / oh.speed
+    if p > 0 then v = v + (p < 1 and p or 1) * damage.auto(S, "oh") end
+  end
+  return v
 end
 
 -- a button is worth its damage at the discount once ready; while on cooldown only the part
@@ -122,7 +140,7 @@ end
 
 function M.terminal(S)
   local damage = D()
-  return maelstromValue(S, damage) + periodicValue(S, damage) + readyValue(S, damage)
+  return maelstromValue(S, damage) + periodicValue(S, damage) + readyValue(S, damage) + swingValue(S, damage)
 end
 
 return M

@@ -173,13 +173,19 @@ describe("search on the real model (wowsims rules) #integration", function()
 
   -- a cast that ends after the horizon would get its damage while its cost (the delayed swings)
   -- falls outside the horizon: it is not planned at all
-  it("swings after the horizon are not counted for a button pressed just before it", function()
-    local soon = busy({ swing = { mh = { next = 6.1 }, oh = { next = 6.3 } }, spells = { earthShock = { cd = 0 } } })
-    local late = busy({ swing = { mh = { next = 9 }, oh = { next = 9.2 } }, spells = { earthShock = { cd = 0 } } })
-    local plan = { { key = "earthShock", at = 5.9, reason = "" } }
-    local v1 = search.evaluate(soon, plan, { budgetMs = 1e9 })
-    local v2 = search.evaluate(late, plan, { budgetMs = 1e9 })
-    assert.are.near(v2, v1, 1e-6)
+  it("a button pressed just before the horizon moves the state only up to it", function()
+    local real = require("model")
+    local limits = {}
+    local spy = setmetatable({
+      apply = function(S, key, limit) limits[#limits + 1] = limit; return real.apply(S, key, limit) end,
+      peekApply = function(S, key, limit) limits[#limits + 1] = limit; return real.peekApply(S, key, limit) end,
+    }, { __index = real })
+    local S = busy({ spells = { earthShock = { cd = 0 } } })
+    search.evaluate(S, { { key = "earthShock", at = 5.9, reason = "" } }, { budgetMs = 1e9, model = spy })
+    assert.are.near(0.1, limits[1], 1e-9)
+    limits = {}
+    search.best(S, { budgetMs = 1e9, model = spy })
+    for _, l in ipairs(limits) do assert.is_true(l > 0 and l <= search.HORIZON + 1e-9) end
   end)
 
   it("never plans a cast that would end after the horizon", function()
