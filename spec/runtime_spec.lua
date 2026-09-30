@@ -198,6 +198,92 @@ describe("runtime", function()
     assert.is_nil(runtime.idleHint({ steps = {} }, S))
   end)
 
+  it("an empty plan in melee with no mana for any button says so; not for the GCD", function()
+    local S = Sc.state(80)
+    S.spells.shamanisticRage.cd = 30
+    S.player.mana = 0
+    local h = runtime.idleHint({ steps = {} }, S)
+    assert.are.equal("outOfMana", h.key)
+    assert.are.equal("Out of mana", h.reason)
+    assert.are.equal(runtime.ALERT_ICONS.outOfMana, h.icon)
+    S.spells.shamanisticRage.cd = 0 -- Rage is ready: that is the hint (runtime.alert), not "Out of mana"
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S = Sc.state(80)
+    S.spells.shamanisticRage.cd = 30
+    S.gcdRemains = 1.2 -- enough mana, only the GCD: nothing to say
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+  end)
+
+  it("suggests a drink out of combat with no enemy target and low mana, unless drinking", function()
+    local S = Sc.state(80)
+    S.target = { exists = false }
+    S.player.inCombat = false
+    S.player.mana = S.player.manaMax * 0.3
+    local h = runtime.idleHint({ steps = {} }, S, false, function() return false end)
+    assert.are.equal("drink", h.key)
+    assert.are.equal(runtime.ALERT_ICONS.drink, h.icon)
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, false, function() return true end))
+    S.player.inCombat = true
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S.player.inCombat, S.player.mana = false, S.player.manaMax * 0.8
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+  end)
+
+  it("shows the drink hint with no target, and not while the Drink buff is on", function()
+    local rt = start(nil, { target = { exists = false }, inCombat = false, mana = 2000, manaMax = 10000 })
+    runtime.update(rt, 0.3)
+    assert.is_true(rt.tl.alert.shown)
+    assert.are.equal(runtime.ALERT_ICONS.drink, rt.tl.alert.texture)
+    assert.are.equal("Drink", rt.tl.alertText.text)
+    rt = start(nil, { target = { exists = false }, inCombat = false, mana = 2000, manaMax = 10000,
+                      auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 },
+                                                       { name = "Drink", expires = 120 } } } } })
+    runtime.update(rt, 0.3)
+    assert.is_false(rt.tl.alert.shown)
+  end)
+
+  it("imbue and range alerts have their own icons", function()
+    local S = Sc.state(80); S.weapons.mh.enchant = nil
+    local a = runtime.alert(S)
+    assert.are.equal(runtime.IMBUE_ICONS.windfury, a.icon)
+    assert.are.equal("Main-hand imbue missing", a.reason)
+    S = Sc.state(80); S.weapons.oh.enchant = nil
+    a = runtime.alert(S)
+    assert.are.equal(runtime.IMBUE_ICONS.flametongue, a.icon)
+    assert.are.equal("Off-hand imbue missing", a.reason)
+    S = Sc.state(20); S.weapons.mh.enchant = nil
+    assert.are.equal(runtime.IMBUE_ICONS.flametongue, runtime.alert(S).icon)
+    S = Sc.state(8); S.weapons.mh.enchant = nil
+    assert.are.equal(runtime.IMBUE_ICONS.rockbiter, runtime.alert(S).icon)
+    assert.are_not.equal(runtime.ALERT_ICONS.moveIn, runtime.ALERT_ICONS.outOfRange)
+    local seen = {}
+    for k, icon in pairs(runtime.ALERT_ICONS) do
+      if k ~= "noEnchant" then
+        assert.is_nil(seen[icon], k .. " shares its icon with " .. tostring(seen[icon]))
+        seen[icon] = k
+      end
+      assert.truthy(icon:match("^Interface\\Icons\\[%w_]+$"), icon)
+    end
+    for _, icon in pairs(runtime.IMBUE_ICONS) do assert.truthy(icon:match("^Interface\\Icons\\[%w_]+$"), icon) end
+  end)
+
+  it("Bloodlust ready only in a fight: an enemy target and combat", function()
+    local known = allKnown(); known[2825] = true
+    install({ known = known })
+    local S = Sc.state(80)
+    S.target.inCombat, S.player.inCombat = false, false
+    assert.is_nil(runtime.lustReady(S, 100))
+    S.player.inCombat = true
+    assert.are.equal("lust", runtime.lustReady(S, 100).key)
+    S.player.inCombat, S.target.inCombat = false, true
+    assert.are.equal("lust", runtime.lustReady(S, 100).key)
+    S.target = { exists = false }
+    S.player.inCombat = true
+    assert.is_nil(runtime.lustReady(S, 100)) -- in town, no target
+    S.target = { exists = true, enemy = false, inCombat = true }
+    assert.is_nil(runtime.lustReady(S, 100))
+  end)
+
   it("registers 3.3.5 events only and reuses the engine frame", function()
     local rt = start()
     assert.is_true(rt.frame.events.UNIT_MANA)

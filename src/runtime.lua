@@ -38,12 +38,23 @@ M.DEATH = { UNIT_DIED = true, UNIT_DESTROYED = true, PARTY_KILL = true }
 M.WOLVES = spells.byKey.feralSpirit.duration or 45
 M.ATTACK_ID = 6603
 M.ALERT_ICONS = {
-  noEnchant = "Interface\\Icons\\Spell_Nature_Cyclone",
-  outOfRange = "Interface\\Icons\\Ability_Rogue_Sprint",
+  noEnchant = "Interface\\Icons\\Spell_Fire_FlameTounge",
+  outOfRange = "Interface\\Icons\\Ability_Hunter_EagleEye",
   moveIn = "Interface\\Icons\\Ability_Rogue_Sprint",
   autoAttack = "Interface\\Icons\\INV_Sword_04",
   waterShield = "Interface\\Icons\\Ability_Shaman_WaterShield",
+  outOfMana = "Interface\\Icons\\Spell_Shadow_ManaBurn",
+  drink = "Interface\\Icons\\INV_Drink_07",
 }
+-- the imbue a missing one most likely was: Windfury from 30 on the main hand, else Flametongue
+-- (10), else Rockbiter; the off hand (dual wield from 40) carries Flametongue
+M.IMBUE_ICONS = {
+  windfury = "Interface\\Icons\\Spell_Nature_Cyclone",
+  flametongue = "Interface\\Icons\\Spell_Fire_FlameTounge",
+  rockbiter = "Interface\\Icons\\Spell_Nature_RockBiter",
+}
+M.DRINK_PCT = 0.5 -- out of combat, no enemy target, less mana than this: "Drink"
+M.DRINK_ID = 430 -- "Drink": every drinking buff has this (localized) name
 
 function M.validPlan(plan)
   if type(plan) ~= "table" or type(plan.steps) ~= "table" then return false end
@@ -78,8 +89,13 @@ function M.alert(S)
   elseif S.shieldPref == "water" and not (S.player and S.player.shield == "water") then
     return withIcon({ key = "waterShield", reason = "Water Shield missing" })
   end
-  if (w.mh and not w.mh.enchant) or (w.oh and not w.oh.enchant) then
-    return withIcon({ key = "noEnchant", reason = "Weapon imbue missing" })
+  if w.mh and not w.mh.enchant then
+    local lvl = S.player.level or 80
+    local imbue = lvl >= 30 and "windfury" or lvl >= 10 and "flametongue" or "rockbiter"
+    return { key = "noEnchant", icon = M.IMBUE_ICONS[imbue], reason = "Main-hand imbue missing" }
+  end
+  if w.oh and not w.oh.enchant then
+    return { key = "noEnchant", icon = M.IMBUE_ICONS.flametongue, reason = "Off-hand imbue missing" }
   end
   -- Shamanistic Rage returns mana only through melee hits: not at range, not without auto-attack
   local rage = sp.shamanisticRage
@@ -110,6 +126,9 @@ end
 
 function M.lustReady(S, now)
   if S.mode ~= "group" and S.mode ~= "raid" then return nil end
+  -- a fight, not a town: an enemy target, and a fight going on
+  local t = S.target
+  if not (t and t.exists and t.enemy and (t.inCombat or S.player.inCombat)) then return nil end
   if sated() then return nil end
   for _, id in ipairs(M.LUST_IDS) do
     local name = GetSpellInfo(id)
@@ -461,12 +480,49 @@ function M.show(rt, plan, S, now)
   return true
 end
 
--- Nothing to press at 20-30 yards (solo, mana is dear): the timeline would be empty with no
--- hint at all. The plan values the walk to melee at nothing, the player needs to be told.
-function M.idleHint(plan, S, searching)
+-- No button costs as little as the mana left, and Shamanistic Rage (free) is not ready either:
+-- an empty plan for that reason, not because of the global cooldown or cooldowns.
+function M.outOfMana(S)
+  local mana, priced = S.player.mana or 0, false
+  for _, sp in pairs(S.spells) do
+    local cost = sp.cost or 0
+    if cost > 0 then
+      if cost <= mana then return false end
+      priced = true
+    end
+  end
+  local rage = S.spells.shamanisticRage
+  if rage and rage.cd <= (S.gcdRemains or 0) + 0.1 then return false end
+  return priced
+end
+
+-- the player is drinking already (every drink buff is called "Drink")
+function M.drinking()
+  local drink = GetSpellInfo(M.DRINK_ID) or "Drink"
+  for i = 1, 40 do
+    local name = UnitAura("player", i, "HELPFUL")
+    if not name then return false end
+    if name == drink then return true end
+  end
+  return false
+end
+
+-- An empty timeline must say why. At 20-30 yards (solo, mana is dear) the plan values the walk
+-- to melee at nothing; in melee it may be the mana; with no enemy about, low mana means a drink.
+-- isDrinking: a function, asked only when a drink would be suggested
+function M.idleHint(plan, S, searching, isDrinking)
   local t = S and S.target
-  if searching or not (t and t.exists and t.enemy) or #plan.steps > 0 then return nil end
+  if searching or #plan.steps > 0 or not t then return nil end
+  if not (t.exists and t.enemy) then
+    local p = S.player
+    if p and not p.inCombat and (p.manaMax or 0) > 0 and p.mana / p.manaMax < M.DRINK_PCT
+      and not (isDrinking and isDrinking()) then
+      return withIcon({ key = "drink", reason = "Drink" })
+    end
+    return nil
+  end
   if t.range == "20" or t.range == "30" then return withIcon({ key = "moveIn", reason = "Move into melee" }) end
+  if t.range == "melee" and M.outOfMana(S) then return withIcon({ key = "outOfMana", reason = "Out of mana" }) end
   return nil
 end
 
@@ -539,6 +595,7 @@ function M.step(rt, dt)
   if not (S.target.exists and S.target.enemy) then
     rt.plan, rt.S, rt.searching, rt.due = { value = 0, steps = {} }, S, false, nil
     rt.tl:render(rt.plan, S, now)
+    if not alert then rt.tl:setAlert(M.idleHint(rt.plan, S, false, M.drinking)) end
     return true
   end
   local plan = rt.planner:update(S, ev)
