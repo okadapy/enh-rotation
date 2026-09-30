@@ -115,6 +115,8 @@ describe("stability near a mob's death with a noisy time-to-die #integration", f
       if t.exists and t.enemy and t.ttd and t.ttd < 10 then
         local p, S, last, seq = planner.new({}), util.copy(rec.S), nil, {}
         for k = 1, 12 do
+          -- the mob has died by now (model time): an empty plan is right, not a flip
+          if S.target.dead then break end
           local s = util.copy(S)
           s.target.ttd = S.target.ttd * (1 + 0.2 * (2 * rnd() - 1))
           local ev = k == 1 and { kind = "target" } or { kind = k % 2 == 0 and "swing" or "aura" }

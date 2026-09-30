@@ -53,6 +53,17 @@ describe("leveling #integration", function()
     assert.is_nil(S.weapons.oh)
   end)
 
+  -- recorded in game (level 53, solo, 8-25% mana, Rage on cooldown): the planner idled in melee
+  -- with Stormstrike and Lava Lash ready. Each costs 2-4% of the bar, half a second of drinking;
+  -- Stormstrike (+20% to the shocks after it), Earth Shock and Lava Lash are the core buttons.
+  it("level 53, low mana, Rage on cooldown: still a melee button, not idling", function()
+    local S = midFight(53)
+    S.target.fs = 10
+    S.player.mana = S.player.manaMax * 0.08
+    local key = Sc.first(S)
+    assert.is_true(key == "stormstrike" or key == "lavaLash" or key == "earthShock", "got " .. tostring(key))
+  end)
+
   it("level 25: Earth Shock while Flame Shock ticks", function()
     local S = midFight(25)
     S.target.fs = 10
