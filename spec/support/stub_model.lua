@@ -52,7 +52,7 @@ function M.readyIn(S, key)
   return math.max(S.gcdRemains, S.castRemains, sp.cd)
 end
 
-function M.castTime() return 0 end
+function M.castTime(_, key) return (M.SPELLS[key] and M.SPELLS[key].cast) or 0 end
 
 function M.wait(S, dt)
   local n = copy(S)

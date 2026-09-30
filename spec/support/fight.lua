@@ -38,13 +38,15 @@ local function metered()
   return m, function() return calls * F.MODEL_MS end
 end
 
--- opts: seconds, seed, level, patch(S), budgetMs (nil = whole search at once), check(planner, job)
+-- opts: seconds, seed, level, patch(S), budgetMs (nil = whole search at once), wrap(model) -> model the
+-- planner searches with (a policy to compare against), hysteresis/hold/holdFactor, trace
 function F.run(opts)
   local S = Sc.state(opts.level or 80)
   S.totems.fire = { kind = "magma", remains = 15 }
   if opts.patch then opts.patch(S) end
   local rng = Sc.lcg(opts.seed or 1)
   local m, clock = metered()
+  if opts.wrap then m = opts.wrap(m) end
   local p = planner.new({ budgetMs = opts.budgetMs, searchOpts = { model = m, clock = clock },
                           hysteresis = opts.hysteresis, hold = opts.hold, holdFactor = opts.holdFactor })
   local rt = { pending = nil }

@@ -7,11 +7,12 @@ M.BUDGET_MS = 2 -- per frame: a search runs in slices (search.start), never cut 
 M.NODE_CAP = 220 -- the whole search stops after this many candidates (deterministic)
 M.READY_EPS = 0.05
 M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
-M.WEAVE = { lightningBolt = true, chainLightning = true }
 M.PER_FIRST = 1 -- beam places kept for the best chains of every first button (diversity)
 M.DIVERSITY = 0.05 -- ... if their score is within this share of the layer's best
 M.SWING_SLACK = 0.3 -- replay: an "after swing" step waits for a swing at most this much later than planned
-M.IDLE_MIN = 1.0 -- a plan whose first button waits this long gets a button tried in front of it
+M.FILL_MARGIN = 0.02 -- first buttons whose best chain is within this share of the best get fillIdle too
+M.FILL_REPLAYS = 12 -- fillIdle replays per search, best chains first (bounds its time)
+M.IDLE_MIN = 1.0 -- a wait this long inside the plan gets each ready button tried in it (fillIdle)
 
 M.REASONS = {
   stormstrike = "Stormstrike: +20% nature",
@@ -133,6 +134,8 @@ local function defaults(opts)
     nodeCap = opts.nodeCap or M.NODE_CAP,
     perFirst = opts.perFirst or M.PER_FIRST,
     diversity = opts.diversity or M.DIVERSITY,
+    fillMargin = opts.fillMargin or M.FILL_MARGIN,
+    fillReplays = opts.fillReplays or M.FILL_REPLAYS,
     clock = opts.clock or defaultClock,
   }
 end
@@ -162,7 +165,8 @@ local function finalScore(o, node, rootNow)
   return v + o.value.terminal(S), v
 end
 
--- replay one step: wait exactly a.readyIn (> 0), then press
+-- replay one step: wait exactly a.readyIn (> 0), then press. Real states: a chain of scratch
+-- states (model.peek*) would let a state share tables with the one two steps before it.
 local function extend(o, node, a, rootNow, afterSwing)
   local S, v = node.S, node.v
   if a.readyIn > 1e-9 then
@@ -228,7 +232,7 @@ local function candidate(o, node, a, rootNow)
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
   local c = { parent = node, a = a, depth = node.depth + 1, at = at,
-              first = node.first or (node.virtual and node.parent.first) or a.key }
+              first = node.first or (node.virtual and (node.parent.first or a.key .. "+swing")) or a.key }
   c.afterSwingStep = afterSwing or nil
   if (waited or node.virtual) and m.peekWait then
     -- S is a scratch state: keep what the step text needs now, rebuild the rest on demand
@@ -310,7 +314,7 @@ local function scoreFrom(o, CS, v, rootNow)
   return v + o.value.terminal(CS)
 end
 
-local fillIdleStart
+local fillIdle
 
 -- The whole search as one function. It stops by the node cap only, never by the clock, so its
 -- result is the same however it is cut into frames. check() (nil = run to the end) is called
@@ -320,9 +324,9 @@ local function run(o, S, check)
   S = root(S)
   local rootNow = S.now
   local rootNode = { S = S, v = 0, steps = {}, depth = 0 }
-  local rootActions = {}
   local frontier = { rootNode }
   local best, bestNode = -math.huge, nil
+  local bestByFirst = {} -- first button -> its best chain
   local nodes, capped = 0, false
   for _ = 1, o.depth * 2 do
     local children = {}
@@ -333,13 +337,14 @@ local function run(o, S, check)
       if not c then return capped end
       c.score = scoreFrom(o, CS, c.v, rootNow)
       if (not c.waited or #stepsOf(node) > 0) and c.score > best then best, bestNode = c.score, c end
+      local fb = bestByFirst[c.first]
+      if not fb or c.score > fb.score then bestByFirst[c.first] = c end
       children[#children + 1] = c
       return capped
     end
     for _, node in ipairs(frontier) do
       if node.depth < o.depth then
         local acts = o.model.actions(node.S)
-        if node == rootNode then rootActions = acts end
         for _, a in ipairs(acts) do
           if a.key == "waitSwing" then
             -- "swing, then Bolt" competes with "Bolt now" as one step; a bare wait would lose
@@ -350,8 +355,10 @@ local function run(o, S, check)
               local wn = { S = S1, v = node.v + waitValue(o, S0, S1, d), depth = node.depth,
                            waited = true, afterSwing = true, parent = node, a = a, virtual = true }
               for _, key in ipairs(M.WEAVE_KEYS) do
+                -- an instant (5 stacks) clips nothing: waiting for the swing would only be a twin
                 local r = o.model.readyIn(S1, key)
-                if r and r <= M.READY_EPS and add(wn, { key = key, readyIn = r }) then break end
+                local ct = o.model.castTime and o.model.castTime(S1, key)
+                if r and r <= M.READY_EPS and ct ~= 0 and add(wn, { key = key, readyIn = r }) then break end
               end
             end
           elseif add(node, a) then
@@ -415,9 +422,26 @@ local function run(o, S, check)
     return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes }
   end
   if not bestNode then return result(0, {}) end
-  local steps = stepsOf(bestNode)
-  -- bounded (one replay per root button), so it runs after a capped search too
-  best, steps = fillIdleStart(o, S, best, steps, rootActions, check)
+  -- The best chain of every first button close enough to the best gets its waits filled
+  -- (fillIdle), then the best of them wins: a first button must not lose only because its chain
+  -- was not filled. Bounded (one replay per gap and ready button), so it runs after a capped
+  -- search too. Order: by score, ties by chain (deterministic).
+  local list = {}
+  for _, c in pairs(bestByFirst) do
+    if c.score >= best - math.abs(best) * o.fillMargin then list[#list + 1] = c end
+  end
+  table.sort(list, function(x, y)
+    if x.score ~= y.score then return x.score > y.score end
+    return chainKey(x) < chainKey(y)
+  end)
+  local steps
+  local top = -math.huge
+  local budget = { replays = o.fillReplays }
+  for _, c in ipairs(list) do
+    local v, st = fillIdle(o, S, c.score, stepsOf(c), check, budget)
+    if v > top then top, steps = v, st end
+  end
+  best = top
   -- pressing nothing can be the best plan (solo: a mob the swings finish, mana is dear)
   local idle = finalScore(o, rootNode, rootNow)
   if idle >= best then return result(idle, {}) end
@@ -461,30 +485,38 @@ function Job:run(budgetMs)
   return false
 end
 
--- truncate: a step that is no longer possible ends the plan there (else: the plan is invalid)
-local function evaluateFrom(o, S, steps, truncate)
-  local rootNow = S.now
-  local node = { S = S, v = 0, steps = {}, depth = 0 }
-  for _, st in ipairs(steps) do
+-- Replay steps[i0..] from node. truncate: a step that is no longer possible ends the plan there
+-- (else: nil, the plan is invalid). gapFrom: stop before the first step i >= gapFrom whose planned
+-- wait is at least IDLE_MIN and return that node and i (fillIdle).
+local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
+  for i = i0, #steps do
+    local st = steps[i]
     local r = o.model.readyIn(node.S, st.key)
     if r == nil then
       if not truncate then return nil end
-      break
+      return node
     end
     -- the planned wait is kept exactly (a residual cooldown under READY_EPS counts as ready, as in
     -- the search); an "after swing" step waits for the swing even if it comes a little later
     local wait = st.at - (node.S.now - rootNow)
+    if gapFrom and i >= gapFrom and wait >= M.IDLE_MIN then return node, i end
     if r > M.READY_EPS and r > wait then wait = r end
     if st.afterSwing then
       local sw = o.model.swingIn and o.model.swingIn(node.S)
       if sw and sw > wait and sw <= wait + M.SWING_SLACK then wait = sw end
     end
     local c = extend(o, node, { key = st.key, readyIn = wait }, rootNow, st.afterSwing)
-    if not c then break end
+    if not c then return node end
     c.steps[#c.steps].reason = st.reason
     node = c
   end
-  if #node.steps == 0 then return nil end
+  return node
+end
+
+local function evaluateFrom(o, S, steps, truncate)
+  local rootNow = S.now
+  local node = replay(o, { S = S, v = 0, steps = {}, depth = 0 }, steps, 1, rootNow, truncate)
+  if not node or #node.steps == 0 then return nil end
   local v, horizonValue = finalScore(o, node, rootNow)
   return v, node.steps, horizonValue
 end
@@ -495,20 +527,36 @@ function M.evaluate(S, steps, opts)
   return evaluateFrom(defaults(opts), root(S), steps)
 end
 
--- The plan starts with a wait of at least a GCD: try each button that can be pressed now in
--- front of it (the beam compares chains by button count and may have cut "small button now").
-function fillIdleStart(o, S, value, steps, actions, check)
-  local first = steps[1]
-  if not first or first.at < M.IDLE_MIN then return value, steps end
-  for _, a in ipairs(actions) do
-    if check then check() end
-    if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= first.key then
-      local tryList = { { key = a.key, at = 0, reason = M.reason(S, a.key, false) } }
-      for i, st in ipairs(steps) do tryList[i + 1] = st end
-      -- the plan's own later press of the same button may no longer fit: the plan ends there
-      local v, st = evaluateFrom(o, S, tryList, true)
-      if v and v > value and st[1].key == a.key then value, steps = v, st end
+-- A wait of at least IDLE_MIN inside the plan (before its first step or between two steps): try
+-- each button that is ready when the wait starts in it. The beam compares chains by the number
+-- of buttons, so "the big ones later" can win the cut against "a small one in the gap, then the
+-- big ones" although the second is the better plan. Bounded: one replay per gap and ready button.
+function fillIdle(o, S, value, steps, check, budget)
+  local rootNow = S.now
+  local start = { S = S, v = 0, steps = {}, depth = 0 }
+  local from = 1
+  while budget.replays > 0 do
+    local gapNode, gapAt = replay(o, start, steps, 1, rootNow, true, from)
+    if not gapAt then break end
+    local ready = {}
+    for _, a in ipairs(o.model.actions(gapNode.S)) do
+      if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= steps[gapAt].key then ready[#ready + 1] = a.key end
     end
+    local bestV, bestSteps = value, nil
+    for _, key in ipairs(ready) do
+      if check then check() end
+      if budget.replays <= 0 then break end
+      budget.replays = budget.replays - 1
+      -- the plan's own later press of the same button may no longer fit: the plan ends there
+      local c = extend(o, gapNode, { key = key, readyIn = 0 }, rootNow, false)
+      if c then
+        local node = replay(o, c, steps, gapAt, rootNow, true)
+        local v = finalScore(o, node, rootNow)
+        if v > bestV then bestV, bestSteps = v, node.steps end
+      end
+    end
+    if bestSteps then value, steps = bestV, bestSteps end
+    from = gapAt + 1
   end
   return value, steps
 end

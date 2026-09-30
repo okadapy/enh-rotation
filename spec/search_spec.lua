@@ -49,7 +49,8 @@ describe("search.best", function()
 
   -- waiting for a swing is only for weaving a cast (search.WEAVE): "swing, then Bolt" is one step
   it("a Bolt after waitSwing is marked 'after swing - no clip'", function()
-    stub.setup({ lightningBolt = { dmg = 50, cd = 0 }, a = { dmg = 60, cd = 0 } })
+    -- (a cast: an instant clips nothing, so it is never planned after a swing)
+    stub.setup({ lightningBolt = { dmg = 50, cd = 0, cast = 1.0 }, a = { dmg = 60, cd = 0 } })
     local S = stub.state({ swing = 0.3, mw = 3 })
     stub.value.step = function(_, S2, dmg) return dmg + ((S2.now >= 0.3 and S2.now < 0.35) and 1000 or 0) end
     local plan = search.best(S, opts())
@@ -290,6 +291,32 @@ describe("search on the real model (wowsims rules) #integration", function()
       assert.is_true(plan.value >= f.value - 1e-6, ("%s first: %.0f, chosen %s: %.0f"):format(key, f.value, plan.steps[1].key, plan.value))
     end
     assert.are.equal("lightningBolt", plan.steps[1].key)
+  end)
+
+  -- the beam compares chains by button count: "Chain Lightning, then wait for Stormstrike" beat
+  -- "Chain Lightning, Fire Nova in the gap, Stormstrike" at the cut; fillIdle tries the gap
+  it("a wait of a GCD or more inside the plan gets a ready button", function()
+    local Sc = require("scenario")
+    local S = Sc.state(80)
+    S.totems.fire = { kind = "magma", remains = 15 }
+    S.buffs.mw = { stacks = 5, remains = 20 }
+    S.target.fs = 10
+    Sc.cd(S, { stormstrike = 4, shock = 3, lavaLash = 3 })
+    local plan = search.best(S)
+    assert.are.near(0, plan.steps[1].at, 1e-9)
+    assert.is_true(plan.steps[2].at < 1.5, ("second step at %.2f"):format(plan.steps[2].at))
+    local v = search.evaluate(S, plan.steps)
+    assert.are.near(plan.value, v, 1e-6)
+  end)
+
+  it("an instant (5 stacks) is never planned 'after the swing'", function()
+    local S = busy({ buffs = { mw = { stacks = 5, remains = 20 } },
+                     swing = { attacking = true, mh = { next = 0.3, speed = 2.6 }, oh = { next = 1.5, speed = 2.6 } } })
+    local plan = search.best(S)
+    local first = plan.steps[1]
+    assert.is_true(first.key == "lightningBolt" or first.key == "chainLightning", first.key)
+    assert.is_nil(first.afterSwing)
+    assert.are.near(0, first.at, 1e-9)
   end)
 
   -- a held "swing, then Bolt" plan shifted until the swing is 0.03 s away
