@@ -119,18 +119,6 @@ describe("planner", function()
     assert.are.same({ "a", "c" }, { plan.steps[1].key, plan.steps[2].key })
   end)
 
-  it("a press the server turned down forces a replan and drops its in-flight effects", function()
-    local script = { best = 100, bestKey = "a" }
-    local p = planner.new({ search = stubSearch(script) })
-    p:update(at(100))
-    p:update(at(100.1), { kind = "cast", key = "flameShock" })
-    assert.is_not_nil(p.inflight.flameShock)
-    script.best, script.bestKey, script.evaluate = 90, "b", 100
-    local plan = p:update(at(100.2), { kind = "cast", failed = "flameShock" })
-    assert.is_nil(p.inflight.flameShock)
-    assert.are.equal("b", plan.steps[1].key)
-  end)
-
   it("gives a just-pressed button its cooldown until the game shows it", function()
     local p = planner.new({ search = stubSearch({ best = 100, bestKey = "a" }) })
     p:update(at(100))

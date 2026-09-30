@@ -251,15 +251,16 @@ describe("runtime", function()
     assert.are.equal("onCastStart", rt.ctx.swing.calls[1][1])
   end)
 
-  it("a press the server turns down after SENT is taken back", function()
+  -- a second tap during the GCD fails in the client: the first press still counts
+  it("a FAILED after SENT does not take the press back; its SUCCEEDED is still no new press", function()
     local rt = start()
-    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Flame Shock", "Rank 9", "Mob")
-    runtime.onEvent(rt, "UNIT_SPELLCAST_FAILED", "player", "Flame Shock", "Rank 9")
-    assert.are.equal("cast", rt.pending.kind)
-    assert.are.equal("flameShock", rt.pending.failed)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
     rt.pending = nil
-    runtime.onEvent(rt, "UNIT_SPELLCAST_FAILED", "player", "Flame Shock", "Rank 9") -- no SENT before it
-    assert.is_nil(rt.pending.failed)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_FAILED", "player", "Stormstrike", "")
+    assert.are.same({ kind = "cast" }, rt.pending)
+    rt.pending = nil
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Stormstrike", "")
+    assert.are.same({ kind = "cast", key = "stormstrike", done = true }, rt.pending)
   end)
 
   it("a new press in the same frame wins over the end of the previous cast", function()

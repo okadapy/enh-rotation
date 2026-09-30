@@ -169,11 +169,6 @@ function P:update(S, ev)
   local first = self.plan and self.plan.steps[1]
   local force = self.plan == nil or ev.kind == "target"
   local restart = ev.kind == "target"
-  if ev.kind == "cast" and ev.failed then
-    -- a press the server turned down: its effects are not coming, the plan must show it again
-    self.inflight[ev.failed] = nil
-    force, restart = true, true
-  end
   if ev.kind == "cast" and ev.key then
     self.inflight[ev.key] = S.now + M.INFLIGHT
     if ev.done then

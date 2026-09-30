@@ -115,14 +115,11 @@ function M.report(rt, msg)
 end
 
 -- done: the end (or pushback) of a cast whose START was already reported - no new press
--- failed: the key of a press (SENT) the server turned down - the planner takes it back
-function M.mark(rt, kind, key, done, failed)
+function M.mark(rt, kind, key, done)
   local p = rt.pending
   if not p or M.PRIORITY[kind] > M.PRIORITY[p.kind]
     or (kind == p.kind and key and (not p.key or (p.done and not done))) then
-    rt.pending = { kind = kind, key = key, done = done or nil, failed = failed or (p and p.failed) }
-  elseif failed then
-    p.failed = failed
+    rt.pending = { kind = kind, key = key, done = done or nil }
   end
 end
 
@@ -182,10 +179,10 @@ function M.onCast(rt, event, key, now, castID)
       rt.casting = nil
     end
     ctx.inflight[key] = nil
-    -- replan, but nothing was cast; a press already taken at SENT is taken back
-    local failed = confirmed and key or nil
-    if failed then rt.sent = nil end
-    M.mark(rt, "cast", nil, nil, failed)
+    -- Replan, but nothing was cast. A press taken at SENT is not taken back: a second tap during
+    -- the GCD fails in the client with the same event, and the first press is real. A press the
+    -- server really turned down comes back once the planner's in-flight mark runs out (1 s).
+    M.mark(rt, "cast")
     return
   elseif event == "UNIT_SPELLCAST_DELAYED" then
     local endMs = select(6, UnitCastingInfo("player"))
