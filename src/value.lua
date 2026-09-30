@@ -116,7 +116,10 @@ local function maelstromValue(S, damage)
   local stacks = (mw and mw.stacks) or 0
   if stacks > 5 then stacks = 5 end
   if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
-  return stacks * M.MW_SHARE * damage.action(S, "lightningBolt") * M.DISCOUNT
+  local A = damage.actionTable and damage.actionTable(S)
+  local lb = A and A.lightningBolt
+  if lb == nil then lb = damage.action(S, "lightningBolt") end
+  return stacks * M.MW_SHARE * lb * M.DISCOUNT
 end
 
 -- a button is worth its damage at the discount once ready; while on cooldown only the part
@@ -129,6 +132,7 @@ local function readyValue(S, damage)
   -- Fire Nova needs a totem, but not the one standing by a dead mob: then it counts as the others
   local novaOk = (fire and fire.kind) or not alive(S)
   local keys = M.READY_KEYS
+  local A = damage.actionTable and damage.actionTable(S)
   for i = 1, #keys do
     local key = keys[i]
     local sp = spells[key]
@@ -136,7 +140,11 @@ local function readyValue(S, damage)
       local cd, full = sp.cd or 0, M.COOLDOWN[key] or 0
       local share = 1
       if cd > 0 then share = full > cd and (1 - cd / full) or 0 end
-      if share > 0 then v = v + damage.action(S, key) * M.DISCOUNT * share end
+      if share > 0 then
+        local d = A and A[key]
+        if d == nil then d = damage.action(S, key) end
+        v = v + d * M.DISCOUNT * share
+      end
     end
   end
   return v

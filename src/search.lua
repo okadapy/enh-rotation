@@ -5,7 +5,8 @@ M.BEAM = 6
 M.DEPTH = 4
 M.BUDGET_MS = 2
 M.READY_EPS = 0.05
-M.WEAVE = { lightningBolt = true, chainLightning = true } -- what waiting for a swing is for
+M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
+M.WEAVE = { lightningBolt = true, chainLightning = true }
 M.NOW_SLOTS = 3 -- beam places kept for "press now" children
 M.IDLE_MIN = 1.0 -- a plan whose first button waits this long gets a button tried in front of it
 
@@ -343,8 +344,9 @@ function M.best(S, opts)
               local S1, d = (o.model.peekWait or o.model.wait)(S0, a.readyIn)
               local wn = { S = S1, v = node.v + waitValue(o, S0, S1, d), depth = node.depth,
                            waited = true, afterSwing = true, parent = node, a = a, virtual = true }
-              for _, b in ipairs(o.model.actions(S1)) do
-                if M.WEAVE[b.key] and b.readyIn <= M.READY_EPS and add(wn, b) then break end
+              for _, key in ipairs(M.WEAVE_KEYS) do
+                local r = o.model.readyIn(S1, key)
+                if r and r <= M.READY_EPS and add(wn, { key = key, readyIn = r }) then break end
               end
             end
           elseif add(node, a) then

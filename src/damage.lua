@@ -322,6 +322,21 @@ local function memoizeFlags(name)
   end
 end
 
+-- the per-buff table memoizeFlags("action") fills, for callers that look up several actions
+function M.actionTable(S)
+  local m = S.memo
+  if not m then return nil end
+  local f = 1
+  local ls, ss = S.buffs.ls, S.target.ss
+  if ls and ls.charges and ls.charges > 0 then f = 2 end
+  if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+  local slot = m.action
+  if not slot then slot = {}; m.action = slot end
+  local sub = slot[f]
+  if not sub then sub = {}; slot[f] = sub end
+  return sub
+end
+
 memoize("armorMult")
 memoize("meleeTable")
 memoize("mwPerHit")

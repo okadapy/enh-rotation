@@ -208,40 +208,57 @@ function M.castTime(S, key)
   return meta.castBase * (1 - 0.2 * mw) / (S.player.spellHaste or 1)
 end
 
+-- per-spell conditions besides cooldown, mana and range (nil = allowed)
+local SPECIAL = {
+  lavaLash = function(S) return S.weapons.oh ~= nil end,
+  fireNova = function(S) return fireUp(S) end,
+  searingTotem = function(S, fire) return not (fire.kind == "fireElemental" and (fire.remains or 0) > 0) end,
+  magmaTotem = function(S, fire, live)
+    if fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return false end
+    return live or ((S.enemies and S.enemies.nearby) or 0) >= 1
+  end,
+  -- spec 5.1: Frost Shock only where it pays, i.e. without Earth Shock (same cooldown, no Stormstrike bonus)
+  frostShock = function(S) return not S.spells.earthShock end,
+  callOfElements = function(S, fire)
+    if fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return false end
+    if fireUp(S) then
+      local water = S.totems.water
+      if not water or (water.remains or 0) >= M.COE_WATER then return false end
+    end
+    return true
+  end,
+  lightningShield = function(S)
+    local ls = S.buffs.ls
+    if (ls.charges or 0) >= M.lsMaxCharges(S) then return false end
+    -- charges are not spent in the model: a refresh only matters when the shield is gone or ending
+    return not ((ls.charges or 0) > 0 and (ls.remains or 0) >= M.HORIZON)
+  end,
+}
+
 function M.readyIn(S, key)
   local meta, sp = spells.byKey[key], S.spells and S.spells[key]
   if not meta or not sp then return nil end
+  -- cheapest tests first: most buttons are simply on cooldown
+  local r = sp.cd or 0
+  local c, g = S.castRemains or 0, S.gcdRemains or 0
+  if c > r then r = c end
+  if g > r then r = g end
+  if r >= M.HORIZON then return nil end
+  if (sp.cost or 0) > (S.player.mana or 0) then return nil end
   local t = S.target
-  local hasTarget = alive(S)
+  local live = alive(S)
   if M.NEEDS_TARGET[key] then
-    if not hasTarget or t.range == "far" then return nil end
+    if not live or t.range == "far" then return nil end
     if M.MELEE_ONLY[key] and t.range ~= "melee" then return nil end
     if M.SHOCK_RANGE[key] and t.range ~= "melee" and t.range ~= "20" then return nil end
   end
   local fire = S.totems.fire
-  if key == "lavaLash" and not S.weapons.oh then return nil end
-  if key == "fireNova" and not fireUp(S) then return nil end
-  if (key == "searingTotem" or key == "magmaTotem") and fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return nil end
-  if key == "magmaTotem" and not hasTarget and ((S.enemies and S.enemies.nearby) or 0) < 1 then return nil end
-  -- spec 5.1: Frost Shock only where it pays, i.e. without Earth Shock (same cooldown, no Stormstrike bonus)
-  if key == "frostShock" and S.spells.earthShock then return nil end
-  if key == "callOfElements" and fire.kind == "fireElemental" and (fire.remains or 0) > 0 then return nil end
-  if key == "callOfElements" and fireUp(S) then
-    local water = S.totems.water
-    if not water or (water.remains or 0) >= M.COE_WATER then return nil end
-  end
-  if key == "lightningShield" then
-    local ls = S.buffs.ls
-    if (ls.charges or 0) >= M.lsMaxCharges(S) then return nil end
-    -- charges are not spent in the model: a refresh only matters when the shield is gone or ending
-    if (ls.charges or 0) > 0 and (ls.remains or 0) >= M.HORIZON then return nil end
-  end
+  local special = SPECIAL[key]
+  if special and not special(S, fire, live) then return nil end
   -- the same fire totem again changes nothing while it still stands longer than value.TAIL counts
-  if M.TOTEM_KIND[key] and M.TOTEM_KIND[key] == fire.kind and (fire.remains or 0) >= M.TOTEM_REDROP then return nil end
-  if (sp.cost or 0) > (S.player.mana or 0) then return nil end
-  if S.player.moving and M.castTime(S, key) > 0 then return nil end
-  local r = math.max(sp.cd or 0, S.castRemains or 0, S.gcdRemains or 0)
-  if r >= M.HORIZON then return nil end
+  local kind = M.TOTEM_KIND[key]
+  if kind and kind == fire.kind and (fire.remains or 0) >= M.TOTEM_REDROP then return nil end
+  if S.player.moving and M.CAST_SPELLS[key] and M.castTime(S, key) > 0 then return nil end
   return r
 end
 
@@ -326,22 +343,32 @@ function M.advance(n, dt, cast, cdsDone)
   end
   if not cdsDone then
     local keys, map = spellKeys(n), n.spells
+    local own = n.ownSpells and n.spare.spells
     for i = 1, #keys do
       local key = keys[i]
-      local cd = map[key].cd
-      if cd and cd > 0 then setCd(n, key, cd > dt and cd - dt or 0) end
+      local sp = map[key]
+      local cd = sp.cd
+      if cd and cd > 0 then
+        cd = cd > dt and cd - dt or 0
+        if own and own[key] == sp then sp.cd = cd else setCd(n, key, cd) end
+      end
     end
   end
-  n.gcdRemains, n.castRemains = dec(n.gcdRemains, dt), dec(n.castRemains, dt)
+  local x = (n.gcdRemains or 0) - dt
+  n.gcdRemains = x > 0 and x or 0
+  x = (n.castRemains or 0) - dt
+  n.castRemains = x > 0 and x or 0
   local b = n.buffs
   local mw, ls, fl = b.mw, b.ls, b.flurry
-  local x = (mw.remains or 0) - dt
+  x = (mw.remains or 0) - dt
   if x > 0 then mw.remains = x else mw.remains = 0; mw.stacks = 0 end
   x = (ls.remains or 0) - dt
   if x > 0 then ls.remains = x else ls.remains = 0; ls.charges = 0 end
   x = (fl.remains or 0) - dt
   if x > 0 then fl.remains = x else fl.remains = 0; fl.charges = 0 end
-  b.rage, b.lust, b.em = dec(b.rage, dt), dec(b.lust, dt), dec(b.em, dt)
+  x = (b.rage or 0) - dt; b.rage = x > 0 and x or 0
+  x = (b.lust or 0) - dt; b.lust = x > 0 and x or 0
+  x = (b.em or 0) - dt; b.em = x > 0 and x or 0
   x = fs - dt
   t.fs = x > 0 and x or 0
   local ss = t.ss
@@ -352,7 +379,7 @@ function M.advance(n, dt, cast, cdsDone)
   x = fireLeft - dt
   if x > 0 then fire.remains = x else fire.remains = 0; fire.kind = nil end
   local water = tot.water
-  if water then water.remains = dec(water.remains, dt) end
+  if water then x = (water.remains or 0) - dt; water.remains = x > 0 and x or 0 end
   x = wolves - dt
   pets.wolves = x > 0 and x or 0
   local inf = n.inflight
