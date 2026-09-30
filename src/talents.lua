@@ -52,4 +52,39 @@ function M.read(numTabs, numTalents, info)
   return out
 end
 
+-- A typical leveling enhancement path (3.3.5a), one point per level from 10: key and ranks
+-- in the order they are taken; "_" = a point in a talent the model does not read.
+-- Enhancement tiers unlock every 5 points: Stormstrike is the 31st point (level 40), Dual Wield
+-- level 41, Lava Lash 45, Shamanistic Rage 50, Maelstrom Weapon 5/5 at 59, Feral Spirit 60.
+M.STANDARD = {
+  { "enhancingTotems", 3 }, { "ancestralKnowledge", 2 },
+  { "thunderingStrikes", 5 },
+  { "elementalWeapons", 3 }, { "shamanisticFocus", 1 }, { "improvedShields", 1 },
+  { "flurry", 5 },
+  { "spiritWeapons", 1 }, { "improvedShields", 2 }, { "_", 2 },
+  { "weaponMastery", 3 }, { "unleashedRage", 2 },
+  { "stormstrike", 1 }, { "dualWield", 1 }, { "dualWieldSpecialization", 3 },
+  { "lavaLash", 1 }, { "staticShock", 3 }, { "improvedStormstrike", 1 },
+  { "shamanisticRage", 1 }, { "mentalQuickness", 3 }, { "improvedStormstrike", 1 },
+  { "maelstromWeapon", 5 },
+  { "feralSpirit", 1 },
+  { "concussion", 5 }, { "callOfFlame", 3 }, { "convection", 5 }, { "elementalDevastation", 3 },
+  { "mentalDexterity", 3 }, { "_", 2 },
+}
+
+function M.standard(level)
+  local out = {}
+  for _, k in ipairs(M.KEYS) do out[k.key] = 0 end
+  local points = math.max(0, math.min(71, (level or 0) - 9))
+  for _, pick in ipairs(M.STANDARD) do
+    local key, ranks = pick[1], pick[2]
+    for _ = 1, ranks do
+      if points <= 0 then return out end
+      points = points - 1
+      if key ~= "_" then out[key] = out[key] + 1 end
+    end
+  end
+  return out
+end
+
 return M
