@@ -244,6 +244,42 @@ local function chainKey(node)
   return k
 end
 
+-- Best first, equal scores by chain: a merge sort with the comparison written inline (table.sort
+-- calls a Lua function for each of its ~700 comparisons per search). The same order as
+-- table.sort with that comparator; only two candidates equal in score and chain could differ.
+local MERGE = {}
+local function sortByScore(a)
+  local n = #a
+  local src, dst = a, MERGE
+  local width = 1
+  while width < n do
+    local i = 1
+    while i <= n do
+      local mid, hi = i + width, i + 2 * width
+      if mid > n + 1 then mid = n + 1 end
+      if hi > n + 1 then hi = n + 1 end
+      local l, r, k = i, mid, i
+      while l < mid and r < hi do
+        local x, y = src[l], src[r]
+        local xs, ys = x.score, y.score
+        if ys > xs or (ys == xs and chainKey(y) < chainKey(x)) then
+          dst[k] = y; r = r + 1
+        else
+          dst[k] = x; l = l + 1
+        end
+        k = k + 1
+      end
+      while l < mid do dst[k] = src[l]; l = l + 1; k = k + 1 end
+      while r < hi do dst[k] = src[r]; r = r + 1; k = k + 1 end
+      i = hi
+    end
+    src, dst = dst, src
+    width = width * 2
+  end
+  if src ~= a then for i = 1, n do a[i] = src[i] end end
+  for i = 1, n do MERGE[i] = nil end -- holds no candidate after the search
+end
+
 -- shallow root copy with a fresh per-search memo (see damage.lua); S itself is never touched
 local function root(S)
   local r = {}
@@ -281,7 +317,12 @@ local function candidate(o, node, a, rootNow)
     waited = true
   end
   local at = S.now - rootNow
-  if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
+  if at >= o.horizon then return nil end
+  -- fitsHorizon(o, S, a.key, at), with the cast time kept for the press below
+  local castTime = m.castTime
+  local ct = castTime and castTime(S, a.key) or 0
+  if not (ct <= 0 or at + ct <= o.horizon + 1e-9) then return nil end
+  if not castTime then ct = nil end
   local c = { parent = node, a = a, depth = node.depth + 1, at = at,
               first = node.first or (node.virtual and (node.parent.first or a.key .. "+swing")) or a.key }
   c.afterSwingStep = afterSwing or nil
@@ -298,11 +339,11 @@ local function candidate(o, node, a, rootNow)
     local t = S.target
     PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = S.mode, t.hp, t.hpMax, t.dead
     local mana0, price = S.player.mana or 0, val.manaPrice(S)
-    local S2, dmg = m.peekApplyOver(S, a.key, o.horizon - at)
+    local S2, dmg = m.peekApplyOver(S, a.key, o.horizon - at, ct)
     c.v = v + val.step(PRE, S2, dmg, mana0 - (S2.player.mana or 0), price)
     return c, S2
   end
-  local S2, dmg = peekApply(S, a.key, o.horizon - at)
+  local S2, dmg = peekApply(S, a.key, o.horizon - at, ct)
   c.v = v + val.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   return c, S2
 end
@@ -363,7 +404,10 @@ local function scoreFrom(o, CS, v, rootNow)
     if o.model.peekApply and o.model.advance then
       PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = CS.mode, CS.target.hp, CS.target.hpMax, CS.target.dead
       local mana0 = CS.player.mana or 0
-      local price = o.value.manaPrice and o.value.manaPrice(CS) or 0 -- before the state moves on
+      -- taken before the state moves on; a tail that cannot change the mana needs none (0 x price)
+      local price = 0
+      local keeps = o.model.waitKeepsMana
+      if o.value.manaPrice and not (keeps and keeps(CS)) then price = o.value.manaPrice(CS) end
       local dmg = o.model.advance(CS, o.horizon - t)
       v = v + o.value.step(PRE, CS, dmg, 0) - (mana0 - (CS.player.mana or 0)) * price
     else
@@ -381,8 +425,7 @@ local fillIdle
 -- result is the same however it is cut into frames. check() (nil = run to the end) is called
 -- only where no scratch state (model.peek*) is held, so other code may use the scratch buffers
 -- while the search is paused.
-local function run(o, S, check)
-  S = root(S)
+local function search(o, S, check)
   local rootNow = S.now
   local rootNode = { S = S, v = 0, steps = {}, depth = 0 }
   local frontier = { rootNode }
@@ -435,10 +478,7 @@ local function run(o, S, check)
     local deeper = false
     for i = 1, #children do if children[i].depth < o.depth then deeper = true; break end end
     if not deeper then break end
-    table.sort(children, function(x, y)
-      if x.score ~= y.score then return x.score > y.score end
-      return chainKey(x) < chainKey(y)
-    end)
+    sortByScore(children)
     -- best first; a state already in the beam (same signature) is skipped. Signatures are only
     -- needed for the few children looked at here, so they are taken from rebuilt states.
     frontier = {}
@@ -495,10 +535,7 @@ local function run(o, S, check)
   for _, c in pairs(bestByFirst) do
     if c.score >= best - math.abs(best) * o.fillMargin then list[#list + 1] = c end
   end
-  table.sort(list, function(x, y)
-    if x.score ~= y.score then return x.score > y.score end
-    return chainKey(x) < chainKey(y)
-  end)
+  sortByScore(list)
   local steps
   local top = -math.huge
   local budget = { replays = o.fillReplays }
@@ -512,6 +549,19 @@ local function run(o, S, check)
   local idle = finalScore(o, rootNode, rootNow)
   if idle >= best then return result(idle, {}) end
   return result(best, steps)
+end
+
+-- The model's real states of one search (and their spell entries and player tables) come from
+-- an arena (model.newArena) and go back to the model when the search is over: nothing in the
+-- result holds them. A search that fails keeps its tables (the garbage collector takes them).
+local function run(o, S, check)
+  S = root(S)
+  local m = o.model
+  local arena = m.newArena and m.newArena()
+  S.memo.arena = arena
+  local res = search(o, S, check)
+  if arena then m.release(arena) end
+  return res
 end
 
 -- synchronous: the whole search at once (tests, tools); the same result as a job run in slices
