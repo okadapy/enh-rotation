@@ -256,7 +256,7 @@ function M.targetInfo(ctx, c, now, playerLevel)
   local guid = UnitGUID("target")
   if t.enemy and guid and ctx.ttd then
     ctx.ttd:add(now, guid, t.hpPct)
-    t.ttd = ctx.ttd:estimate(now, guid)
+    t.ttd = ctx.ttd:smoothed(now, guid)
   end
   local deb = M.auras("target", "HARMFUL", c.debuffNames, true, now)
   if deb.fs then t.fs = deb.fs.remains end

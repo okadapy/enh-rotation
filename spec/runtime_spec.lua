@@ -26,7 +26,7 @@ end }
 package.loaded.ttd = { new = function()
   local t = { resets = {} }
   function t:add() end
-  function t:estimate() return 60 end
+  function t:smoothed() return 60 end
   function t:reset(guid) self.resets[#self.resets + 1] = guid or "all" end
   return t
 end }

@@ -102,3 +102,42 @@ describe("ttd", function()
     assert.is_nil(t:estimate(100, "0xA"))
   end)
 end)
+
+describe("ttd smoothed", function()
+  it("is the raw estimate at first and runs down with the clock when the rate holds", function()
+    local t = ttd.new()
+    feed(t, "0xA", 100, { 1.0, 0.9, 0.8 })
+    assert.are.near(8, t:smoothed(102, "0xA"), 1e-6)
+    assert.are.near(7, t:smoothed(103, "0xA"), 1e-6) -- no new sample: raw and prediction agree
+  end)
+
+  -- health in whole percent, hits every 0.5-1 s: the raw regression jumps, the smoothed one far less
+  it("damps the jumps of the raw estimate", function()
+    local t = ttd.new()
+    local hp, now = 1.0, 100
+    local rawJump, smJump, lastRaw, lastSm = 0, 0, nil, nil
+    local hits = { 0.07, 0, 0.02, 0.09, 0, 0, 0.08, 0.01, 0.06, 0, 0.1, 0.03, 0, 0.07, 0.05, 0 }
+    for _, h in ipairs(hits) do
+      hp = hp - h
+      t:add(now, "0xA", hp)
+      local raw, sm = t:estimate(now, "0xA"), t:smoothed(now, "0xA")
+      if raw and lastRaw then
+        rawJump = math.max(rawJump, math.abs(raw - (lastRaw - 0.5)))
+        smJump = math.max(smJump, math.abs(sm - (lastSm - 0.5)))
+      end
+      lastRaw, lastSm = raw, sm
+      now = now + 0.5
+    end
+    assert.is_true(smJump < rawJump / 2, ("raw %.2f, smoothed %.2f"):format(rawJump, smJump))
+  end)
+
+  it("keeps a long estimate long (a boss) and starts afresh after a heal", function()
+    local t = ttd.new()
+    feed(t, "0xA", 100, { 0.5, 0.499, 0.498 })
+    assert.is_true(t:smoothed(102, "0xA") > 400)
+    t:add(103, "0xA", 1.0) -- healed: the samples start again
+    assert.is_nil(t:smoothed(103, "0xA"))
+    feed(t, "0xA", 104, { 0.9, 0.8, 0.7 })
+    assert.are.near(7, t:smoothed(106, "0xA"), 1e-6)
+  end)
+end)

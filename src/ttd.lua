@@ -5,6 +5,8 @@ M.MIN_SAMPLES = 3
 M.MIN_SPAN = 1.5
 M.HEAL_RESET = 0.05
 M.FORGET = 30
+M.TAU = 1.5 -- s: time constant of the smoothed estimate (smoothed)
+M.EPS = 0.05 -- s: the shortest time-to-die the smoothing divides by
 
 local T = {}
 T.__index = T
@@ -60,6 +62,36 @@ function T:estimate(now, guid)
   local left = s[n].hp / -slope - (now - s[n].t)
   if left < 0 then left = 0 end
   return left
+end
+
+-- The estimate for the planner. The raw regression jumps with every hit (health comes in whole
+-- percent for most mobs), and a first-glance 500 s drops to 20 s a second later; the plan near a
+-- mob's death followed that noise. Smoothed as a kill rate (1 / time-to-die, which is linear in
+-- the damage done) with time constant TAU, while the previous value runs down with the clock.
+-- A long estimate (a boss) stays long: the group mana projection needs it. nil (no decline seen,
+-- a heal) starts afresh.
+function T:smoothed(now, guid)
+  local raw = self:estimate(now, guid)
+  local u = guid and self.units[guid]
+  if not raw or not u then
+    if u then u.sm = nil end
+    return raw
+  end
+  local prev = u.sm
+  if not prev then
+    u.sm, u.smAt = raw, now
+    return raw
+  end
+  local dt = now - u.smAt
+  if dt <= 0 then return prev end
+  local pred = prev - dt
+  if pred < M.EPS then pred = M.EPS end
+  local a = 1 - math.exp(-dt / M.TAU)
+  local rate = 1 / pred + a * (1 / math.max(raw, M.EPS) - 1 / pred)
+  local v = 1 / rate
+  if raw <= 0 then v = 0 end
+  u.sm, u.smAt = v, now
+  return v
 end
 
 return M
