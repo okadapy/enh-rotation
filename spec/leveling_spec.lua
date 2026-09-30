@@ -64,6 +64,19 @@ describe("leveling #integration", function()
     assert.is_true(key == "stormstrike" or key == "lavaLash" or key == "earthShock", "got " .. tostring(key))
   end)
 
+  -- Shamanistic Rage returns 15% of AP as mana on every landed melee attack, Stormstrike (two
+  -- hits) and Lava Lash included: at level 70 two Stormstrike hits bring back more than its cost.
+  -- At 8% mana under Rage the plan must not stop after Feral Spirit and Fire Elemental.
+  it("level 70, low mana under Rage: Stormstrike still in the plan, it pays for itself", function()
+    local S = midFight(70)
+    S.target.fs = 10
+    S.buffs.rage = 12
+    S.player.mana = math.floor(S.player.manaMax * 0.08)
+    local keys = {}
+    for _, st in ipairs(Sc.best(S).steps) do keys[st.key] = true end
+    assert.is_true(keys.stormstrike == true, "no Stormstrike in the plan")
+  end)
+
   it("level 25: Earth Shock while Flame Shock ticks", function()
     local S = midFight(25)
     S.target.fs = 10

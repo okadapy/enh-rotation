@@ -274,10 +274,58 @@ describe("model", function()
       local S2 = model.apply(S, "lightningShield")
       assert.are.equal(5, S2.buffs.ls.charges)
     end)
-    it("Shamanistic Rage returns mana on every swing", function()
+    it("Shamanistic Rage returns mana on every landed swing and Windfury extra attack", function()
       local S = base(); S.swing.mh.next = 0.5; S.swing.oh.next = 0.6
       local S2 = model.apply(S, "shamanisticRage")
-      assert.are.near(8000 + 2 * 0.15 * 4000, S2.player.mana, 1e-6)
+      local white, yellow = damage.meleeTable(S, true).landed, damage.meleeTable(S, false).landed
+      local _, wfProcs = damage.wf(S)
+      local hits = 2 * white + wfProcs * 2 * yellow
+      assert.is_true(white < 1 and wfProcs > 0)
+      assert.are.near(8000 + hits * 0.15 * 4000, S2.player.mana, 1e-6)
+    end)
+    describe("Shamanistic Rage on special attacks", function()
+      local function rageState(mana)
+        local S = base(); S.buffs.rage = 10; S.player.mana = mana
+        S.swing.mh.next, S.swing.oh.next = 5, 5 -- no auto attack inside the GCD
+        return S
+      end
+      local per = 0.15 * 4000
+      it("both Stormstrike hits return mana while Rage is up", function()
+        local S = rageState(2000)
+        local S2 = model.apply(S, "stormstrike")
+        local landed = damage.meleeTable(S, false).landed
+        assert.are.near(2000 - 400 + 2 * per * landed, S2.player.mana, 1e-6)
+      end)
+      it("one hit without an off-hand weapon", function()
+        local S = rageState(2000); S.weapons.oh = nil; S.swing.oh = nil
+        local S2 = model.apply(S, "stormstrike")
+        assert.are.near(2000 - 400 + per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
+      end)
+      it("the Lava Lash hit returns mana while Rage is up", function()
+        local S = rageState(2000)
+        local S2 = model.apply(S, "lavaLash")
+        assert.are.near(2000 - 200 + per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
+      end)
+      it("nothing without Rage", function()
+        local S = rageState(2000); S.buffs.rage = 0
+        assert.are.near(2000 - 400, model.apply(S, "stormstrike").player.mana, 1e-9)
+        assert.are.near(2000 - 200, model.apply(S, "lavaLash").player.mana, 1e-9)
+      end)
+      it("nothing on a dead target", function()
+        local S = rageState(2000); S.target.dead = true
+        assert.are.near(2000 - 400, model.apply(S, "stormstrike").player.mana, 1e-9)
+      end)
+      it("capped at maximum mana", function()
+        local S = rageState(9800)
+        assert.are.equal(10000, model.apply(S, "stormstrike").player.mana)
+      end)
+      it("peekApply gives the same mana", function()
+        for _, key in ipairs({ "stormstrike", "lavaLash" }) do
+          local S = rageState(2000); S.memo = {}
+          local a = model.apply(S, key).player.mana
+          assert.are.equal(a, model.peekApply(S, key).player.mana, key)
+        end
+      end)
     end)
   end)
 
@@ -542,6 +590,7 @@ describe("model working copies (search speed)", function()
   local function states()
     local list = {}
     for _, over in ipairs({ {}, { buffs = { mw = { stacks = 3, remains = 20 } } }, { buffs = { rage = 10, ls = { charges = 0 } } },
+                           { buffs = { rage = 10 }, player = { mana = 1500 } },
                            { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } },
                            { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
                            { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } } }) do
