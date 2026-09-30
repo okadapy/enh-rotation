@@ -85,6 +85,23 @@ function G.frame(kind, name)
   function f:CreateTexture() local t = G.texture(); self.children[#self.children + 1] = t; return t end
   function f:CreateFontString() local t = G.fontString(); self.children[#self.children + 1] = t; return t end
   function f:GetRegions() return unpack(self.children) end
+  -- dialog frames (export window): backdrop, dragging, edit box, scroll frame, buttons
+  function f:SetBackdrop(b) self.backdrop = b end
+  function f:SetFrameStrata(s) self.strata = s end
+  function f:SetMovable(m) self.movable = m end
+  function f:EnableMouse(m) self.mouse = m end
+  function f:RegisterForDrag(...) self.drag = { ... } end
+  function f:StartMoving() self.moving = true end
+  function f:StopMovingOrSizing() self.moving = false end
+  function f:SetMultiLine(m) self.multiLine = m end
+  function f:SetMaxLetters(n) self.maxLetters = n end
+  function f:SetAutoFocus(a) self.autoFocus = a end
+  function f:SetFontObject(o) self.font = o end
+  function f:SetText(s) self.text = s end
+  function f:GetText() return self.text end
+  function f:HighlightText() self.highlighted = true end
+  function f:SetFocus() self.focused = true end
+  function f:SetScrollChild(c) self.scrollChild = c end
   function f:SetOwner(owner, anchor) self.owner = owner; self.anchor = anchor end
   function f:ClearLines() self.children = {} end
   function f:SetInventoryItem(_, slot)
@@ -241,8 +258,9 @@ function G.install(cfg)
     local e = cfg.enchants or {}
     return e.mh and 1 or nil, 1000, 0, e.oh and 1 or nil, 1000, 0
   end
-  _G.CreateFrame = function(kind, name)
+  _G.CreateFrame = function(kind, name, _, template)
     local f = G.frame(kind, name)
+    f.template = template
     if name then _G[name] = f end
     return f
   end
@@ -256,6 +274,10 @@ function G.install(cfg)
   end
   _G.EnhRotEngineFrame = nil
   _G.EnhRotScanTip = nil
+  _G.EnhRotExportFrame = nil
+  -- the libraries WeakAuras brings (its import strings use them)
+  local libs = { LibSerialize = require("LibSerialize"), LibDeflate = require("LibDeflate") }
+  _G.LibStub = cfg.noLibs and nil or function(name) return libs[name] end
   return cfg
 end
 

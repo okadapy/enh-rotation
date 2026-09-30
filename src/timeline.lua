@@ -99,6 +99,62 @@ function M.layout(plan, S, opts, elapsed)
   return L
 end
 
+-- A movable window with the export string selected, ready for Ctrl+C. One per session: a new
+-- call only puts new text in. refresh() gives fresh text (the Refresh button).
+function M.exportWindow(text, refresh)
+  local w = EnhRotExportFrame
+  if not w then
+    w = CreateFrame("Frame", "EnhRotExportFrame", UIParent)
+    w:SetWidth(420)
+    w:SetHeight(260)
+    w:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    w:SetFrameStrata("DIALOG")
+    w:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                    tile = true, tileSize = 32, edgeSize = 32, insets = { left = 8, right = 8, top = 8, bottom = 8 } })
+    w:SetMovable(true)
+    w:EnableMouse(true)
+    w:RegisterForDrag("LeftButton")
+    w:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    w:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    local title = w:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOP", w, "TOP", 0, -14)
+    title:SetText("EnhRot snapshots: Ctrl+C, paste into the bug report")
+    w.title = title
+    local close = CreateFrame("Button", nil, w, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", w, "TOPRIGHT", -4, -4)
+    local scroll = CreateFrame("ScrollFrame", "EnhRotExportScroll", w, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", w, "TOPLEFT", 16, -36)
+    scroll:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -34, 44)
+    local box = CreateFrame("EditBox", nil, scroll)
+    box:SetMultiLine(true)
+    box:SetMaxLetters(0)
+    box:SetAutoFocus(false)
+    box:SetFontObject(ChatFontNormal)
+    box:SetWidth(360)
+    box:SetScript("OnEscapePressed", function() w:Hide() end)
+    -- the text is for copying only: typing puts it back
+    box:SetScript("OnTextChanged", function(self, user)
+      if user and self:GetText() ~= w.text then self:SetText(w.text or ""); self:HighlightText() end
+    end)
+    scroll:SetScrollChild(box)
+    w.box = box
+    local again = CreateFrame("Button", nil, w, "UIPanelButtonTemplate")
+    again:SetWidth(100)
+    again:SetHeight(22)
+    again:SetPoint("BOTTOM", w, "BOTTOM", 0, 14)
+    again:SetText("Refresh")
+    again:SetScript("OnClick", function() if w.refresh then M.exportWindow(w.refresh(), w.refresh) end end)
+    w.again = again
+  end
+  w.text, w.refresh = text or "", refresh
+  w.box:SetText(w.text)
+  w:Show()
+  w.box:SetFocus()
+  w.box:HighlightText()
+  return w
+end
+
 local TL = {}
 TL.__index = TL
 

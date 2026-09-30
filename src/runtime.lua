@@ -425,6 +425,26 @@ function M.step(rt, dt)
   return M.show(rt, plan, S, now)
 end
 
+-- LibSerialize / LibDeflate come with WeakAuras (its own import strings use them)
+function M.exportLibs()
+  if not LibStub then return nil end
+  local ser, def = LibStub("LibSerialize", true), LibStub("LibDeflate", true)
+  if not (ser and def) then return nil end
+  return { serialize = ser, deflate = def }
+end
+
+-- the export window with the recorded snapshots (option "Export snapshots")
+function M.showExport(env)
+  local function text()
+    local list = env.saved and env.saved[recorder.KEY] or {}
+    local s = recorder.export(list, M.exportLibs())
+    if not s then return "EnhRot: this client has no LibSerialize/LibDeflate, send WeakAuras.lua instead" end
+    if #list == 0 then return "EnhRot: no snapshots yet - turn on Record snapshots and play a while" end
+    return s
+  end
+  return timeline.exportWindow(text(), text)
+end
+
 function M.timelineOptions(config)
   return { icons = config.icons, seconds = config.seconds, scale = config.scale, showReason = config.showReason ~= false }
 end
@@ -455,6 +475,7 @@ function M.start(config, env)
   }
   tl.onError = function() M.fail(rt) end
   M.checkTalents(rt)
+  if config.export then M.showExport(env) end
   frame:SetScript("OnEvent", function(_, event, ...)
     if rt.stopped then return end
     if rt.busy then return M.fail(rt) end
