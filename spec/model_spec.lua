@@ -741,7 +741,7 @@ describe("model working copies (search speed)", function()
                            { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
                            { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } },
                            { target = { range = "far" }, enemies = { melee = 0, nearby = 1 },
-                             totems = { fire = { kind = "searing", remains = 30 } } } },
+                             totems = { fire = { kind = "searing", remains = 30 } } },
                            -- a mob running in: arriving inside a GCD, inside a cast, after it; a pull
                            { mode = "solo", target = { range = "20", meleeIn = 0.9, inCombat = true }, enemies = { melee = 0 } },
                            { mode = "solo", target = { range = "30", meleeIn = 3.1, inCombat = true }, enemies = { melee = 0 },

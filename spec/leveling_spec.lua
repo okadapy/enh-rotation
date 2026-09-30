@@ -96,7 +96,13 @@ describe("leveling #integration", function()
         assert.is_true(mana >= reserve, ("%s at %.1f s leaves %d mana, reserve %d"):format(st.key, st.at, mana, reserve))
       end
     end
-    assert.is_true(bolts >= 1, "the Bolt the mana above the reserve pays for is still cast")
+    -- the mana above the reserve is still used (a pull), and the melee buttons it keeps come
+    -- once the mob has run in (feat/mob-approach: the pull makes it come; Flame Shock then
+    -- Stormstrike on arrival beats standing for a second Bolt)
+    local keys, n = {}, 0
+    for _, st in ipairs(Sc.best(S).steps) do keys[st.key] = true; n = n + 1 end
+    assert.is_true(n >= 1, "the mana above the reserve pays for a pull")
+    assert.is_true(keys.stormstrike or keys.lavaLash or keys.earthShock, "a melee button once the mob arrives")
   end)
 
   it("level 25: Earth Shock while Flame Shock ticks", function()
