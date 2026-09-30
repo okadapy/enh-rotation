@@ -14,12 +14,12 @@ M.FILL_MARGIN = 0.02 -- first buttons whose best chain is within this share of t
 M.FILL_REPLAYS = 12 -- fillIdle replays per search, best chains first (bounds its time)
 M.IDLE_MIN = 1.0 -- a wait this long inside the plan gets each ready button tried in it (fillIdle)
 
+-- the text under the first icon: short (it fits under a 64 px icon), plain words, and it says why
+-- this button and not its neighbour (M.reason picks the case; these are the fixed ones)
 M.REASONS = {
   stormstrike = "Stormstrike: +20% nature",
   lavaLash = "filler",
-  earthShock = "shock filler",
-  frostShock = "shock filler",
-  searingTotem = "no fire totem",
+  frostShock = "Frost Shock: damage + slow",
   fireElemental = "big cooldown",
   feralSpirit = "big cooldown",
   callOfElements = "totems expiring",
@@ -100,21 +100,34 @@ function M.signature(S)
   return char(unpack_(bytes, 1, n + 8))
 end
 
+-- built once: the search asks for a reason for many candidates
+local FITS, HARD = {}, {}
+for n = 0, 4 do FITS[n], HARD[n] = n .. " stacks, fits before swing", n .. " stacks: hard-cast" end
+
 function M.reason(S, key, afterSwing)
-  local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
+  local t = S.target
   if key == "lightningBolt" or key == "chainLightning" then
-    if mw >= 5 then return "5 Maelstrom stacks" end
-    if afterSwing then return "after swing - no clip" end
-    return ("%d Maelstrom stacks"):format(math.floor(mw))
+    local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
+    if mw >= 5 then return "5 stacks: instant" end
+    if t.range and t.range ~= "melee" then return "pull: target out of melee" end
+    mw = math.floor(mw)
+    return afterSwing and FITS[mw] or HARD[mw]
   elseif key == "flameShock" then
-    return (S.target.fs or 0) <= 0 and "Flame Shock expired" or "refresh Flame Shock"
-  elseif key == "fireNova" or key == "magmaTotem" then
+    return (t.fs or 0) <= 0 and "Flame Shock not ticking" or "refresh Flame Shock"
+  elseif key == "earthShock" then
+    return (t.fs or 0) > 0 and "Flame Shock up: Earth Shock" or "Earth Shock: instant damage"
+  elseif key == "searingTotem" or key == "magmaTotem" or key == "fireNova" then
     local n = require("damage").totemTargets(S)
-    if n >= 2 then return ("%d targets"):format(n) end
-    return key == "fireNova" and "Fire Nova ready" or "Magma Totem down"
+    if key == "searingTotem" then return n <= 1 and "1 target: Searing Totem" or "fire totem: Searing Totem" end
+    if n >= 2 then return ("%d targets: %s"):format(n, key == "fireNova" and "Fire Nova" or "Magma Totem") end
+    return key == "fireNova" and "Fire Nova ready" or "fire totem: Magma Totem"
   elseif key == "shamanisticRage" then
     local p = S.player
-    return (p.manaMax and p.mana / p.manaMax < 0.3) and "low mana" or "damage cooldown"
+    return (p.manaMax and p.manaMax > 0 and p.mana / p.manaMax < 0.3) and "mana: Shamanistic Rage"
+      or "Rage: mana, -30% damage"
+  elseif key == "lightningShield" then
+    local ls = S.buffs and S.buffs.ls
+    if ls and (ls.charges or 0) > 0 then return "Lightning Shield low" end
   end
   return M.REASONS[key] or key
 end

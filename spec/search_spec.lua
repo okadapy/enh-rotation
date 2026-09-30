@@ -48,7 +48,7 @@ describe("search.best", function()
   end)
 
   -- waiting for a swing is only for weaving a cast (search.WEAVE): "swing, then Bolt" is one step
-  it("a Bolt after waitSwing is marked 'after swing - no clip'", function()
+  it("a Bolt after waitSwing is marked as fitting before the next swing", function()
     -- (a cast: an instant clips nothing, so it is never planned after a swing)
     stub.setup({ lightningBolt = { dmg = 50, cd = 0, cast = 1.0 }, a = { dmg = 60, cd = 0 } })
     local S = stub.state({ swing = 0.3, mw = 3 })
@@ -57,7 +57,7 @@ describe("search.best", function()
     stub.value.step = function(_, _, dmg) return dmg end
     assert.are.equal("lightningBolt", plan.steps[1].key)
     assert.are.near(0.31, plan.steps[1].at, 1e-9)
-    assert.are.equal("after swing - no clip", plan.steps[1].reason)
+    assert.are.equal("3 stacks, fits before swing", plan.steps[1].reason)
   end)
 
   -- the old wall-clock cut made the plan depend on the computer's speed (and flicker)
@@ -149,11 +149,92 @@ describe("search.signature and reason", function()
 
   it("explains Lightning Bolt and Flame Shock", function()
     stub.setup({})
-    assert.are.equal("5 Maelstrom stacks", search.reason(stub.state({ mw = 5 }), "lightningBolt", false))
-    assert.are.equal("after swing - no clip", search.reason(stub.state({ mw = 3 }), "lightningBolt", true))
-    assert.are.equal("3 Maelstrom stacks", search.reason(stub.state({ mw = 3 }), "lightningBolt", false))
-    assert.are.equal("Flame Shock expired", search.reason(stub.state({ fs = 0 }), "flameShock", false))
+    assert.are.equal("5 stacks: instant", search.reason(stub.state({ mw = 5 }), "lightningBolt", false))
+    assert.are.equal("3 stacks, fits before swing", search.reason(stub.state({ mw = 3 }), "lightningBolt", true))
+    assert.are.equal("3 stacks: hard-cast", search.reason(stub.state({ mw = 3 }), "lightningBolt", false))
+    assert.are.equal("Flame Shock not ticking", search.reason(stub.state({ fs = 0 }), "flameShock", false))
     assert.are.equal("refresh Flame Shock", search.reason(stub.state({ fs = 4 }), "flameShock", false))
+  end)
+
+  -- a new player reads these under the icon: why this button, not "0 Maelstrom stacks" at 30 yd
+  it("a pull Bolt says the target is out of melee; 5 stacks is still 'instant'", function()
+    stub.setup({})
+    for _, range in ipairs({ "20", "30", "far" }) do
+      local S = stub.state({ mw = 0 })
+      S.target.range = range
+      assert.are.equal("pull: target out of melee", search.reason(S, "lightningBolt", false))
+      assert.are.equal("pull: target out of melee", search.reason(S, "chainLightning", true))
+    end
+    local S = stub.state({ mw = 5 })
+    S.target.range = "30"
+    assert.are.equal("5 stacks: instant", search.reason(S, "lightningBolt", false))
+    S = stub.state({ mw = 2 })
+    S.target.range = "melee"
+    assert.are.equal("2 stacks: hard-cast", search.reason(S, "lightningBolt", false))
+  end)
+
+  it("Earth Shock says whether Flame Shock is ticking", function()
+    stub.setup({})
+    assert.are.equal("Flame Shock up: Earth Shock", search.reason(stub.state({ fs = 9 }), "earthShock", false))
+    assert.are.equal("Earth Shock: instant damage", search.reason(stub.state({ fs = 0 }), "earthShock", false))
+  end)
+
+  it("fire totems and Fire Nova count their targets", function()
+    stub.setup({})
+    local S = stub.state()
+    S.target.exists, S.target.enemy, S.target.range = true, true, "melee"
+    assert.are.equal("1 target: Searing Totem", search.reason(S, "searingTotem", false))
+    assert.are.equal("fire totem: Magma Totem", search.reason(S, "magmaTotem", false))
+    assert.are.equal("Fire Nova ready", search.reason(S, "fireNova", false))
+    S.enemies.nearby = 3
+    assert.are.equal("3 targets: Magma Totem", search.reason(S, "magmaTotem", false))
+    assert.are.equal("3 targets: Fire Nova", search.reason(S, "fireNova", false))
+    assert.are.equal("fire totem: Searing Totem", search.reason(S, "searingTotem", false))
+  end)
+
+  it("Shamanistic Rage is about mana, never a damage cooldown", function()
+    stub.setup({})
+    local S = stub.state()
+    S.player.mana = 200
+    assert.are.equal("mana: Shamanistic Rage", search.reason(S, "shamanisticRage", false))
+    S.player.mana = 900
+    assert.are.equal("Rage: mana, -30% damage", search.reason(S, "shamanisticRage", false))
+  end)
+
+  it("Lightning Shield: missing or low", function()
+    stub.setup({})
+    local S = stub.state()
+    S.buffs.ls = { charges = 0 }
+    assert.are.equal("Lightning Shield missing", search.reason(S, "lightningShield", false))
+    S.buffs.ls = { charges = 1 }
+    assert.are.equal("Lightning Shield low", search.reason(S, "lightningShield", false))
+  end)
+
+  it("every reason fits under an icon (28 characters at most)", function()
+    stub.setup({})
+    local keys = { "lightningBolt", "chainLightning", "flameShock", "earthShock", "frostShock", "searingTotem",
+                   "magmaTotem", "fireNova", "shamanisticRage", "lightningShield", "stormstrike", "lavaLash",
+                   "fireElemental", "feralSpirit", "callOfElements" }
+    for _, mw in ipairs({ 0, 4, 5 }) do
+      for _, fs in ipairs({ 0, 5 }) do
+        for _, range in ipairs({ "melee", "30" }) do
+          for _, nearby in ipairs({ 1, 12 }) do
+            for _, mana in ipairs({ 100, 1000 }) do
+              for _, after in ipairs({ false, true }) do
+                local S = stub.state({ mw = mw, fs = fs })
+                S.target.exists, S.target.enemy, S.target.range = true, true, range
+                S.enemies.nearby, S.player.mana = nearby, mana
+                for _, k in ipairs(keys) do
+                  local r = search.reason(S, k, after)
+                  assert.is_true(#r <= 28, k .. ": " .. r)
+                  assert.are_not.equal(k, r)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
   end)
 end)
 
@@ -189,7 +270,7 @@ describe("search on the real model (wowsims rules) #integration", function()
     local plan = search.best(busy({ spells = { flameShock = { cd = 0 }, earthShock = { cd = 0 } }, target = { fs = 0 } }),
       { budgetMs = 1e9 })
     assert.are.equal("flameShock", plan.steps[1].key)
-    assert.are.equal("Flame Shock expired", plan.steps[1].reason)
+    assert.are.equal("Flame Shock not ticking", plan.steps[1].reason)
   end)
 
   -- Fire Nova goes off around the fire totem (10 yd), and the totem stands at the shaman's feet
@@ -206,7 +287,7 @@ describe("search on the real model (wowsims rules) #integration", function()
   it("5 Maelstrom stacks -> instant Lightning Bolt", function()
     local plan = search.best(busy({ buffs = { mw = { stacks = 5, remains = 20 } } }), { budgetMs = 1e9 })
     assert.are.equal("lightningBolt", plan.steps[1].key)
-    assert.are.equal("5 Maelstrom stacks", plan.steps[1].reason)
+    assert.are.equal("5 stacks: instant", plan.steps[1].reason)
   end)
 
   -- a cast that ends after the horizon would get its damage while its cost (the delayed swings)
@@ -367,7 +448,7 @@ describe("search on the real model (wowsims rules) #integration", function()
     local plan = search.best(S, { budgetMs = 1e9 })
     assert.are.equal("lightningBolt", plan.steps[1].key)
     assert.is_true(plan.steps[1].at >= 0.29 and plan.steps[1].at < 0.45, "at=" .. plan.steps[1].at)
-    assert.are.equal("after swing - no clip", plan.steps[1].reason)
+    assert.are.equal("3 stacks, fits before swing", plan.steps[1].reason)
     assert.is_true(plan.steps[1].afterSwing)
   end)
 end)
