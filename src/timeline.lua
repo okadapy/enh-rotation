@@ -112,44 +112,88 @@ local function place(t, f, x, y, w, h)
   t:Show()
 end
 
-function M.new(parent, opts)
+-- old: a timeline from a previous init of the aura. It is reused (frame and textures),
+-- so editing aura options does not leave hidden frames behind.
+function M.new(parent, opts, old)
+  local tl = old
+  if not tl then
+    local f = CreateFrame("Frame", nil, parent)
+    tl = setmetatable({ frame = f, icons = {}, allIcons = {}, ticks = {}, dots = {}, cur = {} }, TL)
+    tl.lane = tex(f, "BACKGROUND", M.COLORS.lane)
+    tl.gcd = tex(f, "BORDER", M.COLORS.gcd)
+    tl.window = tex(f, "ARTWORK", M.COLORS.window)
+    tl.now = tex(f, "OVERLAY", M.COLORS.now)
+    tl.glow = f:CreateTexture(nil, "OVERLAY")
+    tl.glow:SetTexture(M.GLOW)
+    tl.glow:SetBlendMode("ADD")
+    tl.glow:SetVertexColor(1, 0.82, 0.3, 1)
+    tl.glow:Hide()
+    for i = 1, 5 do tl.dots[i] = tex(f, "OVERLAY", M.COLORS.dotOff) end
+    tl.reason = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tl.reason:Hide()
+    tl.alert = f:CreateTexture(nil, "ARTWORK")
+    tl.alert:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    tl.alert:Hide()
+  end
+  tl:setup(parent, opts)
+  return tl
+end
+
+-- (re)apply options: size, scale, icon count; forget the old plan
+function TL:setup(parent, opts)
   local o = M.options(opts)
-  local f = CreateFrame("Frame", nil, parent)
+  local f = self.frame
+  self.o = o
+  if f.SetParent then f:SetParent(parent) end
+  f:ClearAllPoints()
   f:SetWidth(o.width)
   f:SetHeight(o.height)
   f:SetPoint("CENTER", parent, "CENTER", 0, 0)
   if o.scale then f:SetScale(o.scale) end
-  local tl = setmetatable({ o = o, frame = f, icons = {}, ticks = {}, dots = {}, cur = {} }, TL)
-  tl.lane = tex(f, "BACKGROUND", M.COLORS.lane)
-  place(tl.lane, f, (o.nowX + o.width) / 2, M.TICK_Y, o.width - o.nowX, 1)
-  tl.gcd = tex(f, "BORDER", M.COLORS.gcd)
-  tl.window = tex(f, "ARTWORK", M.COLORS.window)
-  tl.now = tex(f, "OVERLAY", M.COLORS.now)
-  place(tl.now, f, o.nowX, o.height / 2, 2, o.height)
-  for i = 1, o.icons do
-    local ic = f:CreateTexture(nil, "ARTWORK")
-    ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  place(self.lane, f, (o.nowX + o.width) / 2, M.TICK_Y, o.width - o.nowX, 1)
+  place(self.now, f, o.nowX, o.height / 2, 2, o.height)
+  -- textures are only ever added: fewer icons after an option change just leaves some unused
+  self.allIcons = self.allIcons or {}
+  self.icons = {}
+  for i = 1, math.max(o.icons, #self.allIcons) do
+    local ic = self.allIcons[i]
+    if not ic then
+      ic = f:CreateTexture(nil, "ARTWORK")
+      ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      self.allIcons[i] = ic
+    end
     ic:Hide()
-    tl.icons[i] = ic
+    if i <= o.icons then self.icons[i] = ic end
   end
-  tl.glow = f:CreateTexture(nil, "OVERLAY")
-  tl.glow:SetTexture(M.GLOW)
-  tl.glow:SetBlendMode("ADD")
-  tl.glow:SetVertexColor(1, 0.82, 0.3, 1)
-  tl.glow:Hide()
-  for i = 1, 5 do
-    local d = tex(f, "OVERLAY", M.COLORS.dotOff)
-    place(d, f, o.width - 8 - (5 - i) * 16, o.height - 8, 12, 12)
-    tl.dots[i] = d
-  end
-  tl.reason = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  tl.reason:Hide()
-  tl.alert = f:CreateTexture(nil, "ARTWORK")
-  tl.alert:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  place(tl.alert, f, 16, M.ICON_Y, 30, 30)
-  tl.alert:Hide()
-  f:SetScript("OnUpdate", function(_, dt) tl:tick(dt) end)
-  return tl
+  for i, d in ipairs(self.dots) do place(d, f, o.width - 8 - (5 - i) * 16, o.height - 8, 12, 12) end
+  place(self.alert, f, 16, M.ICON_Y, 30, 30)
+  self.alert:Hide()
+  self.glow:Hide()
+  self.reason:Hide()
+  self.plan, self.S, self.cur, self.busy = nil, nil, {}, false
+  self:start()
+end
+
+-- OnUpdate with a guard: if the previous tick died half-way (the sandbox has no protected calls),
+-- stop instead of repeating the error every frame, and tell the owner (onError)
+function TL:start()
+  local tl = self
+  self.frame:SetScript("OnUpdate", function(_, dt)
+    if tl.busy then
+      tl:stop()
+      if tl.onError then tl.onError() end
+      return
+    end
+    tl.busy = true
+    tl:tick(dt)
+    tl.busy = false
+  end)
+  self.frame:Show()
+end
+
+function TL:stop()
+  self.frame:SetScript("OnUpdate", nil)
+  self.frame:Hide()
 end
 
 function TL:render(plan, S, now)

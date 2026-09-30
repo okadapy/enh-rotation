@@ -167,4 +167,31 @@ describe("timeline render", function()
     assert.is_false(tl.window.shown)
     assert.are.equal(2, #tl.ticks)
   end)
+
+  it("reuses an old timeline: same frame, no new textures, new options", function()
+    local parent = CreateFrame("Frame")
+    local tl = timeline.new(parent, { icons = 4 })
+    local n = #tl.frame.children
+    local other = CreateFrame("Frame")
+    local tl2 = timeline.new(other, { icons = 2 }, tl)
+    assert.are.equal(tl, tl2)
+    assert.are.equal(other, tl.frame.parent)
+    assert.are.equal(2, #tl.icons)
+    assert.are.equal(n, #tl.frame.children)
+    timeline.new(other, { icons = 4 }, tl)
+    assert.are.equal(4, #tl.icons)
+    assert.are.equal(n, #tl.frame.children)
+  end)
+
+  it("a tick that dies half-way stops the timeline instead of failing every frame", function()
+    local tl = timeline.new(CreateFrame("Frame"), {})
+    local reported = 0
+    tl.onError = function() reported = reported + 1 end
+    tl.tick = function() error("boom") end
+    assert.has_error(function() tl.frame.scripts.OnUpdate(tl.frame, 0.02) end)
+    tl.frame.scripts.OnUpdate(tl.frame, 0.02)
+    assert.are.equal(1, reported)
+    assert.is_nil(tl.frame.scripts.OnUpdate)
+    assert.is_false(tl.frame.shown)
+  end)
 end)

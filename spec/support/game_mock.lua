@@ -66,6 +66,20 @@ function G.frame(kind, name)
   end
   function f:UnregisterAllEvents() self.events = {} end
   function f:SetScript(k, fn) self.scripts[k] = fn end
+  f.hooks = {}
+  function f:HookScript(k, fn)
+    self.hooks[k] = self.hooks[k] or {}
+    table.insert(self.hooks[k], fn)
+  end
+  local function fire(self, k)
+    if self.scripts[k] then self.scripts[k](self) end
+    for _, fn in ipairs(self.hooks[k] or {}) do fn(self) end
+  end
+  function f:Show() if not self.shown then self.shown = true; fire(self, "OnShow") end end
+  function f:Hide() if self.shown then self.shown = false; fire(self, "OnHide") end end
+  function f:IsVisible() return self.shown end
+  function f:SetParent(p) self.parent = p end
+  function f:GetParent() return self.parent end
   function f:GetScript(k) return self.scripts[k] end
   function f:SetScale(s) self.scale = s end
   function f:CreateTexture() local t = G.texture(); self.children[#self.children + 1] = t; return t end

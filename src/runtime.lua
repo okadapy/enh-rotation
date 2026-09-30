@@ -24,6 +24,7 @@ M.PRIORITY = { cast = 6, target = 5, swing = 4, aura = 3, totem = 2, power = 1, 
 M.WAIT_KEYS = { waitSwing = true, wait = true }
 M.THROTTLED = { aura = true, power = true, swing = true }
 M.MIN_GAP = 0.1
+M.SLEEP_POLL = 1
 M.LUST_IDS = { 2825, 32182 }
 M.DEATH = { UNIT_DIED = true, UNIT_DESTROYED = true, PARTY_KILL = true }
 M.WOLVES = spells.byKey.feralSpirit.duration or 45
@@ -239,7 +240,68 @@ function M.onEvent(rt, event, ...)
   end
 end
 
+-- The sandbox offers no protected calls: a Lua error inside one update leaves rt.busy set.
+-- The next frame sees it and stops the engine instead of repeating the error every frame.
 function M.update(rt, dt)
+  if rt.stopped then return false end
+  if rt.busy then
+    M.fail(rt)
+    return false
+  end
+  rt.busy = true
+  local r = M.step(rt, dt)
+  rt.busy = false
+  return r
+end
+
+function M.fail(rt)
+  rt.stopped = true
+  M.halt(rt)
+  rt.frame:SetScript("OnUpdate", nil)
+  if not rt.failed then
+    rt.failed = true
+    print("|cffff5555EnhRot|r stopped after an error - /reload to retry")
+  end
+end
+
+-- no events, no work, timeline hidden
+function M.halt(rt)
+  rt.frame:UnregisterAllEvents()
+  rt.tl:stop()
+end
+
+function M.listen(frame)
+  frame:UnregisterAllEvents()
+  for _, e in ipairs(M.EVENTS) do frame:RegisterEvent(e) end
+  for e in pairs(M.RESCAN) do frame:RegisterEvent(e) end
+end
+
+-- the host aura was hidden (unloaded, disabled): sleep, and once a second ask it to show again;
+-- WeakAuras only lets that event through while the aura is loaded
+function M.sleep(rt)
+  if rt.stopped or rt.sleeping then return end
+  rt.sleeping = true
+  M.halt(rt)
+  local waited = 0
+  rt.frame:SetScript("OnUpdate", function(_, dt)
+    waited = waited + (dt or 0)
+    if waited >= M.SLEEP_POLL then
+      waited = 0
+      WeakAuras.ScanEvents("ENHROT_SHOW")
+    end
+  end)
+end
+
+function M.wake(rt)
+  if rt.stopped or not rt.sleeping then return end
+  rt.sleeping = false
+  M.listen(rt.frame)
+  rt.tl:start()
+  rt.frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
+  M.mark(rt, "target")
+end
+
+function M.step(rt, dt)
   rt.elapsed = rt.elapsed + (dt or 0)
   if not rt.shown then
     rt.shown = true
@@ -297,24 +359,34 @@ function M.start(config, env)
     ctx.attacking = true
     ctx.swing:onAttack(now, true)
   end
+  -- one engine frame and one timeline for the whole session: a re-init reuses both
   local frame = EnhRotEngineFrame or CreateFrame("Frame", "EnhRotEngineFrame")
-  frame:UnregisterAllEvents()
-  for _, e in ipairs(M.EVENTS) do frame:RegisterEvent(e) end
-  for e in pairs(M.RESCAN) do frame:RegisterEvent(e) end
-  if frame.enhrotTimeline then
-    frame.enhrotTimeline.frame:SetScript("OnUpdate", nil)
-    frame.enhrotTimeline.frame:Hide()
-  end
-  local tl = timeline.new(env.region or UIParent, M.timelineOptions(config))
+  M.listen(frame)
+  local tl = timeline.new(env.region or UIParent, M.timelineOptions(config), frame.enhrotTimeline)
   frame.enhrotTimeline = tl
   local rt = {
     config = config, env = env, ctx = ctx, frame = frame, tl = tl, elapsed = 0, pending = nil, shown = false,
     planner = planner.new({}), rec = config.record and recorder.new(env.saved, M.RECORD_MAX) or nil,
     playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, timeouts = 0, errors = 0 }, reported = false,
   }
-  frame:SetScript("OnEvent", function(_, event, ...) M.onEvent(rt, event, ...) end)
+  tl.onError = function() M.fail(rt) end
+  frame:SetScript("OnEvent", function(_, event, ...)
+    if rt.stopped then return end
+    if rt.busy then return M.fail(rt) end
+    rt.busy = true
+    M.onEvent(rt, event, ...)
+    rt.busy = false
+  end)
   frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
   frame:Show()
+  -- the region's hooks stay for the session; they always act on the newest engine state
+  frame.enhrotRt = rt
+  local region = env.region
+  if region and region.HookScript and not region.enhrotHooked then
+    region.enhrotHooked = true
+    region:HookScript("OnHide", function() if frame.enhrotRt then M.sleep(frame.enhrotRt) end end)
+    region:HookScript("OnShow", function() if frame.enhrotRt then M.wake(frame.enhrotRt) end end)
+  end
   env.rt = rt
   return rt
 end

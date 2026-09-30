@@ -136,8 +136,45 @@ describe("runtime", function()
     local old = rt.tl
     local rt2 = runtime.start({}, env2)
     assert.are.equal(rt.frame, rt2.frame)
-    assert.is_false(old.frame.shown)
     assert.are.equal(rt2, env2.rt)
+    -- re-init (any option edit) reuses the timeline too, under the new host region
+    assert.are.equal(old.frame, rt2.tl.frame)
+    assert.are.equal(env2.region, rt2.tl.frame.parent)
+    local n = #rt2.tl.frame.children
+    runtime.start({}, env2)
+    assert.are.equal(n, #rt2.tl.frame.children)
+  end)
+
+  it("goes to sleep when the host aura hides and wakes up when it shows again", function()
+    local rt, env = start()
+    runtime.update(rt, 0.3)
+    env.region:Show()
+    env.region:Hide() -- aura unloaded or disabled
+    assert.is_nil(rt.frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+    assert.is_nil(rt.tl.frame.scripts.OnUpdate)
+    assert.is_false(rt.tl.frame.shown)
+    local sent = #G.sent
+    rt.frame.scripts.OnUpdate(rt.frame, 1.1) -- a sleeping engine only asks the aura to show now and then
+    assert.are.equal(sent + 1, #G.sent)
+    assert.are.equal(1, #calls)
+    env.region:Show()
+    assert.is_true(rt.frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+    assert.is_not_nil(rt.tl.frame.scripts.OnUpdate)
+    rt.frame.scripts.OnUpdate(rt.frame, 0.01)
+    assert.are.equal(2, #calls)
+  end)
+
+  it("stops for good after an error instead of failing every frame", function()
+    local rt = start()
+    local boom = true
+    rt.planner = { update = function() if boom then boom = false; error("boom") end; return PLAN end }
+    assert.has_error(function() rt.frame.scripts.OnUpdate(rt.frame, 0.3) end)
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(1, #G.printed)
+    assert.truthy(G.printed[1]:find("stopped after an error", 1, true))
+    assert.is_nil(rt.frame.scripts.OnUpdate)
+    assert.are.same({}, rt.frame.events)
+    assert.is_false(rt.tl.frame.shown)
   end)
 
   it("feeds own swings and extra attacks to the swing clock", function()
