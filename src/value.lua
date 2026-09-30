@@ -108,7 +108,12 @@ local function periodicValue(S, damage)
   local r = damage.rates and damage.rates(S)
   local v = 0
   if fs > 0 then v = v + (r and r.flameShock or damage.periodic(S, "flameShock")) * lifetime(S, fs) end
-  if fireLeft > 0 then v = v + (r and r[src] or damage.periodic(S, src)) * lifetime(S, fireLeft) end
+  if fireLeft > 0 then
+    -- Searing Totem out of reach: only the time after the target comes within 20 yards counts
+    local span = lifetime(S, fireLeft)
+    if damage.fireUptime then span = damage.fireUptime(S, src, span) end
+    v = v + (r and r[src] or damage.periodic(S, src)) * span
+  end
   if wolves > 0 then v = v + (r and r.feralSpirit or damage.periodic(S, "feralSpirit")) * lifetime(S, wolves) end
   return v * M.DISCOUNT
 end

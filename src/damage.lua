@@ -228,6 +228,41 @@ function M.totemTargets(S)
   return e and e.melee or 0
 end
 
+-- Searing Totem also stands at the shaman's feet, but shoots one enemy up to 20 yards away.
+-- A target at "30" or "far" is out of its reach: the totem hits it only once the target comes
+-- within 20 yards. With `target.meleeIn` (seconds until the target reaches melee) it enters the
+-- reach SEARING_LEAD earlier: it still has to run 20 - 5 yards (melee reach) at the normal run
+-- speed of 7 yd/s. Without meleeIn the range is taken as static: out of reach = never (the next
+-- snapshot, with the target in reach, counts the totem still standing by its remaining time).
+-- An enemy already hitting the shaman in melee (totemTargets) is in reach too: the totem shoots it.
+M.SEARING_REACH, M.MELEE_REACH, M.MOB_SPEED = 20, 5, 7
+M.SEARING_LEAD = (M.SEARING_REACH - M.MELEE_REACH) / M.MOB_SPEED
+
+-- seconds from now until the fire totem `src` hits something; nil = not within its lifetime.
+-- Depends on range / meleeIn, which the model may change inside one search: never memoized
+-- (damage.periodic, which is memoized, stays the per-target dps and does not depend on range).
+function M.fireDelay(S, src)
+  if src ~= "searingTotem" then return 0 end
+  local t = S.target
+  local range = t and t.range
+  if range == nil or range == "melee" or range == "20" then return 0 end
+  if M.totemTargets(S) >= 1 then return 0 end
+  local m = t.meleeIn
+  if m then
+    local d = m - M.SEARING_LEAD
+    return d > 0 and d or 0
+  end
+  return nil
+end
+
+-- seconds of the next `span` in which the fire totem `src` deals its damage
+function M.fireUptime(S, src, span)
+  if src ~= "searingTotem" then return span end
+  local d = M.fireDelay(S, src)
+  if not d then return 0 end
+  return span > d and span - d or 0
+end
+
 function M.targets(S, key)
   if key == "fireNova" or key == "magmaTotem" then return M.totemTargets(S) end
   local n = math.max(1, (S.enemies and S.enemies.nearby) or 1)
