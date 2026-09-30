@@ -314,4 +314,107 @@ describe("snapshot", function()
     assert.are.equal(0, snapshot.build(ctx()).pets.wolves)
     assert.are.near(30, snapshot.build(ctx({ wolvesUntil = 130 })).pets.wolves, 1e-9)
   end)
+
+  describe("time-to-die prior", function()
+    local value = require("value")
+    local damage = require("damage")
+    local realCombat
+
+    -- a stub ttd that records the prior snapshot passes
+    local function seen()
+      local rec = {}
+      rec.ttd = { add = function() end,
+                  smoothed = function(_, _, _, prior) rec.prior = prior; return 42, prior and "blend" or "regression" end }
+      return rec
+    end
+    local function mob(extra)
+      local cfg = { level = 53, target = { level = 52, hp = 2437, hpMax = 2769, guid = "Creature-8" } }
+      for k, v in pairs(extra or {}) do cfg[k] = v end
+      install(cfg)
+      realCombat = _G.UnitAffectingCombat
+    end
+    local function targetCombat(on)
+      _G.UnitAffectingCombat = function(u)
+        if u == "target" then return on and 1 or nil end
+        return realCombat(u)
+      end
+    end
+
+    it("solo, fighting us: our health / damage per second goes to ttd", function()
+      mob()
+      local rec = seen()
+      local S = snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.are.near(S.target.hp / value.dpsEstimate(S), rec.prior, 1e-9)
+      assert.are.equal(42, S.target.ttd)
+      assert.are.equal("blend", S.target.ttdSource)
+    end)
+
+    it("counts the Flame Shock and fire totem already on the mob", function()
+      mob({ auras = { target = { HARMFUL = { { name = "Flame Shock", expires = 115, caster = "player" } } } },
+            totems = { [1] = { "Searing Totem VII", 95, 60 } },
+            known = { [ranks("flameShock")[5]] = true, [ranks("searingTotem")[6]] = true } })
+      local rec = seen()
+      local S = snapshot.build(ctx({ ttd = rec.ttd }))
+      local r = damage.rates(S)
+      local dps = value.dpsEstimate(S) + r.flameShock + r.searingTotem
+      assert.is_true(r.flameShock > 0 and r.searingTotem > 0)
+      assert.are.near(S.target.hp / dps, rec.prior, 1e-9)
+    end)
+
+    it("none in a group or raid: others hit the mob too", function()
+      for _, extra in ipairs({ { party = 2 }, { raid = 10 } }) do
+        mob(extra)
+        local rec = seen()
+        snapshot.build(ctx({ ttd = rec.ttd }))
+        assert.is_nil(rec.prior)
+      end
+    end)
+
+    it("none before the pull", function()
+      mob({ inCombat = false })
+      local rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_nil(rec.prior)
+    end)
+
+    it("none while the mob is not fighting, unless our Flame Shock is on it", function()
+      mob()
+      targetCombat(false)
+      local rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_nil(rec.prior)
+      mob({ auras = { target = { HARMFUL = { { name = "Flame Shock", expires = 115, caster = "player" } } } } })
+      targetCombat(false)
+      rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_not_nil(rec.prior)
+      _G.UnitAffectingCombat = realCombat
+    end)
+
+    it("S.target.inCombat, when the snapshot has it, decides", function()
+      mob()
+      local S = snapshot.build(ctx())
+      assert.is_not_nil(snapshot.ttdPrior(S))
+      S.target.inCombat = false
+      assert.is_nil(snapshot.ttdPrior(S))
+    end)
+
+    -- recorded: the first snapshot of a fight said 128 s at 88%; the mob died about 6 s later
+    it("with the real estimator the first snapshot in a fight has a finite ttd", function()
+      local ttd = require("ttd")
+      mob({ now = 100 })
+      local c = ctx({ ttd = ttd.new() })
+      local S = snapshot.build(c)
+      assert.are.equal("prior", S.target.ttdSource)
+      assert.is_true(S.target.ttd > 0 and S.target.ttd < 30, tostring(S.target.ttd))
+      -- a whole percent in 2 s: the regression alone would say minutes, the estimate stays near the prior
+      G.cfg.target.hp, G.cfg.now = 2437 - 28, 101
+      snapshot.build(c)
+      G.cfg.target.hp, G.cfg.now = 2437 - 28, 102
+      S = snapshot.build(c)
+      assert.are.equal("blend", S.target.ttdSource)
+      assert.is_true(c.ttd:estimate(102, "Creature-8") > 100)
+      assert.is_true(S.target.ttd < 30, tostring(S.target.ttd))
+    end)
+  end)
 end)
