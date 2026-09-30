@@ -91,6 +91,18 @@ describe("leveling #integration", function()
     assert.is_true(key == "searingTotem" or key == "magmaTotem", tostring(key))
   end)
 
+  it("level 54 pull: no Searing Totem for a target out of its 20 yards", function()
+    -- the totem stands at the shaman's feet: a mob at 30 yards or farther is not shot
+    for _, range in ipairs({ "30", "far" }) do
+      local S = Sc.state(54)
+      S.mode = "solo"
+      S.target.range, S.target.fs = range, 0
+      S.enemies = { melee = 0, nearby = 1 }
+      S.player.inCombat = false
+      assert.are_not.equal("searingTotem", (Sc.first(S)), range)
+    end
+  end)
+
   it("level 42: Stormstrike once learned", function()
     local S = midFight(42)
     S.target.fs = 10

@@ -5,6 +5,17 @@ local function totemTargets(S_)
   if t and t.exists and t.enemy and t.range == "melee" then return math.max(1, (S_.enemies and S_.enemies.nearby) or 1) end
   return (S_.enemies and S_.enemies.melee) or 0
 end
+-- как damage.fireUptime: Searing Totem бьёт на 20 ярдов; дальняя цель — только когда подойдёт (meleeIn)
+local SEARING_LEAD = (20 - 5) / 7
+local function fireUptime(S_, src, span)
+  if src ~= "searingTotem" then return span end
+  local t = S_.target
+  local r = t and t.range
+  if r == nil or r == "melee" or r == "20" or totemTargets(S_) >= 1 then return span end
+  if not t.meleeIn then return 0 end
+  local d = math.max(0, t.meleeIn - SEARING_LEAD)
+  return math.max(0, span - d)
+end
 -- damage: фиксированные числа, не зависят от характеристик
 function S.damage(over)
   local N = { stormstrike = 2000, lavaLash = 1500, earthShock = 1800, flameShock = 900, frostShock = 1600,
@@ -22,6 +33,8 @@ function S.damage(over)
     auto = function(_, hand) return hand == "oh" and 400 or 800 end,
     mwPerSwing = function() return 0.3 end,
     totemTargets = totemTargets,
+    fireUptime = fireUptime,
+    SEARING_LEAD = SEARING_LEAD,
     targets = function(S_, key)
       if key == "fireNova" or key == "magmaTotem" then return totemTargets(S_) end
       local n = math.max(1, (S_.enemies and S_.enemies.nearby) or 1)

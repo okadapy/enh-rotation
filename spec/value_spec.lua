@@ -170,6 +170,22 @@ describe("value.terminal", function()
       value.terminal(magma) - value.terminal(none), 1e-6)
   end)
 
+  it("Searing Totem out of reach is worth nothing; an approaching target counts from when it is in reach", function()
+    local none = base({ target = { range = "30", ttd = 60 }, enemies = { melee = 0, nearby = 1 } })
+    local out = base({ target = { range = "30", ttd = 60 }, enemies = { melee = 0, nearby = 1 },
+                       totems = { fire = { kind = "searing", remains = 50 } } })
+    assert.are.near(value.terminal(none), value.terminal(out), 1e-6)
+    local coming = base({ target = { range = "30", ttd = 60, meleeIn = 4 }, enemies = { melee = 0, nearby = 1 },
+                          totems = { fire = { kind = "searing", remains = 50 } } })
+    local inReach = value.TAIL - (4 - damage.SEARING_LEAD)
+    assert.are.near(inReach * damage.periodic(coming, "searingTotem") * value.DISCOUNT,
+      value.terminal(coming) - value.terminal(none), 1e-6)
+    local near = base({ target = { range = "20", ttd = 60 }, enemies = { melee = 0, nearby = 1 },
+                        totems = { fire = { kind = "searing", remains = 50 } } })
+    assert.are.near(value.TAIL * damage.periodic(near, "searingTotem") * value.DISCOUNT,
+      value.terminal(near) - value.terminal(none), 1e-6)
+  end)
+
   it("Fire Elemental and wolves add their remaining damage", function()
     local none = base()
     local fe = base({ totems = { fire = { kind = "fireElemental", remains = 4 } } })

@@ -430,6 +430,38 @@ describe("model", function()
       local expected = damage.periodic(S, "magmaTotem") * 1 + damage.periodic(S, "feralSpirit") * 2
       assert.are.near(expected, dmg, 1e-6)
     end)
+    it("Searing Totem deals damage only with the target within its 20 yards", function()
+      local S = base(); S.totems.fire = { kind = "searing", remains = 30 }
+      S.swing.attacking = false; S.enemies = { melee = 0, nearby = 1 }
+      local rate = damage.periodic(S, "searingTotem")
+      assert.is_true(rate > 0)
+      for _, r in ipairs({ "melee", "20" }) do
+        S.target.range = r
+        local _, dmg = model.wait(S, 3)
+        assert.are.near(rate * 3, dmg, 1e-6, r)
+      end
+      for _, r in ipairs({ "30", "far" }) do
+        S.target.range = r
+        local _, dmg = model.wait(S, 3)
+        assert.are.equal(0, dmg, r)
+        local _, pdmg = model.peekWait(S, 3)
+        assert.are.equal(0, pdmg, r)
+      end
+      -- an enemy hitting the shaman in melee is shot instead
+      S.enemies.melee = 1
+      local _, dmg = model.wait(S, 3)
+      assert.are.near(rate * 3, dmg, 1e-6)
+    end)
+    it("Searing Totem starts shooting an approaching target once it is within 20 yards", function()
+      local S = base(); S.totems.fire = { kind = "searing", remains = 30 }
+      S.swing.attacking = false; S.enemies = { melee = 0, nearby = 1 }
+      S.target.range = "far"; S.target.meleeIn = damage.SEARING_LEAD + 1
+      S.memo = {}
+      local n = util.copy(S)
+      n.memo = S.memo
+      local dmg = model.advance(n, 3, nil, true)
+      assert.are.near(damage.periodic(S, "searingTotem") * 2, dmg, 1e-6)
+    end)
     it("timers count down and expire", function()
       local S = base()
       S.spells.stormstrike.cd = 2; S.gcdRemains = 1; S.target.fs = 1
@@ -593,7 +625,9 @@ describe("model working copies (search speed)", function()
                            { buffs = { rage = 10 }, player = { mana = 1500 } },
                            { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } },
                            { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
-                           { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } } }) do
+                           { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } },
+                           { target = { range = "far" }, enemies = { melee = 0, nearby = 1 },
+                             totems = { fire = { kind = "searing", remains = 30 } } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S

@@ -357,7 +357,7 @@ function M.advance(n, dt, cast, cdsDone)
     if fs > 0 or wolves > 0 or (src and fireLeft > 0) then
       local r = damage.rates(n)
       if fs > 0 then dmg = dmg + r.flameShock * (fs < life and fs or life) end
-      if src and fireLeft > 0 then dmg = dmg + r[src] * (fireLeft < life and fireLeft or life) end
+      if src and fireLeft > 0 then dmg = dmg + r[src] * damage.fireUptime(n, src, fireLeft < life and fireLeft or life) end
       if wolves > 0 then dmg = dmg + r.feralSpirit * (wolves < life and wolves or life) end
     end
   end
