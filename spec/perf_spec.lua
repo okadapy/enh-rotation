@@ -6,7 +6,7 @@ local function ms() return os.clock() * 1000 end
 -- In game a search runs BUDGET_MS per frame (search.start / job:run) and stops at NODE_CAP
 -- candidates. The cap is chosen so that on realistic level-80 states a search takes about three
 -- frames here (the container's speed); the numbers below are what "about" means.
-describe("performance #integration", function()
+describe("performance #integration #perf", function()
   local states = Sc.randomStates(150)
 
   it("a node-capped search on realistic level-80 states takes about 3 frames of BUDGET_MS", function()
