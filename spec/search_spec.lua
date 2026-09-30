@@ -371,3 +371,51 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.is_true(plan.steps[1].afterSwing)
   end)
 end)
+
+
+describe("search: a mob running in (target.meleeIn)", function()
+  local util = require("util")
+
+  local function coming(range)
+    local Sc = require("scenario")
+    local S = Sc.state(54, { enemies = { melee = 0, nearby = 1 } })
+    S.target.range, S.target.inCombat, S.target.meleeIn = range, true, util.approachEta(range)
+    return S
+  end
+
+  it("the signature tells where the mob is and when it arrives", function()
+    local S = fixtures.state({ mode = "solo", target = { range = "20" } })
+    local sig = search.signature(S)
+    S.target.meleeIn = 2
+    local coming2 = search.signature(S)
+    S.target.meleeIn = 1
+    local coming1 = search.signature(S)
+    S.target.meleeIn, S.target.range = nil, "melee"
+    local arrived = search.signature(S)
+    assert.are_not.equal(sig, coming2)
+    assert.are_not.equal(coming2, coming1)
+    assert.are_not.equal(sig, arrived)
+    assert.are_not.equal(coming1, arrived)
+  end)
+
+  it("a plan with the mob's arrival replays to its own value; sliced search = whole search", function()
+    for _, range in ipairs({ "30", "20" }) do
+      local S = coming(range)
+      local plan = search.best(S)
+      local melee = false
+      for _, st in ipairs(plan.steps) do
+        if st.key == "stormstrike" or st.key == "lavaLash" then
+          melee = true
+          assert.is_true(st.at >= S.target.meleeIn - 1e-9, st.key .. " before the mob arrives")
+        end
+      end
+      assert.is_true(melee, range)
+      local v = search.evaluate(S, plan.steps)
+      assert.are.near(plan.value, v, 1e-6)
+      local job = search.start(S)
+      while not job:run(0.01) do end
+      assert.are.equal(keys(plan), keys(job.result))
+      assert.are.near(plan.value, job.result.value, 1e-9)
+    end
+  end)
+end)

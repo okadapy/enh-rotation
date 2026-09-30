@@ -29,6 +29,7 @@ M.REASONS = {
 local function q(x) return math.floor((x or 0) * 4 + 0.5) end
 
 local FIRE_CODE = { searing = 1, magma = 2, fireElemental = 3, other = 4 }
+local RANGE_CODE = { melee = 1, ["20"] = 2, ["30"] = 3, far = 4 }
 
 local floor, char, unpack_ = math.floor, string.char, unpack
 local BYTES = {} -- reused by every signature() call
@@ -58,6 +59,9 @@ function M.signature(S)
     b(mw and mw.stacks), b(t.fs), b(ss and ss.charges), b(S.gcdRemains), b(S.castRemains)
   bytes[6], bytes[7], bytes[8] = sw and (sw.attacking and 1 or 2) or 0, b(mh and mh.next), b(oh and oh.next)
   bytes[9], bytes[10] = fire and (FIRE_CODE[fire.kind] or 0) or 255, b(fire and fire.remains)
+  -- a mob on its way in (model.advance moves it to melee): where it is and when it arrives
+  local mi = t.meleeIn
+  bytes[11], bytes[12] = RANGE_CODE[t.range] or 0, mi and b(mi) or 255
   -- the spell key set is the same in the whole search tree: sort it once per search
   local memo = S.memo
   local keys = memo and memo.sigKeys
@@ -78,11 +82,11 @@ function M.signature(S)
         v = 0
       end
     end
-    bytes[10 + i] = v
+    bytes[12 + i] = v
   end
   local hpStep = (t.hpMax or 1) * 0.005
   if hpStep < 1 then hpStep = 1 end
-  local n = 10 + #keys
+  local n = 12 + #keys
   local hp = floor((t.hp or 0) / hpStep)
   local mana = floor((S.player.mana or 0) / 50)
   local now = floor((S.now or 0) * 4 + 0.5)

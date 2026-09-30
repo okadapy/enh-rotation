@@ -12,4 +12,12 @@ function M.merge(dst, patch)
   return dst
 end
 function M.clamp(x, lo, hi) if x < lo then return lo elseif x > hi then return hi end return x end
+-- A hostile NPC fighting the shaman runs to him at about MOB_SPEED yards per second: from the far
+-- edge of a range band (snapshot.range) it needs approachEta(band) seconds to reach melee.
+M.MOB_SPEED = 7
+M.BAND_YARDS = { ["20"] = 20, ["30"] = 30 }
+function M.approachEta(range)
+  local y = M.BAND_YARDS[range]
+  return y and y / M.MOB_SPEED or nil
+end
 return M

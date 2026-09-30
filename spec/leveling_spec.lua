@@ -117,6 +117,24 @@ describe("leveling #integration", function()
     assert.is_true(key == nil or (S.spells[key].cost or 0) == 0, tostring(key))
   end)
 
+  -- recorded at 53-54 (solo): a mob pulled at 30 yards was planned Lightning Bolt, Lightning Bolt
+  -- (270 mana, 5 s standing) as if it stayed there; it runs in at ~7 yd/s and is in melee in 3-4 s
+  for _, range in ipairs({ "30", "20" }) do
+    it("level 54 solo: a mob fighting us at " .. range .. " yards comes to melee: a melee button, not Bolt after Bolt", function()
+      local S = Sc.state(54, { enemies = { melee = 0, nearby = 1 } })
+      S.target.range, S.target.inCombat = range, true
+      S.target.meleeIn = require("util").approachEta(range)
+      local steps = Sc.best(S).steps
+      local melee, bolts = false, 0
+      for _, st in ipairs(steps) do
+        if st.key == "stormstrike" or st.key == "lavaLash" then melee = true end
+        if st.key == "lightningBolt" or st.key == "chainLightning" then bolts = bolts + 1 end
+      end
+      assert.is_true(melee, "no melee button in the horizon")
+      assert.is_true(bolts <= 1, "hard casts: " .. bolts)
+    end)
+  end
+
   it("solo: no Flame Shock on a mob about to die", function()
     local S = Sc.state(30)
     S.target.hp, S.target.hpPct, S.target.ttd = S.target.hpMax * 0.1, 0.1, 3

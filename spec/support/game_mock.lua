@@ -239,7 +239,11 @@ function G.install(cfg)
   _G.GetNumRaidMembers = function() return cfg.raid or 0 end
   _G.GetNumPartyMembers = function() return cfg.party or 0 end
   _G.GetUnitSpeed = function() return cfg.moving and 7 or 0 end
-  _G.UnitAffectingCombat = function() return cfg.inCombat ~= false and 1 or nil end
+  _G.UnitAffectingCombat = function(u)
+    local t = u == "target" and tgt()
+    if t and t.inCombat ~= nil then return t.inCombat and 1 or nil end
+    return cfg.inCombat ~= false and 1 or nil
+  end
   _G.UnitOnTaxi = function() return cfg.taxi and 1 or nil end
   _G.UnitInVehicle = function() return cfg.vehicle and 1 or nil end
   _G.UnitHasVehicleUI = function() return cfg.vehicle and 1 or nil end

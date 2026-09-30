@@ -37,6 +37,10 @@ M.NEEDS_TARGET = { stormstrike = true, lavaLash = true, earthShock = true, flame
 M.MELEE_ONLY = { stormstrike = true, lavaLash = true }
 M.SHOCK_RANGE = { earthShock = true, flameShock = true, frostShock = true }
 M.HANDS = { "mh", "oh" }
+-- A hostile NPC at "20"/"30" that fights the shaman runs to him (S.target.meleeIn: seconds until
+-- melee, counted down by advance; nil = the range stays as it is). The snapshot sets it for a
+-- target already in combat; pressing a spell on a target at range pulls it (applyOn).
+M.BAND20_ETA = util.approachEta("20") -- a target running in from "30" is within 20 yards this long before melee
 
 M.copy = util.copy
 
@@ -115,6 +119,7 @@ function M.cloneState(S)
               rage = b.rage, lust = b.lust, em = b.em },
     target = { exists = t.exists, enemy = t.enemy, level = t.level, hp = t.hp, hpMax = t.hpMax, hpPct = t.hpPct,
                ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, armor = t.armor,
+               inCombat = t.inCombat, isPlayer = t.isPlayer, meleeIn = t.meleeIn,
                ss = ss and { charges = ss.charges, remains = ss.remains } },
     totems = { fire = fire and { kind = fire.kind, remains = fire.remains },
                water = water and { remains = water.remains } },
@@ -173,6 +178,13 @@ end
 local function alive(S)
   local t = S.target
   return t and t.exists and t.enemy and not t.dead and true or false
+end
+
+-- Solo only: in a group a pulled mob runs to whoever holds its aggro (the tank), not to us.
+-- Players are never taken to come: they kite and keep their distance.
+function M.canApproach(S)
+  local t = S.target
+  return S.mode == "solo" and alive(S) and not t.isPlayer and util.approachEta(t.range) ~= nil
 end
 
 -- a fire totem stands (kind false/nil = none; "other" = someone else's or unknown totem)
@@ -250,8 +262,17 @@ function M.readyIn(S, key)
   local live = alive(S)
   if M.NEEDS_TARGET[key] then
     if not live or t.range == "far" then return nil end
-    if M.MELEE_ONLY[key] and t.range ~= "melee" then return nil end
-    if M.SHOCK_RANGE[key] and t.range ~= "melee" and t.range ~= "20" then return nil end
+    -- a target on its way in: melee buttons once it arrives, shocks once it is within 20 yards
+    local mi = t.meleeIn
+    if M.MELEE_ONLY[key] and t.range ~= "melee" then
+      if not mi then return nil end
+      if mi > r then r = mi end
+    end
+    if M.SHOCK_RANGE[key] and t.range ~= "melee" and t.range ~= "20" then
+      if not mi then return nil end
+      if mi - M.BAND20_ETA > r then r = mi - M.BAND20_ETA end
+    end
+    if r >= M.HORIZON then return nil end
   end
   local fire = S.totems.fire
   local special = SPECIAL[key]
@@ -310,10 +331,23 @@ local function runHand(n, hand, dt, cast, life)
   return dmg
 end
 
+local CAST2 = {} -- the rest of a cast after the target arrives inside one advance (reused)
+
 -- in place, no copy. cast = { ends = sec, reset = bool } | nil
 -- cdsDone: the caller already lowered spell cooldowns by dt (clone(S, dt))
 function M.advance(n, dt, cast, cdsDone)
   local t, sw = n.target, n.swing
+  local mi = t.meleeIn
+  if mi and mi > 0 and mi < dt then
+    -- the target reaches melee inside this step: up to then without swings, from then on with
+    local c1, c2 = cast, nil
+    if cast and cast.ends > mi then
+      CAST2.ends, CAST2.reset = cast.ends - mi, cast.reset
+      c1, c2 = nil, CAST2
+    end
+    local d1 = M.advance(n, mi, c1, cdsDone)
+    return d1 + M.advance(n, dt - mi, c2, cdsDone)
+  end
   local live = t and t.exists and t.enemy and not t.dead
   local life = dt
   local ttd = t.ttd
@@ -327,6 +361,13 @@ function M.advance(n, dt, cast, cdsDone)
   else
     if mh then local x = (mh.next or 0) - dt; mh.next = x > 0 and x or 0 end
     if oh then local x = (oh.next or 0) - dt; oh.next = x > 0 and x or 0 end
+    if mi and cast and cast.reset and cast.ends <= dt then
+      -- a target on its way in meets swings a cast has reset (a static range never sees them)
+      for i = 1, 2 do
+        local s = sw[M.HANDS[i]]
+        if s and (s.speed or 0) > 0 then local x = cast.ends + s.speed - dt; s.next = x > 0 and x or 0 end
+      end
+    end
   end
   local tot = n.totems
   local fire = tot.fire
@@ -392,6 +433,15 @@ function M.advance(n, dt, cast, cdsDone)
     end
   end
   n.now = n.now + dt
+  if mi then
+    x = mi - dt
+    if x <= 1e-9 then
+      t.meleeIn, t.range = nil, "melee"
+    else
+      t.meleeIn = x
+      if t.range == "30" and x <= M.BAND20_ETA then t.range = "20" end
+    end
+  end
   if live then
     local hp = (t.hp or 0) - dmg
     if hp < 0 then hp = 0 end
@@ -443,7 +493,7 @@ local function fillScratch(S, dt)
     n.gcd, n.latency = S.gcd, S.latency
     n.mode, n.weapons, n.talents, n.enemies, n.memo = S.mode, S.weapons, S.talents, S.enemies, S.memo
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
-    t.range, t.guessed, t.armor = st.range, st.guessed, st.armor
+    t.guessed, t.armor, t.inCombat, t.isPlayer = st.guessed, st.armor, st.inCombat, st.isPlayer
     n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant
   end
   n.now, n.gcdRemains, n.castRemains = S.now, S.gcdRemains, S.castRemains
@@ -477,6 +527,7 @@ local function fillScratch(S, dt)
   end
   b.rage, b.lust, b.em = sb.rage, sb.lust, sb.em
   t.hp, t.ttd, t.fs, t.dead = st.hp, st.ttd, st.fs, st.dead
+  t.range, t.meleeIn = st.range, st.meleeIn -- advance changes them (the target comes in)
   local ss = st.ss
   if ss then
     sp.ss.charges, sp.ss.remains = ss.charges, ss.remains
@@ -553,6 +604,11 @@ local function applyOn(n, key, ct, dt, adv)
     if not (ct > 0 and ttd and ttd < ct + (n.latency or 0)) then dmg = damage.action(n, key) end
   end
   local mwAtCast = math.floor((n.buffs.mw.stacks or 0) + 1e-9)
+  -- the pull: a spell on a mob at range brings it in, from the moment the spell lands
+  local t = n.target
+  if M.NEEDS_TARGET[key] and not t.meleeIn and t.range ~= "melee" and M.canApproach(n) then
+    t.meleeIn = (ct > 0 and ct + (n.latency or 0) or 0) + util.approachEta(t.range)
+  end
 
   setMana(n, n.player.mana - (sp.cost or 0))
   local cd = M.cooldownFor(n, key) - adv
