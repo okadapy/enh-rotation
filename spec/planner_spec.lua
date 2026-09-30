@@ -12,6 +12,7 @@ local function stubSearch(script)
     if script.evaluate == false then return nil end
     return script.evaluate, steps, script.horizon
   end
+  function s.idle() return script.idle, script.idleHorizon end
   return s
 end
 
@@ -80,6 +81,24 @@ describe("planner", function()
     assert.are.equal(1, #s.seen)
     assert.are.equal("a", plan.steps[1].key)
     assert.are.near(0.75, plan.steps[1].at, 1e-9)
+  end)
+
+  it("holds a search's \"press nothing\" against a new plan better by less than the margin", function()
+    local script = { best = 100, steps = {} }
+    local p = planner.new({ search = stubSearch(script) })
+    assert.are.equal(0, #p:update(at(100)).steps)
+    script.best, script.steps, script.idle, script.idleHorizon = 103.9, later("b"), 100, 50
+    assert.are.equal(0, #p:update(at(100.1), AURA).steps)
+    script.best = 104.1
+    assert.are.equal("b", p:update(at(100.2), AURA).steps[1].key)
+  end)
+
+  it("a plan emptied by pressing its last button is no \"press nothing\": the next plan shows at once", function()
+    local script = { best = 100, steps = { { key = "stormstrike", at = 0, reason = "" } } }
+    local p = planner.new({ search = stubSearch(script) })
+    p:update(at(100))
+    script.best, script.steps, script.idle, script.idleHorizon = 50, later("b"), 100, 50
+    assert.are.equal("b", p:update(at(100.1), { kind = "cast", key = "stormstrike" }).steps[1].key)
   end)
 
   it("switches when the held plan can no longer be played", function()

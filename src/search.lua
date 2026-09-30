@@ -300,7 +300,7 @@ local function scoreFrom(o, CS, v, rootNow)
   local t = CS.now - rootNow
   if t < o.horizon then
     if o.model.peekApply and o.model.advance then
-      PRE.mode, PRE.target.hp, PRE.target.hpMax = CS.mode, CS.target.hp, CS.target.hpMax
+      PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = CS.mode, CS.target.hp, CS.target.hpMax, CS.target.dead
       local mana0 = CS.player.mana or 0
       local price = o.value.manaPrice and o.value.manaPrice(CS) or 0 -- before the state moves on
       local dmg = o.model.advance(CS, o.horizon - t)
@@ -525,6 +525,14 @@ end
 -- -> value, retimed steps, the part of the value earned inside the horizon (without terminal)
 function M.evaluate(S, steps, opts)
   return evaluateFrom(defaults(opts), root(S), steps)
+end
+
+-- pressing nothing for the whole horizon -> value, the part earned inside the horizon
+-- (the planner holds an empty plan against a new one with this, like evaluate for a plan)
+function M.idle(S, opts)
+  local o = defaults(opts)
+  local r = root(S)
+  return finalScore(o, { S = r, v = 0, steps = {}, depth = 0 }, r.now)
 end
 
 -- A wait of at least IDLE_MIN inside the plan (before its first step or between two steps): try

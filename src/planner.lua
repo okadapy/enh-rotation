@@ -92,19 +92,29 @@ function P:finish(job)
   self.job = nil
   if not job.force and self.plan then
     local old = shifted(self.plan, s.now - self.planNow)
-    if #old > 0 then
-      local oldValue, retimed, horizonValue = self.search.evaluate(s, old, self.searchOpts)
+    -- a search's "press nothing" is held too: without it any new search replaced it at once,
+    -- and near a mob's death the big icon came and went with every noisy time-to-die
+    -- (a plan emptied by pressing its last button is no such decision)
+    if #old > 0 or (self.plan.idle and self.search.idle) then
+      local oldValue, retimed, horizonValue
+      if #old > 0 then
+        oldValue, retimed, horizonValue = self.search.evaluate(s, old, self.searchOpts)
+      else
+        retimed = {}
+        oldValue, horizonValue = self.search.idle(s, self.searchOpts)
+      end
       local margin = oldValue and math.abs(horizonValue or oldValue) * self.hysteresis
       if margin and retimed[1] and retimed[1].at <= self.hold then margin = margin * self.holdFactor end
       if oldValue and fresh.value <= oldValue + margin then
         self.plan = { value = oldValue, steps = retimed, timedOut = fresh.timedOut, capped = fresh.capped, held = true,
-                      trigger = job.ev }
+                      trigger = job.ev, idle = #retimed == 0 or nil }
         self.planNow = s.now
         return
       end
     end
   end
   fresh.trigger = job.ev
+  fresh.idle = #fresh.steps == 0 or nil
   self.plan = fresh
   self.planNow = s.now
 end
