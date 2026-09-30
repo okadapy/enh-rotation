@@ -65,8 +65,24 @@ function M.alert(S)
   return nil
 end
 
+-- Sated (Bloodlust) / Exhaustion (Heroism): the buff cannot land again for 10 min
+M.SATED_IDS = { [57724] = true, [57723] = true }
+
+local function sated()
+  for i = 1, 40 do
+    local name, _, _, _, _, _, _, _, _, _, id = UnitAura("player", i, "HARMFUL")
+    if not name then return false end
+    if M.SATED_IDS[id] then return true end
+    for sid in pairs(M.SATED_IDS) do
+      if name == GetSpellInfo(sid) then return true end
+    end
+  end
+  return false
+end
+
 function M.lustReady(S, now)
   if S.mode ~= "group" and S.mode ~= "raid" then return nil end
+  if sated() then return nil end
   for _, id in ipairs(M.LUST_IDS) do
     local name = GetSpellInfo(id)
     if name and GetSpellInfo(name) then

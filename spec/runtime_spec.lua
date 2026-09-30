@@ -100,6 +100,17 @@ describe("runtime", function()
     assert.is_false(runtime.validPlan({ steps = { { key = "stormstrike", at = 0 / 0 } } }))
   end)
 
+  it("Bloodlust ready only without Sated / Exhaustion", function()
+    local known = allKnown(); known[2825] = true
+    install({ known = known })
+    local S = Sc.state(80)
+    assert.are.equal("lust", runtime.lustReady(S, 100).key)
+    install({ known = known, auras = { player = { HARMFUL = { { name = "Sated", id = 57724, expires = 500 } } } } })
+    assert.is_nil(runtime.lustReady(S, 100))
+    install({ known = known, auras = { player = { HARMFUL = { { name = "Exhaustion", id = 57723, expires = 500 } } } } })
+    assert.is_nil(runtime.lustReady(S, 100))
+  end)
+
   it("raises alerts in order of importance", function()
     local S = Sc.state(80)
     S.buffs.ls.charges = 0
