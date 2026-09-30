@@ -242,6 +242,25 @@ describe("runtime", function()
     assert.is_false(rt.tl.alert.shown)
   end)
 
+  -- conjured mana food (Ritual of Refreshment) is eaten under "Refreshment", not "Drink";
+  -- names come localized from the spell ids
+  it("counts the Refreshment buff of conjured mana food as drinking, localized; Food is not", function()
+    local function aura(name)
+      install({ auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 },
+                                                  { name = name, expires = 30 } } } },
+                spellNames = { [runtime.DRINK_ID] = "Trinken", [runtime.REFRESHMENT_ID] = "Erfrischung" } })
+      return runtime.drinking()
+    end
+    assert.is_true(aura("Trinken"))
+    assert.is_true(aura("Erfrischung"))
+    assert.is_false(aura("Drink"))
+    assert.is_false(aura("Nahrung"))
+    install({ auras = { player = { HELPFUL = { { name = "Refreshment", expires = 30 } } } } })
+    assert.is_true(runtime.drinking())
+    install({ auras = { player = { HELPFUL = { { name = "Food", expires = 30 } } } } })
+    assert.is_false(runtime.drinking())
+  end)
+
   it("imbue and range alerts have their own icons", function()
     local S = Sc.state(80); S.weapons.mh.enchant = nil
     local a = runtime.alert(S)
@@ -371,10 +390,102 @@ describe("runtime", function()
     assert.are.equal(runtime.MAX_ERRORS, fails)
     assert.is_true(rt.stopped)
     assert.are.equal(2, #G.printed)
-    assert.truthy(G.printed[2]:find("stopped after an error", 1, true))
-    assert.is_nil(rt.frame.scripts.OnUpdate)
+    assert.are.equal("|cffff5555EnhRot|r stopped after errors - retrying in 30 s or on a new target", G.printed[2])
+    -- only the wait for a retry is left: a target change, the time
+    assert.are.same({ PLAYER_TARGET_CHANGED = true }, rt.frame.events)
+    assert.is_false(rt.tl.frame.shown)
+    rt.planner = broken()
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    rt.frame.scripts.OnEvent(rt.frame, "UNIT_AURA", "player")
+    assert.are.equal(runtime.MAX_ERRORS, fails)
+    assert.is_true(rt.stopped)
+  end)
+
+  -- five errors in a row, as from one odd target
+  local function failNow(rt)
+    for i = 1, runtime.MAX_ERRORS do
+      rt.planner = { update = function() error("odd target", 0) end }
+      rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    end
+    assert.is_true(rt.stopped)
+  end
+
+  local function running(rt)
+    assert.is_nil(rt.stopped)
+    assert.is_true(rt.frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+    assert.is_true(rt.frame.events.UNIT_AURA)
+    assert.is_true(rt.tl.frame.shown)
+    -- a fresh planner (not the broken one) plans at once: the restart asks for a replan
+    local before = #calls
+    rt.frame.scripts.OnUpdate(rt.frame, 0.01)
+    assert.are.equal(before + 1, #calls)
+    assert.are.equal("target", calls[#calls].ev.kind)
+    assert.are.equal("stormstrike", rt.plan.steps[1].key)
+  end
+
+  it("after a stop starts again on its own after RETRY_AFTER seconds", function()
+    local rt = start()
+    rt.env.region:Show()
+    failNow(rt)
+    rt.frame.scripts.OnUpdate(rt.frame, runtime.RETRY_AFTER - 1)
+    assert.is_true(rt.stopped)
+    assert.are.equal(0, #calls)
+    rt.frame.scripts.OnUpdate(rt.frame, 1)
+    running(rt)
+    -- the same event handlers as start(): events reach the engine again
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_ENTER_COMBAT")
+    assert.are.equal("swing", rt.pending.kind)
+    -- and errors are counted from scratch
+    rt.planner = { update = function() error("once", 0) end }
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.is_nil(rt.stopped)
+  end)
+
+  it("after a stop starts again on a new target", function()
+    local rt = start()
+    rt.env.region:Show()
+    failNow(rt)
+    rt.frame.scripts.OnEvent(rt.frame, "UNIT_AURA", "target")
+    assert.is_true(rt.stopped)
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+    running(rt)
+  end)
+
+  it("a restart while the aura is hidden goes to sleep", function()
+    local rt = start()
+    failNow(rt)
+    rt.env.region:Hide()
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+    assert.is_nil(rt.stopped)
+    assert.is_true(rt.sleeping)
     assert.are.same({}, rt.frame.events)
     assert.is_false(rt.tl.frame.shown)
+    rt.env.region:Show()
+    assert.is_false(rt.sleeping)
+    assert.is_true(rt.frame.events.UNIT_AURA)
+  end)
+
+  it("after MAX_RESTARTS restarts in a session it stays stopped until /reload", function()
+    local rt = start()
+    rt.env.region:Show()
+    for i = 1, runtime.MAX_RESTARTS do
+      failNow(rt)
+      rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+      assert.is_nil(rt.stopped)
+    end
+    -- a re-init of the aura is the same session
+    local frame = rt.frame
+    rt = runtime.start(rt.config, rt.env)
+    assert.are.equal(frame, rt.frame)
+    failNow(rt)
+    assert.are.equal("|cffff5555EnhRot|r stopped after an error - /reload to retry", G.printed[#G.printed])
+    assert.is_nil(rt.frame.scripts.OnUpdate)
+    assert.are.same({}, rt.frame.events)
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+    assert.is_true(rt.stopped)
+    local n = 0
+    for _, line in ipairs(G.printed) do if line:find("retrying in", 1, true) then n = n + 1 end end
+    assert.are.equal(runtime.MAX_RESTARTS, n)
   end)
 
   it("does not stop for errors spread over a longer time", function()

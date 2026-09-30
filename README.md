@@ -26,11 +26,11 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
   - `Auto-attack is off` — в ближнем бою без автоатаки нет ударов, стаков Maelstrom и маны от Shamanistic Rage;
   - `Lightning Shield missing` / `Water Shield missing` (какой щит держать — настройка **Shield**);
   - `Main-hand imbue missing` / `Off-hand imbue missing` — нет чар на оружии;
-  - `Low mana: Shamanistic Rage`, `Out of mana` (в ближнем бою ни на что не хватает маны и Rage не готов), `Drink` (вне боя без цели, маны меньше половины);
+  - `Low mana: Shamanistic Rage`, `Out of mana` (в ближнем бою ни на что не хватает маны и Rage не готов), `Drink` (вне боя без цели, маны меньше половины; не показывается, пока висит бафф Drink или Refreshment от наколдованной еды мага);
   - `Target out of range`, `Move into melee`;
   - `Bloodlust ready` / `Heroism ready` — только в группе, в бою с врагом, без Sated/Exhaustion и если включено в настройках.
 - **Текст под крупной иконкой** — почему это действие:
-  - Bolt / Chain Lightning: `5 stacks: instant`, `pull: target out of melee`, `3 stacks, fits before swing` (каст влезает до удара), `2 stacks: hard-cast`;
+  - Bolt / Chain Lightning: `5 stacks: instant`, `pull: target out of melee`, `3 stacks, fits before swing` (каст кончается до следующего удара), `2 stacks: delays swing` (удар ждёт конца каста), `0 stacks: resets swing`, `1 stack: hard-cast` (автоатака выключена);
   - шоки: `Flame Shock not ticking`, `refresh Flame Shock`, `Flame Shock up: Earth Shock`;
   - тотемы огня: `1 target: Searing Totem`, `3 targets: Magma Totem`, `3 targets: Fire Nova`;
   - `mana: Shamanistic Rage`, `Stormstrike: +20% nature`, `big cooldown`, `totems expiring`.
@@ -96,7 +96,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
 4. Разработчик: `docker compose run --rm test lua tools/build.lua import-snapshots <файл>` — файл со строкой экспорта или `WeakAuras.lua` (строку сохранённых данных WeakAuras 5.22 он раскодирует сам). В `spec/fixtures/recorded.lua` у нужного снимка дописать `expect = "<правильное действие>"` с комментарием, почему оно правильное. Потом `docker compose run --rm test busted spec/recorded_spec.lua`.
    Сводка по нажатиям: `docker compose run --rm test lua tools/build.lua presses <файл>` — версия, сколько нажатий последовало подсказке, медианная задержка реакции и самые частые расхождения («нажал X, подсказано Y»).
 
-Если в чате появилось `EnhRot error: …` — в расчёте случилась ошибка Lua. Подсказчик сбрасывает план и работает дальше; каждая ошибка печатается один раз. Если ошибок 5 за 10 с, он останавливается с сообщением `EnhRot stopped after an error - /reload to retry`. В обоих случаях прислать текст ошибки и снимки.
+Если в чате появилось `EnhRot error: …` — в расчёте случилась ошибка Lua. Подсказчик сбрасывает план и работает дальше; каждая ошибка печатается один раз. Если ошибок 5 за 10 с, он останавливается с сообщением `EnhRot stopped after errors - retrying in 30 s or on a new target` и сам запускается снова через 30 с или при смене цели. После третьей такой остановки за сессию он больше не перезапускается: `EnhRot stopped after an error - /reload to retry`. В обоих случаях прислать текст ошибки и снимки.
 
 ## Чем отличается от wowsims
 

@@ -101,9 +101,30 @@ function M.signature(S)
 end
 
 -- built once: the search asks for a reason for many candidates
-local FITS, HARD = {}, {}
-for n = 0, 4 do FITS[n], HARD[n] = n .. " stacks, fits before swing", n .. " stacks: hard-cast" end
+local FITS, DELAYS, HARD = {}, {}, {}
+for n = 0, 4 do
+  local st = n == 1 and "1 stack" or n .. " stacks"
+  FITS[n], DELAYS[n], HARD[n] = st .. ", fits before swing", st .. ": delays swing", st .. ": hard-cast"
+end
+-- with no stacks the cast resets the swing timer however short it is (model: cast.reset)
+DELAYS[0], FITS[0] = "0 stacks: resets swing", "0 stacks: resets swing"
 
+local castModel
+-- the swing clock goes on when the server ends a cast (castTime + latency after the press, as in
+-- model.apply) and swings due before that wait for it. true: the cast ends before the next own
+-- swing of either hand; false: it holds one back; nil: no swings are coming
+local function beforeSwing(S, key)
+  local sw = S.swing
+  if not (sw and sw.attacking) then return nil end
+  local mh, oh = sw.mh, sw.oh
+  local nxt = mh and mh.next
+  if oh and oh.next and not (nxt and nxt <= oh.next) then nxt = oh.next end
+  if not nxt then return nil end
+  castModel = castModel or require("model")
+  return castModel.castTime(S, key) + (S.latency or 0) <= nxt + 1e-9
+end
+
+-- afterSwing: kept for the callers; whether a cast fits is read from the state's swing clock
 function M.reason(S, key, afterSwing)
   local t = S.target
   if key == "lightningBolt" or key == "chainLightning" then
@@ -111,7 +132,9 @@ function M.reason(S, key, afterSwing)
     if mw >= 5 then return "5 stacks: instant" end
     if t.range and t.range ~= "melee" then return "pull: target out of melee" end
     mw = math.floor(mw)
-    return afterSwing and FITS[mw] or HARD[mw]
+    local fits = beforeSwing(S, key)
+    if fits == nil then return HARD[mw] end
+    return fits and FITS[mw] or DELAYS[mw]
   elseif key == "flameShock" then
     return (t.fs or 0) <= 0 and "Flame Shock not ticking" or "refresh Flame Shock"
   elseif key == "earthShock" then

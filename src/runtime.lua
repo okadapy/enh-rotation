@@ -54,7 +54,11 @@ M.IMBUE_ICONS = {
   rockbiter = "Interface\\Icons\\Spell_Nature_RockBiter",
 }
 M.DRINK_PCT = 0.5 -- out of combat, no enemy target, less mana than this: "Drink"
-M.DRINK_ID = 430 -- "Drink": every drinking buff has this (localized) name
+-- the buffs of drinking, by their (localized) names: "Drink" (430) is on every plain drink;
+-- the mage's conjured food of 3.3.5a (Mana Strudel 58648, Mana Pie 61828: Ritual of
+-- Refreshment) restores health and mana under "Refreshment". "Food" (433) gives no mana.
+M.DRINK_ID = 430
+M.REFRESHMENT_ID = 58648
 
 function M.validPlan(plan)
   if type(plan) ~= "table" or type(plan.steps) ~= "table" then return false end
@@ -376,9 +380,13 @@ function M.guarded(rt, fn, ...)
 end
 
 -- One error: said in chat (each message once), the planner and its search start afresh, the
--- engine goes on. MAX_ERRORS errors within ERROR_WINDOW seconds: it stops until /reload.
+-- engine goes on. MAX_ERRORS errors within ERROR_WINDOW seconds: it stops, and starts again on
+-- the next target change or after RETRY_AFTER seconds (an error that comes from one odd target
+-- goes away with it). After MAX_RESTARTS such restarts in a session it stays stopped until /reload.
 M.MAX_ERRORS = 5
 M.ERROR_WINDOW = 10
+M.RETRY_AFTER = 30
+M.MAX_RESTARTS = 3
 
 function M.onError(rt, msg)
   msg = tostring(msg)
@@ -408,14 +416,62 @@ function M.update(rt, dt)
   return M.guarded(rt, M.step, rt, dt) or false
 end
 
+-- Stopped: no work, only a cheap wait for a retry. The frame keeps PLAYER_TARGET_CHANGED (the
+-- OnEvent handler restarts on it) and its OnUpdate only adds up the time.
 function M.fail(rt)
+  if rt.stopped then return end
   rt.stopped = true
   M.halt(rt)
-  rt.frame:SetScript("OnUpdate", nil)
+  local frame = rt.frame
+  -- counted on the frame: one per session, a re-init of the aura keeps it
+  if (frame.enhrotRestarts or 0) < M.MAX_RESTARTS then
+    rt.retrying = true
+    frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    local waited = 0
+    frame:SetScript("OnUpdate", function(_, dt)
+      waited = waited + (dt or 0)
+      if waited >= M.RETRY_AFTER then M.restart(rt) end
+    end)
+    print(("|cffff5555EnhRot|r stopped after errors - retrying in %d s or on a new target"):format(M.RETRY_AFTER))
+    return
+  end
+  frame:SetScript("OnUpdate", nil)
   if not rt.failed then
     rt.failed = true
     print("|cffff5555EnhRot|r stopped after an error - /reload to retry")
   end
+end
+
+-- the engine goes (again): every event, a fresh planner and search, the frame's scripts, the
+-- timeline shown. start() and a restart after a stop both run this.
+function M.run(rt)
+  local frame, tl = rt.frame, rt.tl
+  rt.stopped, rt.retrying, rt.sleeping, rt.inactive = nil, nil, false, nil
+  rt.planner, rt.searching, rt.lastFirst, rt.due = M.newPlanner(), false, nil, nil
+  rt.pending, rt.elapsed, rt.errorTimes = nil, 0, nil
+  M.listen(frame)
+  frame:SetScript("OnEvent", function(_, event, ...)
+    if rt.stopped then
+      if rt.retrying and event == "PLAYER_TARGET_CHANGED" then M.restart(rt) end
+      return
+    end
+    M.guarded(rt, M.onEvent, rt, event, ...)
+  end)
+  frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
+  frame:Show()
+  -- a timeline tick that died half-way leaves it busy: it would stop again on its first frame
+  tl.busy = false
+  tl:start()
+end
+
+function M.restart(rt)
+  if not rt.retrying then return end
+  rt.frame.enhrotRestarts = (rt.frame.enhrotRestarts or 0) + 1
+  M.run(rt)
+  M.mark(rt, "target")
+  -- the aura was hidden meanwhile (its OnHide found the engine stopped): sleep at once
+  local region = rt.env.region
+  if region and region.IsVisible and not region:IsVisible() then M.sleep(rt) end
 end
 
 -- no events, no work, timeline hidden
@@ -496,13 +552,14 @@ function M.outOfMana(S)
   return priced
 end
 
--- the player is drinking already (every drink buff is called "Drink")
+-- the player is drinking already: a "Drink" or "Refreshment" buff (see DRINK_ID)
 function M.drinking()
   local drink = GetSpellInfo(M.DRINK_ID) or "Drink"
+  local refresh = GetSpellInfo(M.REFRESHMENT_ID) or "Refreshment"
   for i = 1, 40 do
     local name = UnitAura("player", i, "HELPFUL")
     if not name then return false end
-    if name == drink then return true end
+    if name == drink or name == refresh then return true end
   end
   return false
 end
@@ -676,14 +733,14 @@ function M.start(config, env)
   end
   -- one engine frame and one timeline for the whole session: a re-init reuses both
   local frame = EnhRotEngineFrame or CreateFrame("Frame", "EnhRotEngineFrame")
-  M.listen(frame)
   local tl = timeline.new(env.region or UIParent, M.timelineOptions(config), frame.enhrotTimeline)
   frame.enhrotTimeline = tl
   local rt = {
     config = config, env = env, ctx = ctx, frame = frame, tl = tl, elapsed = 0, pending = nil, shown = false,
-    planner = M.newPlanner(), rec = config.record and recorder.new(env.saved, M.RECORD_MAX, M.PRESS_MAX) or nil,
+    rec = config.record and recorder.new(env.saved, M.RECORD_MAX, M.PRESS_MAX) or nil,
     playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, capped = 0, errors = 0 }, reported = false,
   }
+  M.run(rt)
   -- the timeline stops itself on the frame after an error of its own: counted like the engine's,
   -- and it starts again unless that was one error too many
   tl.onError = function()
@@ -692,12 +749,6 @@ function M.start(config, env)
   end
   M.checkTalents(rt)
   if config.export then M.showExport(env) end
-  frame:SetScript("OnEvent", function(_, event, ...)
-    if rt.stopped then return end
-    M.guarded(rt, M.onEvent, rt, event, ...)
-  end)
-  frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
-  frame:Show()
   -- the region's hooks stay for the session; they always act on the newest engine state
   frame.enhrotRt = rt
   local region = env.region
