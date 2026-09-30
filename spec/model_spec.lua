@@ -1050,3 +1050,81 @@ describe("model.cooldownAllowed", function()
     assert.are.equal(S.cdAllowed, model.peekWait(S, 0.1).cdAllowed)
   end)
 end)
+
+describe("model.weaveAllowed (the weaving option, S.weaveMin)", function()
+  local function woven(weaveMin, stacks)
+    local S = base()
+    S.weaveMin = weaveMin
+    S.buffs.mw = { stacks = stacks or 0, remains = 20 }
+    return S
+  end
+
+  it("without the option (nil or 0) any stack count may cast, as before", function()
+    assert.are.equal(0, model.readyIn(woven(nil, 0), "lightningBolt"))
+    assert.are.equal(0, model.readyIn(woven(0, 1), "chainLightning"))
+    assert.is_true(model.weaveAllowed(woven(nil, 0)))
+  end)
+
+  it("in melee: no Bolt / Chain Lightning below weaveMin stacks (floored), the rest untouched", function()
+    for _, key in ipairs({ "lightningBolt", "chainLightning" }) do
+      assert.is_nil(model.readyIn(woven(3, 2), key))
+      assert.is_nil(model.readyIn(woven(3, 2.9), key))
+      assert.are.equal(0, model.readyIn(woven(3, 3), key))
+      assert.is_nil(model.readyIn(woven(5, 4), key))
+      assert.are.equal(0, model.readyIn(woven(5, 5), key))
+    end
+    local S = woven(5, 0)
+    assert.are.equal(0, model.readyIn(S, "stormstrike"))
+    assert.are.equal(0, model.readyIn(S, "earthShock"))
+    for _, a in ipairs(model.actions(S)) do
+      assert.is_true(a.key ~= "lightningBolt" and a.key ~= "chainLightning", a.key)
+    end
+  end)
+
+  it("exception: a target out of melee (the pull, a ranged target) may take a hard cast", function()
+    for _, range in ipairs({ "10", "20", "30" }) do
+      local S = woven(3, 0)
+      S.target.range = range
+      assert.are.equal(0, model.readyIn(S, "lightningBolt"), range)
+    end
+    -- a target on its way in: casting until it arrives, then the option again
+    local S = woven(3, 0)
+    S.mode, S.target.range, S.target.meleeIn = "solo", "30", 2
+    assert.are.equal(0, model.readyIn(S, "lightningBolt"))
+    local W = model.wait(S, 2.5)
+    assert.are.equal("melee", W.target.range)
+    assert.is_true(W.buffs.mw.stacks < 3)
+    assert.is_nil(model.readyIn(W, "lightningBolt"))
+  end)
+
+  it("exception: without Maelstrom Weapon (leveling below it) a hard cast is the rotation", function()
+    local S = woven(3, 0)
+    S.talents = {}
+    assert.are.equal(0, model.readyIn(S, "lightningBolt"))
+    S.talents = { maelstromWeapon = 1 }
+    assert.is_nil(model.readyIn(S, "lightningBolt"))
+  end)
+
+  it("S.weaveMin carries over along the plan (clone, apply, wait, peeks, both scratch refills)", function()
+    local S = woven(5, 0)
+    S.memo = {}
+    assert.are.equal(5, model.clone(S, 1).weaveMin)
+    assert.are.equal(5, model.apply(S, "stormstrike").weaveMin)
+    assert.are.equal(5, model.wait(S, 1).weaveMin)
+    local P = model.peekWait(S, 1)
+    assert.are.equal(5, P.weaveMin)
+    assert.are.equal(5, model.peekApply(P, "stormstrike").weaveMin)
+    assert.are.equal(5, model.peekApplyOver(model.peekWait(S, 0.5), "stormstrike").weaveMin)
+    -- the same source again (fillScratch's fast path) and another one without the option
+    assert.are.equal(5, model.peekWait(S, 0.2).weaveMin)
+    assert.are.equal(5, model.peekWait(S, 0.2).weaveMin)
+    local O = woven(nil, 0)
+    O.memo = S.memo
+    assert.is_nil(model.peekWait(O, 0.1).weaveMin)
+    assert.is_nil(model.peekWait(O, 0.1).weaveMin)
+    assert.are.equal(5, model.peekWait(S, 0.1).weaveMin)
+    -- a peek gates exactly like the real state
+    local R, Q = model.wait(S, 1), model.peekWait(S, 1)
+    assert.are.equal(model.readyIn(R, "lightningBolt"), model.readyIn(Q, "lightningBolt"))
+  end)
+end)

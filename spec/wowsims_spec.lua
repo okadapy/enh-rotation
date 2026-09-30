@@ -59,6 +59,25 @@ local CASES = {
       Sc.cd(S, { stormstrike = 3, shock = 3, fireNova = 4, lavaLash = 3 })
     end,
     expect = "lightningBolt" },
+  -- the weaving option at its default (S.weaveMin = 3): wowsims weaves only at 3+ stacks
+  { name = "weave 3+: 3 stacks and a long gap before the next swing",
+    setup = function(S)
+      S.weaveMin = 3
+      S.buffs.mw = { stacks = 3, remains = 20 }; S.target.fs = 9; S.totems.fire = { kind = "magma", remains = 15 }
+      S.swing.mh.next, S.swing.oh.next = 2.0, 2.2
+      Sc.cd(S, { stormstrike = 3, shock = 3, fireNova = 4, lavaLash = 3 })
+    end,
+    expect = "lightningBolt",
+    alt = { chainLightning = "3.3.5a ranks: Chain Lightning 8 hits one target harder than Lightning Bolt 14; without " ..
+                             "the option the Bolt keeps Chain Lightning for a 1-2 stack cast at 4.4 s, which 3+ forbids" } },
+  { name = "weave 3+: 2 stacks and a long gap: Lava Lash, not a 2-stack Bolt",
+    setup = function(S)
+      S.weaveMin = 3
+      S.buffs.mw = { stacks = 2, remains = 20 }; S.target.fs = 9; S.totems.fire = { kind = "magma", remains = 15 }
+      S.swing.mh.next, S.swing.oh.next = 2.0, 2.2
+      Sc.cd(S, { stormstrike = 3, shock = 3, fireNova = 4 })
+    end,
+    expect = "lavaLash" },
   { name = "Shamanistic Rage at low mana",
     setup = function(S)
       S.player.mana = S.player.manaMax * 0.1; S.target.fs = 9; S.totems.fire = { kind = "magma", remains = 15 }
@@ -166,6 +185,29 @@ describe("wowsims APL agreement at level 80 #integration", function()
     Sc.cd(S, { stormstrike = 3, shock = 3, fireNova = 4, lavaLash = 3 })
     local key = Sc.first(S)
     assert.are_not.equal("lightningBolt", key)
+  end)
+
+  -- the review of the level-80 opener: Flame Shock down, everything else ready. Without the option
+  -- the model may weave a 1-2 stack cast (it rests on the unverified swing rule: a 1-4 stack cast
+  -- holds the swing, a 0-stack one resets it); with the default 3+ Stormstrike and Flame Shock
+  -- come first and no Bolt / Chain Lightning below 3 stacks anywhere in the plan
+  it("weave 3+ (the default): the opener starts with Stormstrike and Flame Shock, no cast below 3 stacks", function()
+    local model = require("model")
+    local S = base()
+    S.weaveMin = 3
+    local plan = Sc.best(S)
+    local first = { plan.steps[1].key, plan.steps[2].key }
+    table.sort(first)
+    assert.are.same({ "flameShock", "stormstrike" }, first)
+    local cur = S
+    for _, st in ipairs(plan.steps) do
+      local w = st.at - (cur.now - S.now)
+      if w > 1e-9 then cur = model.wait(cur, w) end
+      if st.key == "lightningBolt" or st.key == "chainLightning" then
+        assert.is_true(cur.buffs.mw.stacks >= 3, ("%s at %.2f with %.2f stacks"):format(st.key, st.at, cur.buffs.mw.stacks))
+      end
+      cur = model.apply(cur, st.key)
+    end
   end)
 
   it("does not put Magma Totem over an active Fire Elemental", function()

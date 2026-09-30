@@ -454,6 +454,7 @@ function M.build(ctx)
   S.target = M.targetInfo(ctx, c, now, S.player.level)
   S.target.meleeIn = M.meleeIn(S)
   S.cooldowns = ctx.cooldowns -- the player's options for the long cooldowns (read-only, shared)
+  S.weaveMin = ctx.weaveMin -- the weaving option (nil: the model decides, as before the option)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }

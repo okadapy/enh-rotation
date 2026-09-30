@@ -31,14 +31,14 @@ The suggestion changes only after a combat event, and only when the new plan is 
 
 ## Options (Custom Options tab)
 
-Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elemental / Shamanistic Rage: auto (bosses and long fights) / boss only / always / never. Lightning Shield or Water Shield. Bloodlust-ready alert (off by default). Snapshot recording and export for bug reports.
+Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elemental / Shamanistic Rage: auto (bosses and long fights) / boss only / always / never. Weaving: the fewest Maelstrom stacks for a Lightning Bolt / Chain Lightning in melee — 3+ (default) / 5 / any (the model decides); at range and without the Maelstrom Weapon talent any stack count is allowed. Lightning Shield or Water Shield. Bloodlust-ready alert (off by default). Snapshot recording and export for bug reports.
 
 ## Status
 
 - **Solo leveling** is tested on recorded in-game fights (levels 52–54).
 - **Group / raid at 80** is checked against the wowsims/wotlk priority (18 situations) and a combat simulation, **not yet in a real raid**: treat it as beta and report what looks wrong.
 - Any client language is supported for talents (read through spell IDs).
-- **Not yet verified in game:** the swing rules behind weaving. The model assumes a Lightning Bolt / Chain Lightning with 1–4 Maelstrom stacks only *delays* the next swing to the end of the cast, while a 0-stack cast *resets* it (this rule comes from existing swing-timer packs). If your server behaves differently, 1–2 stack hard-casts may be suggested too eagerly — please report it with an export string.
+- **Not yet verified in game:** the swing rules behind weaving. The model assumes a Lightning Bolt / Chain Lightning with 1–4 Maelstrom stacks only *delays* the next swing to the end of the cast, while a 0-stack cast *resets* it (this rule comes from existing swing-timer packs). That is why the **Weaving** option defaults to 3+ stacks, the conservative choice until the rule is verified: 1–2 stack hard-casts are suggested only with Weaving set to "any (model decides)" (worth about 2% if the rule holds). If your server behaves differently, please report it with an export string.
 
 ## First run
 

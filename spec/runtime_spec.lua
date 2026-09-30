@@ -102,6 +102,12 @@ describe("runtime", function()
     assert.are.same({ feralSpirit = "auto", fireElemental = "auto", shamanisticRage = "always" }, rt.ctx.cooldowns)
   end)
 
+  it("fills the weaving option from the config (3+ stacks without it)", function()
+    assert.are.equal(3, (start({})).ctx.weaveMin)
+    assert.are.equal(5, (start({ weave = 2 })).ctx.weaveMin)
+    assert.are.equal(0, (start({ weave = 3 })).ctx.weaveMin)
+  end)
+
   it("no low-mana Shamanistic Rage alert when the player set it to never", function()
     local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0
     S.cooldowns = { shamanisticRage = "never" }

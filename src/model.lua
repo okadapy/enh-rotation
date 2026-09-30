@@ -134,7 +134,7 @@ function M.cloneState(S)
   return {
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
-    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
@@ -316,6 +316,20 @@ function M.cooldownAllowed(S, key)
   return M.cooldownDecide(S, key, false)
 end
 
+-- The player's weaving option (S.weaveMin: 3 / 5 stacks, 0 or nil = the model decides): no
+-- Lightning Bolt / Chain Lightning below that many Maelstrom stacks. Only in melee: at range (the
+-- pull, a ranged target) a cast is the only damage there is; and only with Maelstrom Weapon: below
+-- the talent (leveling) the stacks never come, and a hard cast is the normal rotation. Pure, no
+-- allocation.
+function M.weaveAllowed(S)
+  local wm = S.weaveMin
+  if not wm or wm <= 0 then return true end
+  local t = S.target
+  if not (t and t.range == "melee") or talent(S, "maelstromWeapon") <= 0 then return true end
+  local mw = S.buffs and S.buffs.mw
+  return floor(((mw and mw.stacks) or 0) + 1e-9) >= wm
+end
+
 function M.readyIn(S, key)
   local meta, sp = byKey[key], S.spells and S.spells[key]
   if not meta or not sp then return nil end
@@ -353,7 +367,10 @@ function M.readyIn(S, key)
   -- the same fire totem again changes nothing while it still stands longer than value.TAIL counts
   local kind = TOTEM_KIND[key]
   if kind and kind == fire.kind and (fire.remains or 0) >= M.TOTEM_REDROP then return nil end
-  if p.moving and CAST_SPELLS[key] and M.castTime(S, key) > 0 then return nil end
+  if CAST_SPELLS[key] then
+    if p.moving and M.castTime(S, key) > 0 then return nil end
+    if S.weaveMin and not M.weaveAllowed(S) then return nil end
+  end
   return r
 end
 
@@ -619,6 +636,7 @@ local function fillScratch(S, dt)
     n.mode, n.weapons, n.talents, n.enemies, n.memo = S.mode, S.weapons, S.talents, S.enemies, S.memo
     n.shieldPref = S.shieldPref
     n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
+    n.weaveMin = S.weaveMin
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.attacking, n.swing.resetByInstant = S.swing.attacking, S.swing.resetByInstant
