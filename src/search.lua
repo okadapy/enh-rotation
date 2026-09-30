@@ -418,9 +418,13 @@ local function run(o, S, check)
     if #frontier == 0 then break end
     if check then check() end
   end
+  -- byFirst: the best chain found for every first button ("key" or "key+swing"), so the planner
+  -- can weigh a held first button by its best continuation, not by the old plan's stale tail
+  local byFirst = {}
   local function result(value, steps)
-    return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes }
+    return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes, byFirst = byFirst }
   end
+  for f, c in pairs(bestByFirst) do byFirst[f] = stepsOf(c) end
   if not bestNode then return result(0, {}) end
   -- The best chain of every first button close enough to the best gets its waits filled
   -- (fillIdle), then the best of them wins: a first button must not lose only because its chain
@@ -439,6 +443,7 @@ local function run(o, S, check)
   local budget = { replays = o.fillReplays }
   for _, c in ipairs(list) do
     local v, st = fillIdle(o, S, c.score, stepsOf(c), check, budget)
+    byFirst[c.first] = st
     if v > top then top, steps = v, st end
   end
   best = top
@@ -519,6 +524,11 @@ local function evaluateFrom(o, S, steps, truncate)
   if not node or #node.steps == 0 then return nil end
   local v, horizonValue = finalScore(o, node, rootNow)
   return v, node.steps, horizonValue
+end
+
+-- the byFirst key of a plan's first step
+function M.firstKey(st)
+  return st.afterSwing and (st.key .. "+swing") or st.key
 end
 
 -- replay an existing plan on a fresh state; nil if a step is no longer possible

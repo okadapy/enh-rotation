@@ -23,6 +23,12 @@ describe("stability in a simulated fight #integration", function()
     assert.are.equal(0, total.quiet, info)
   end)
 
+  -- issue #9: the held first button used to be weighed by the old plan's stale tail and lost to
+  -- every new search right after a press (15.8 changes a minute)
+  it("the first button changes at most 8 times a minute besides the presses", function()
+    assert.is_true(total.changes <= 8 * total.minutes, info)
+  end)
+
   it("the first button changes at most once a minute within 0.3 s before its press", function()
     assert.is_true(total.late <= total.minutes, info)
   end)

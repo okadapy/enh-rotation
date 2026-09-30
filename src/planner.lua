@@ -1,5 +1,6 @@
 local util = require("util")
 local spells = require("spells")
+local model = require("model")
 
 local M = {}
 
@@ -58,6 +59,17 @@ function P:prepare(S)
       n.inflight[key] = math.max(n.inflight[key] or 0, left)
       local fx = M.EFFECTS[key]
       if fx then fx(n) end
+      -- its cooldown, until the game reports it (the press is known from SENT, a round trip early);
+      -- a cooldown the game already shows is taken as it is
+      local sp = n.spells and n.spells[key]
+      if sp and (sp.cd or 0) <= 0 then
+        local cd = model.cooldownFor(n, key) - (M.INFLIGHT - left)
+        local group = spells.byKey[key] and spells.byKey[key].sharedCd
+        for _, k in ipairs(group and model.SHARED[group] or { key }) do
+          local e = n.spells[k]
+          if e and (e.cd or 0) < cd then e.cd = cd end
+        end
+      end
     else
       self.inflight[key] = nil
     end
@@ -99,6 +111,14 @@ function P:finish(job)
       local oldValue, retimed, horizonValue
       if #old > 0 then
         oldValue, retimed, horizonValue = self.search.evaluate(s, old, self.searchOpts)
+        -- The held first button is weighed by its best continuation the new search found: the
+        -- old tail is not re-optimized and waits through the seconds the horizon has moved on,
+        -- a handicap larger than the margin, so right after a press the icon changed for nothing.
+        local alt = fresh.byFirst and self.search.firstKey and fresh.byFirst[self.search.firstKey(old[1])]
+        if alt and #alt > 0 then
+          local v, r, h = self.search.evaluate(s, alt, self.searchOpts)
+          if v and (not oldValue or v > oldValue) then oldValue, retimed, horizonValue = v, r, h end
+        end
       else
         retimed = {}
         oldValue, horizonValue = self.search.idle(s, self.searchOpts)
@@ -149,6 +169,11 @@ function P:update(S, ev)
   local first = self.plan and self.plan.steps[1]
   local force = self.plan == nil or ev.kind == "target"
   local restart = ev.kind == "target"
+  if ev.kind == "cast" and ev.failed then
+    -- a press the server turned down: its effects are not coming, the plan must show it again
+    self.inflight[ev.failed] = nil
+    force, restart = true, true
+  end
   if ev.kind == "cast" and ev.key then
     self.inflight[ev.key] = S.now + M.INFLIGHT
     if ev.done then
