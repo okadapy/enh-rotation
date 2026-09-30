@@ -20,25 +20,72 @@ M.REASONS = {
 
 local function q(x) return math.floor((x or 0) * 4 + 0.5) end
 
-function M.signature(S)
-  local hpStep = math.max(1, (S.target.hpMax or 1) * 0.005)
-  local parts = {
-    q(S.now), math.floor((S.player.mana or 0) / 50),
-    q(S.buffs.mw and S.buffs.mw.stacks), q(S.target.fs), math.floor((S.target.hp or 0) / hpStep),
-    q(S.target.ss and S.target.ss.charges), q(S.gcdRemains), q(S.castRemains),
-  }
-  -- swing timers and the fire totem decide what the next seconds bring, keep them apart
-  local sw = S.swing
-  if sw then
-    parts[#parts + 1] = (sw.attacking and "a" or "-") .. q(sw.mh and sw.mh.next) .. "/" .. q(sw.oh and sw.oh.next)
-  end
-  local fire = S.totems and S.totems.fire
-  if fire then parts[#parts + 1] = tostring(fire.kind or "none") .. q(fire.remains) end
+local FIRE_CODE = { searing = 1, magma = 2, fireElemental = 3, other = 4 }
+
+local floor, char, unpack_ = math.floor, string.char, unpack
+local BYTES = {} -- reused by every signature() call
+
+-- quantized to 0.25 s and packed into one byte; anything past 63.5 s is "far away" anyway
+local function b(x)
+  if not x or x <= 0 then return 0 end
+  local v = floor(x * 4 + 0.5)
+  if v > 254 then return 254 end
+  return v
+end
+
+local function sortedKeys(t)
   local keys = {}
-  for k in pairs(S.spells) do keys[#keys + 1] = k end
+  for k in pairs(t) do keys[#keys + 1] = k end
   table.sort(keys)
-  for _, k in ipairs(keys) do parts[#parts + 1] = k .. q(S.spells[k].cd) end
-  return table.concat(parts, ":")
+  return keys
+end
+
+-- equal signatures = states the rest of the horizon cannot tell apart
+function M.signature(S)
+  local sw, fire, t = S.swing, S.totems and S.totems.fire, S.target
+  local mw, ss = S.buffs and S.buffs.mw, t.ss
+  local mh, oh = sw and sw.mh, sw and sw.oh
+  local bytes = BYTES
+  bytes[1], bytes[2], bytes[3], bytes[4], bytes[5] =
+    b(mw and mw.stacks), b(t.fs), b(ss and ss.charges), b(S.gcdRemains), b(S.castRemains)
+  bytes[6], bytes[7], bytes[8] = sw and (sw.attacking and 1 or 2) or 0, b(mh and mh.next), b(oh and oh.next)
+  bytes[9], bytes[10] = fire and (FIRE_CODE[fire.kind] or 0) or 255, b(fire and fire.remains)
+  -- the spell key set is the same in the whole search tree: sort it once per search
+  local memo = S.memo
+  local keys = memo and memo.sigKeys
+  if not keys then
+    keys = sortedKeys(S.spells)
+    if memo then memo.sigKeys = keys end
+  end
+  local spells = S.spells
+  for i = 1, #keys do
+    local sp = spells[keys[i]]
+    local v = 255
+    if sp then
+      local cd = sp.cd
+      if cd and cd > 0 then
+        v = floor(cd * 4 + 0.5)
+        if v > 254 then v = 254 end
+      else
+        v = 0
+      end
+    end
+    bytes[10 + i] = v
+  end
+  local hpStep = (t.hpMax or 1) * 0.005
+  if hpStep < 1 then hpStep = 1 end
+  local n = 10 + #keys
+  local hp = floor((t.hp or 0) / hpStep)
+  local mana = floor((S.player.mana or 0) / 50)
+  local now = floor((S.now or 0) * 4 + 0.5)
+  if hp > 255 then hp = 255 elseif hp < 0 then hp = 0 end
+  if mana < 0 then mana = 0 end
+  if now < 0 then now = 0 end
+  bytes[n + 1] = hp
+  bytes[n + 2], bytes[n + 3], bytes[n + 4] = mana % 256, floor(mana / 256) % 256, floor(mana / 65536) % 256
+  bytes[n + 5], bytes[n + 6] = now % 256, floor(now / 256) % 256
+  bytes[n + 7], bytes[n + 8] = floor(now / 65536) % 256, floor(now / 16777216) % 256
+  return char(unpack_(bytes, 1, n + 8))
 end
 
 function M.reason(S, key, afterSwing)
@@ -85,7 +132,8 @@ local function finalScore(o, node, rootNow)
   local S, v = node.S, node.v
   local t = S.now - rootNow
   if t < o.horizon then
-    local S2, dmg = o.model.wait(S, o.horizon - t)
+    -- the padded state is thrown away: use the model's allocation-free scratch when it has one
+    local S2, dmg = (o.model.peekWait or o.model.wait)(S, o.horizon - t)
     v = v + o.value.step(S, S2, dmg, 0)
     S = S2
   end
@@ -118,32 +166,136 @@ local function extend(o, node, a, rootNow)
   return { S = S2, v = v, steps = steps, depth = node.depth + 1 }
 end
 
+local stepsOf
+-- tie-break for equal scores; cached, the sort asks for it many times
 local function chainKey(node)
+  local k = node.chainKey
+  if k then return k end
   local parts = {}
-  for i, s in ipairs(node.steps) do parts[i] = s.key .. "@" .. q(s.at) end
-  return table.concat(parts, ",") .. (node.waited and "+w" or "")
+  for i, s in ipairs(stepsOf(node)) do parts[i] = s.key .. "@" .. q(s.at) end
+  k = table.concat(parts, ",") .. (node.waited and "+w" or "")
+  node.chainKey = k
+  return k
+end
+
+-- shallow root copy with a fresh per-search memo (see damage.lua); S itself is never touched
+local function root(S)
+  local r = {}
+  for k, v in pairs(S) do r[k] = v end
+  r.memo = {}
+  return r
+end
+
+-- Candidates are first evaluated on the model's scratch states (peekApply/peekWait, no
+-- allocation); only the few that enter the beam get a real state again (materialize).
+-- Both paths run the same model code on the same input, so the numbers are identical.
+local function candidate(o, node, a, rootNow)
+  local S, v = node.S, node.v
+  local m = o.model
+  local peekWait, peekApply = m.peekWait or m.wait, m.peekApply or m.apply
+  if a.key == "waitSwing" then
+    if node.waited or S.now + a.readyIn - rootNow >= o.horizon then return nil end
+    local S1, d = peekWait(S, a.readyIn)
+    local c = { parent = node, a = a, v = v + o.value.step(S, S1, d, 0), depth = node.depth,
+                waited = true, afterSwing = true }
+    return c, S1
+  end
+  local afterSwing = node.afterSwing
+  local waited = false
+  if a.readyIn > M.READY_EPS then
+    if S.now + a.readyIn - rootNow >= o.horizon then return nil end
+    local S1, d = peekWait(S, a.readyIn)
+    v = v + o.value.step(S, S1, d, 0)
+    S = S1
+    afterSwing = false
+    waited = true
+  end
+  local at = S.now - rootNow
+  if at >= o.horizon then return nil end
+  local c = { parent = node, a = a, depth = node.depth + 1, at = at }
+  if waited and m.peekWait then
+    -- S is a scratch state: keep what the step text needs now, rebuild the rest on demand
+    c.reason = M.reason(S, a.key, afterSwing)
+  else
+    c.pre, c.reasonAfterSwing = S, afterSwing
+  end
+  local S2, dmg = peekApply(S, a.key)
+  c.v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
+  return c, S2
+end
+
+-- the chain of steps up to c (built once, on demand)
+function stepsOf(c)
+  if c.steps then return c.steps end
+  local parent = c.parent and stepsOf(c.parent) or {}
+  if c.waited then
+    c.steps = parent
+  else
+    local steps = {}
+    for i, st in ipairs(parent) do steps[i] = st end
+    steps[#steps + 1] = { key = c.a.key, at = c.at, reason = c.reason or M.reason(c.pre, c.a.key, c.reasonAfterSwing) }
+    c.steps = steps
+  end
+  return c.steps
+end
+
+-- a real (allocated) state for a candidate that goes on to the next beam step
+local function materialize(o, c)
+  if c.waited then
+    c.S = o.model.wait(c.parent.S, c.a.readyIn)
+  else
+    local pre = c.pre
+    if not pre then pre = o.model.wait(c.parent.S, c.a.readyIn) end
+    c.S = o.model.apply(pre, c.a.key)
+  end
+end
+
+-- stands in for the state before the tail in value.step (manaSpent = 0 reads only these)
+local PRE = { target = {} }
+
+-- CS comes from a peek (a scratch state): pad it to the horizon in place
+-- the candidate's state again, as a scratch state
+local function peekState(o, c)
+  local m = o.model
+  if c.waited then return (m.peekWait(c.parent.S, c.a.readyIn)) end
+  local pre = c.pre or m.peekWait(c.parent.S, c.a.readyIn)
+  return (m.peekApply(pre, c.a.key))
+end
+
+local function scoreFrom(o, CS, v, rootNow)
+  local t = CS.now - rootNow
+  if t < o.horizon then
+    if o.model.peekApply and o.model.advance then
+      PRE.mode, PRE.target.hp, PRE.target.hpMax = CS.mode, CS.target.hp, CS.target.hpMax
+      local dmg = o.model.advance(CS, o.horizon - t)
+      v = v + o.value.step(PRE, CS, dmg, 0)
+    else
+      local S2, dmg = o.model.wait(CS, o.horizon - t)
+      v = v + o.value.step(CS, S2, dmg, 0)
+      CS = S2
+    end
+  end
+  return v + o.value.terminal(CS)
 end
 
 function M.best(S, opts)
   local o = defaults(opts)
   local start = o.clock()
+  S = root(S)
   local rootNow = S.now
   local frontier = { { S = S, v = 0, steps = {}, depth = 0 } }
-  local best = { value = -math.huge, steps = {} }
+  local best, bestNode = -math.huge, nil
   local timedOut = false
   for _ = 1, o.depth * 2 do
-    local seen, order = {}, {}
+    local children = {}
     for _, node in ipairs(frontier) do
       if node.depth < o.depth then
         for _, a in ipairs(o.model.actions(node.S)) do
-          local c = extend(o, node, a, rootNow)
+          local c, CS = candidate(o, node, a, rootNow)
           if c then
-            c.score = finalScore(o, c, rootNow)
-            if #c.steps > 0 and c.score > best.value then best = { value = c.score, steps = c.steps } end
-            local sig = M.signature(c.S) .. (c.waited and "w" or "")
-            local prev = seen[sig]
-            if not prev then order[#order + 1] = sig end
-            if not prev or c.score > prev.score then seen[sig] = c end
+            c.score = scoreFrom(o, CS, c.v, rootNow)
+            if (not c.waited or #stepsOf(node) > 0) and c.score > best then best, bestNode = c.score, c end
+            children[#children + 1] = c
             if o.clock() - start > o.budgetMs then timedOut = true; break end
           end
         end
@@ -151,23 +303,40 @@ function M.best(S, opts)
       if timedOut then break end
     end
     if timedOut then break end
-    local children = {}
-    for i, sig in ipairs(order) do children[i] = seen[sig] end
     table.sort(children, function(x, y)
       if x.score ~= y.score then return x.score > y.score end
       return chainKey(x) < chainKey(y)
     end)
+    -- best first; a state already in the beam (same signature) is skipped. Signatures are only
+    -- needed for the few children looked at here, so they are taken from rebuilt states.
     frontier = {}
-    for i = 1, math.min(o.beam, #children) do frontier[i] = children[i] end
+    local taken = {}
+    for i = 1, #children do
+      if #frontier >= o.beam then break end
+      local c = children[i]
+      local sig
+      if c.depth < o.depth or not o.model.peekApply then
+        materialize(o, c)
+        sig = M.signature(c.S)
+      else
+        sig = M.signature(peekState(o, c)) -- never expanded: no real state needed
+      end
+      if c.waited then sig = sig .. "w" end
+      if not taken[sig] then
+        taken[sig] = true
+        frontier[#frontier + 1] = c
+      end
+    end
     if #frontier == 0 then break end
   end
-  if best.value == -math.huge then return { value = 0, steps = {}, timedOut = timedOut } end
-  return { value = best.value, steps = best.steps, timedOut = timedOut }
+  if not bestNode then return { value = 0, steps = {}, timedOut = timedOut } end
+  return { value = best, steps = stepsOf(bestNode), timedOut = timedOut }
 end
 
 -- replay an existing plan on a fresh state; nil if a step is no longer possible
 function M.evaluate(S, steps, opts)
   local o = defaults(opts)
+  S = root(S)
   local rootNow = S.now
   local node = { S = S, v = 0, steps = {}, depth = 0 }
   for _, st in ipairs(steps) do

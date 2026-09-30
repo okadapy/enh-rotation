@@ -336,3 +336,33 @@ describe("damage with generated spell data", function()
     end
   end)
 end)
+
+describe("damage per-search memo", function()
+  local fixtures = require("fixtures")
+  local util = require("util")
+
+  it("gives the same numbers as direct calls for every buff combination", function()
+    local spells = require("spells")
+    for _, ls in ipairs({ 0, 3 }) do
+      for _, ss in ipairs({ 0, 2 }) do
+        local S = fixtures.state({ buffs = { ls = { charges = ls } }, target = { ss = { charges = ss, remains = 5 } } })
+        local M = util.copy(S)
+        M.memo = {}
+        for _ = 1, 2 do -- second round reads the memo
+          for _, meta in ipairs(spells.CATALOG) do
+            assert.are.equal(damage.action(S, meta.key), damage.action(M, meta.key), meta.key)
+          end
+          for _, h in ipairs({ "mh", "oh" }) do
+            assert.are.equal(damage.auto(S, h), damage.auto(M, h))
+            assert.are.equal(damage.mwPerSwing(S, h), damage.mwPerSwing(M, h))
+            assert.are.equal(damage.auto(S, h), damage.swingStats(M)[h])
+          end
+          for _, src in ipairs(damage.PERIODIC) do
+            assert.are.equal(damage.periodic(S, src), damage.periodic(M, src))
+            assert.are.equal(damage.periodic(S, src), damage.rates(M)[src])
+          end
+        end
+      end
+    end
+  end)
+end)

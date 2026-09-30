@@ -114,6 +114,22 @@ describe("model", function()
       S.buffs.mw.stacks = 5
       assert.are.equal(0, model.readyIn(S, "lightningBolt"))
     end)
+    it("Frost Shock only when Earth Shock is not known (same cooldown, no Stormstrike bonus)", function()
+      local S = base()
+      assert.is_nil(model.readyIn(S, "frostShock"))
+      S.spells.earthShock = nil
+      assert.are.equal(0, model.readyIn(S, "frostShock"))
+    end)
+    it("Call of the Elements only when it changes something: no fire totem or water expiring", function()
+      local S = base()
+      S.spells.callOfElements = { id = 66842, rank = 1, cd = 0, cost = 0, cast = 0 }
+      S.totems = { fire = { kind = "magma", remains = 15 }, water = { remains = 200 } }
+      assert.is_nil(model.readyIn(S, "callOfElements"))
+      S.totems.water.remains = model.COE_WATER - 1
+      assert.are.equal(0, model.readyIn(S, "callOfElements"))
+      S.totems = { fire = { kind = false, remains = 0 }, water = { remains = 200 } }
+      assert.are.equal(0, model.readyIn(S, "callOfElements"))
+    end)
     it("Lightning Shield only when charges are missing", function()
       local S = base()
       assert.is_nil(model.readyIn(S, "lightningShield"))
@@ -395,5 +411,81 @@ describe("model", function()
       end
       assert.are.same(before, S)
     end)
+  end)
+end)
+
+describe("model working copies (search speed)", function()
+  -- contract part of a state, without the scratch bookkeeping
+  local function view(S)
+    local out = {}
+    for _, k in ipairs({ "now", "gcdRemains", "castRemains", "gcd", "mode" }) do out[k] = S[k] end
+    out.mana = S.player.mana
+    out.spells = {}
+    for k, sp in pairs(S.spells) do out.spells[k] = { sp.id, sp.rank, sp.cd, sp.cost, sp.cast } end
+    out.buffs = util.copy(S.buffs)
+    out.target = util.copy(S.target)
+    out.totems = util.copy(S.totems)
+    out.swing = { S.swing.attacking, util.copy(S.swing.mh), util.copy(S.swing.oh) }
+    out.wolves = S.pets and S.pets.wolves or 0
+    return out
+  end
+
+  local function states()
+    local list = {}
+    for _, over in ipairs({ {}, { buffs = { mw = { stacks = 3, remains = 20 } } }, { buffs = { rage = 10, ls = { charges = 0 } } },
+                           { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } } }) do
+      local S = fixtures.state(over)
+      S.memo = {}
+      list[#list + 1] = S
+    end
+    return list
+  end
+
+  it("peekApply and peekWait give exactly what apply and wait give", function()
+    for _, S in ipairs(states()) do
+      for _, a in ipairs(model.actions(S)) do
+        if a.key ~= "waitSwing" then
+          local S2, d2, t2 = model.apply(S, a.key)
+          local P, dp, tp = model.peekApply(S, a.key)
+          assert.are.equal(d2, dp, a.key)
+          assert.are.equal(t2, tp, a.key)
+          assert.are.same(view(S2), view(P), a.key)
+          local W, dw = model.wait(S2, 2.3)
+          local Q, dq = model.peekWait(S2, 2.3)
+          assert.are.equal(dw, dq, a.key)
+          assert.are.same(view(W), view(Q), a.key)
+        end
+      end
+    end
+  end)
+
+  it("a scratch state can be the input of the next peek", function()
+    local S = states()[1]
+    local W1, d1 = model.wait(S, 1.2)
+    local S2, d2 = model.apply(W1, "stormstrike")
+    local P1, e1 = model.peekWait(S, 1.2)
+    local P2, e2 = model.peekApply(P1, "stormstrike")
+    assert.are.equal(d1, e1)
+    assert.are.equal(d2, e2)
+    assert.are.same(view(S2), view(P2))
+  end)
+
+  it("advancing a scratch state in place equals wait", function()
+    local S = states()[2]
+    local W, dw = model.wait(model.apply(S, "lavaLash"), 3.1)
+    local P = model.peekApply(S, "lavaLash")
+    local dp = model.advance(P, 3.1)
+    assert.are.equal(dw, dp)
+    assert.are.same(view(W), view(P))
+  end)
+
+  it("clone keeps every spells.CATALOG key and never shares what the model changes", function()
+    local S = fixtures.state({})
+    local n = model.clone(S)
+    for _, meta in ipairs(spells.CATALOG) do assert.are.equal(S.spells[meta.key], n.spells[meta.key], meta.key) end
+    for _, k in ipairs({ "buffs", "target", "totems", "swing", "pets", "inflight" }) do assert.are_not.equal(S[k], n[k], k) end
+    assert.are_not.equal(S.buffs.mw, n.buffs.mw)
+    assert.are_not.equal(S.target.ss, n.target.ss)
+    assert.are_not.equal(S.swing.mh, n.swing.mh)
   end)
 end)

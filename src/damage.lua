@@ -281,4 +281,94 @@ function M.action(S, key)
   return 0
 end
 
+-- Per-search memo. search.best puts a fresh S.memo on its root state; model.clone shares it
+-- along the whole tree. Inside one search player stats, weapons, talents, target level and
+-- enemy counts never change, so these results depend only on their argument and on whether
+-- Lightning Shield charges (Static Shock) and Stormstrike charges (+20% nature) are up.
+-- Without S.memo (direct calls, tests) everything is computed as before.
+-- memo[name][arg] for results that depend only on the argument
+local function memoize(name)
+  local raw = M[name]
+  M[name] = function(S, a)
+    local m = S.memo
+    if not m then return raw(S, a) end
+    local slot = m[name]
+    if not slot then slot = {}; m[name] = slot end
+    local k = a
+    if k == nil then k = 0 end
+    local v = slot[k]
+    if v == nil then v = raw(S, a); slot[k] = v end
+    return v
+  end
+end
+
+-- memo[name][flags][arg]: flags = Lightning Shield charges up (+1), Stormstrike charges up (+2)
+local function memoizeFlags(name)
+  local raw = M[name]
+  M[name] = function(S, a)
+    local m = S.memo
+    if not m then return raw(S, a) end
+    local f = 1
+    local ls, ss = S.buffs.ls, S.target.ss
+    if ls and ls.charges and ls.charges > 0 then f = 2 end
+    if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    local slot = m[name]
+    if not slot then slot = {}; m[name] = slot end
+    local sub = slot[f]
+    if not sub then sub = {}; slot[f] = sub end
+    local v = sub[a]
+    if v == nil then v = raw(S, a); sub[a] = v end
+    return v
+  end
+end
+
+memoize("armorMult")
+memoize("meleeTable")
+memoize("mwPerHit")
+memoize("mwPerSwing")
+memoize("periodic")
+memoizeFlags("auto")
+memoizeFlags("action")
+
+-- continuous dps of every periodic source at once (model.advance needs several per step)
+M.PERIODIC = { "flameShock", "searingTotem", "magmaTotem", "fireElemental", "feralSpirit" }
+function M.rates(S)
+  local m = S.memo
+  local r = m and m.rates
+  if r then return r end
+  r = {}
+  for _, src in ipairs(M.PERIODIC) do r[src] = M.periodic(S, src) end
+  if m then m.rates = r end
+  return r
+end
+
+-- expected damage and Maelstrom stacks of one auto attack per hand, for S's buffs
+function M.swingStats(S)
+  local m = S.memo
+  local f = 1
+  if m then
+    local ls, ss = S.buffs.ls, S.target.ss
+    if ls and ls.charges and ls.charges > 0 then f = 2 end
+    if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    local slot = m.swingStats
+    local r = slot and slot[f]
+    if r then return r end
+  end
+  local r = { mh = M.auto(S, "mh"), oh = M.auto(S, "oh"), mwmh = M.mwPerSwing(S, "mh"), mwoh = M.mwPerSwing(S, "oh") }
+  if m then
+    m.swingStats = m.swingStats or {}
+    m.swingStats[f] = r
+  end
+  return r
+end
+
+local rawWf = M.wf
+function M.wf(S)
+  local m = S.memo
+  if not m then return rawWf(S) end
+  local v = m.wf
+  if not v then v = { rawWf(S) }; m.wf = v end
+  return v[1], v[2]
+end
+
 return M

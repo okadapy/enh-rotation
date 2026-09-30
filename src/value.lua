@@ -19,7 +19,7 @@ M.READY_KEYS = { "stormstrike", "lavaLash", "earthShock", "fireNova" }
 M.FIRE_SOURCE = { searing = "searingTotem", magma = "magmaTotem", fireElemental = "fireElemental" }
 
 -- looked up on every call so tests (and the build) can swap the module
-local function D() return require("damage") end
+local function D() return package.loaded.damage or require("damage") end
 
 local function weights(S) return M.WEIGHTS[S.mode] or M.WEIGHTS.group end
 
@@ -42,12 +42,15 @@ function M.manaPrice(S)
   return w.mana * ref
 end
 
+-- Without mana spent only S.mode, S.target.hp and S.target.hpMax are read from S
+-- (search relies on it for its allocation-free tail).
 function M.step(S, S2, dmg, manaSpent)
   local w = weights(S)
   dmg = dmg or 0
   local hpLeft = math.max(0, S.target.hp or 0)
   local useful = math.min(dmg, hpLeft)
-  local v = useful + (dmg - useful) * w.overkill - (manaSpent or 0) * M.manaPrice(S)
+  local v = useful + (dmg - useful) * w.overkill
+  if manaSpent and manaSpent ~= 0 then v = v - manaSpent * M.manaPrice(S) end
   if w.kill > 0 and hpLeft > 0 and (S2.target.hp or 0) <= 0 then
     v = v + w.kill * (S.target.hpMax or hpLeft)
   end
@@ -59,11 +62,14 @@ local function alive(S)
   return t and t.exists ~= false and t.enemy ~= false and not t.dead and (t.hp == nil or t.hp > 0)
 end
 
+-- seconds of `remains` that still count: at most TAIL, and not after the target dies
 local function lifetime(S, remains)
-  remains = math.min(remains or 0, M.TAIL)
+  remains = remains or 0
+  if remains > M.TAIL then remains = M.TAIL end
   local ttd = S.target.ttd
-  if ttd then return math.max(0, math.min(remains, ttd)) end
-  return math.max(0, remains)
+  if ttd and ttd < remains then remains = ttd end
+  if remains < 0 then return 0 end
+  return remains
 end
 
 -- remaining periodic damage (continuous dps, same as model.advance), at the discount
@@ -81,16 +87,22 @@ local function periodicValue(S, damage)
 end
 
 local function maelstromValue(S, damage)
-  local stacks = math.min(5, (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0)
+  local mw = S.buffs and S.buffs.mw
+  local stacks = (mw and mw.stacks) or 0
+  if stacks > 5 then stacks = 5 end
   if stacks <= 0 or not (S.spells and S.spells.lightningBolt) then return 0 end
   return stacks * M.MW_SHARE * damage.action(S, "lightningBolt")
 end
 
 local function readyValue(S, damage)
   local v = 0
+  local spells = S.spells
+  if not spells then return 0 end
   local fire = S.totems and S.totems.fire
-  for _, key in ipairs(M.READY_KEYS) do
-    local sp = S.spells and S.spells[key]
+  local keys = M.READY_KEYS
+  for i = 1, #keys do
+    local key = keys[i]
+    local sp = spells[key]
     if sp and (sp.cd or 0) <= 0 and (key ~= "fireNova" or (fire and fire.kind)) then
       v = v + damage.action(S, key) * M.DISCOUNT
     end
