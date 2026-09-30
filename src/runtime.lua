@@ -3,6 +3,7 @@ local swing = require("swing")
 local enemies = require("enemies")
 local ttd = require("ttd")
 local snapshot = require("snapshot")
+local talents = require("talents")
 local planner = require("planner")
 local timeline = require("timeline")
 local recorder = require("recorder")
@@ -305,7 +306,7 @@ function M.onEvent(rt, event, ...)
     rt.shown = false
     ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   elseif M.RESCAN[event] then
-    ctx.cache = snapshot.scan()
+    ctx.cache = snapshot.scan(ctx.talentNames)
     M.checkTalents(rt)
     M.mark(rt, "target")
   end
@@ -471,15 +472,18 @@ local function work(rt)
   return M.show(rt, p:view(S.now), S, S.now)
 end
 
--- Talents are matched by English names (talents.KEYS): on another client language every rank
--- reads as 0. Said once per session, from level 10 (the first talent point) on.
+-- Talents are matched by their localized names (from spell ids) and English names: warn when
+-- points are spent but none of them is one we know. Never with no points spent (a fresh
+-- level 10), nor before the client has listed its talents. Said once per session.
 function M.checkTalents(rt)
-  if rt.talentsWarned or (UnitLevel("player") or 0) < 10 then return end
+  if rt.talentsWarned then return end
+  local spent, listed = talents.spent(GetNumTalentTabs, GetNumTalents, GetTalentInfo)
+  if listed == 0 or spent == 0 then return end
   for _, rank in pairs(rt.ctx.cache.talents or {}) do
     if rank > 0 then return end
   end
   rt.talentsWarned = true
-  print("|cffff5555EnhRot|r: talents not detected (non-English client?)")
+  print("|cffff5555EnhRot|r: talents not recognized (unsupported client language?)")
 end
 
 -- nothing to suggest: dead or a ghost, on a flight path, in a vehicle, mounted out of combat
@@ -584,7 +588,9 @@ function M.start(config, env)
   env.saved = env.saved or {}
   env.saved.swing = env.saved.swing or {}
   local now = GetTime()
-  local ctx = { cache = snapshot.scan(), swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
+  local talentNames = talents.localNames(GetSpellInfo)
+  local ctx = { cache = snapshot.scan(talentNames), talentNames = talentNames,
+                swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
                 inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil }
   ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   -- after /reload auto-attack may already be on; PLAYER_ENTER_COMBAT will not come again

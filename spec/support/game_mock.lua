@@ -148,7 +148,7 @@ function G.install(cfg)
       id = inBook(x)
       if not id then return nil end
     end
-    local name = byId[id]
+    local name = (cfg.spellNames or {})[id] or byId[id]
     if not name then return nil end
     return name, "Rank " .. (rankOf[id] or 1), "Interface\\Icons\\" .. id, (cfg.costs or {})[name] or 0,
       false, 0, (cfg.castMs or {})[name] or 0, 0, 30
