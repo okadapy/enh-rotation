@@ -333,25 +333,50 @@ end
 
 -- The long cooldowns' gate for this snapshot (model.cooldownAllowed reads it along the whole
 -- plan): S.cdAllowed[key] = true / false for every gated key, nil without options. "auto" is
--- latched per target (ctx.cdLatch = { guid = ..., [key] = true }): once allowed it holds until
--- ttd < need x model.COOLDOWN_RELEASE or the target changes, so a noisy ttd near the line does
--- not flip the first button.
+-- latched per target: once allowed it holds until ttd < need x model.COOLDOWN_RELEASE, so a noisy
+-- ttd near the line does not flip the first button. Latches are kept for the last
+-- M.LATCH_TARGETS GUIDs (ctx.cdLatch = { slot, ... }, most recently seen first, slot =
+-- { guid = ..., [key] = true }): a tank swap or dotting another mob and coming back keeps the
+-- first target's latch; the least recently seen one is dropped. No options clears them all.
+M.LATCH_TARGETS = 3
+
+-- The latch slot for guid, moved to the front; a new table only for a GUID not seen among the
+-- kept ones (the least recently seen slot is dropped past M.LATCH_TARGETS).
+local function latchFor(ctx, guid)
+  local list = ctx.cdLatch
+  if not list then
+    list = {}
+    ctx.cdLatch = list
+  end
+  local n, at = #list, nil
+  for i = 1, n do
+    if list[i].guid == guid then at = i break end
+  end
+  local slot
+  if at then
+    slot = list[at]
+  else
+    slot = { guid = guid }
+    at = n < M.LATCH_TARGETS and n + 1 or n
+  end
+  for i = at, 2, -1 do list[i] = list[i - 1] end
+  list[1] = slot
+  return slot
+end
+
 function M.cooldownGate(ctx, S, guid)
   if not S.cooldowns then
     ctx.cdLatch = nil
     return nil
   end
-  local latch = ctx.cdLatch
-  if not latch or latch.guid ~= guid then
-    latch = { guid = guid }
-    ctx.cdLatch = latch
-  end
+  -- no target: decided without a latch, the kept ones stay as they are
+  local latch = guid ~= nil and latchFor(ctx, guid) or nil
   local out = {}
   for key in pairs(model.COOLDOWN_TTD) do
-    local ok = model.cooldownDecide(S, key, guid ~= nil and latch[key])
+    local ok = model.cooldownDecide(S, key, latch ~= nil and latch[key])
     out[key] = ok
     -- only "auto" on a known target latches (a boss or "always" needs no memory)
-    latch[key] = (ok and guid ~= nil and S.cooldowns[key] == "auto") or nil
+    if latch then latch[key] = (ok and S.cooldowns[key] == "auto") or nil end
   end
   return out
 end
