@@ -6,8 +6,10 @@ B.MODULES = { "util", "spells_data", "spells", "talents", "swing", "enemies", "t
               "search", "planner", "snapshot", "timeline", "recorder", "runtime" }
 B.OUT = "dist/EnhRot.txt"
 B.FIXTURE = "spec/fixtures/recorded.lua"
--- Слова, которые песочница WeakAuras блокирует или которые запрещены в src/ (Global Constraints).
-B.FORBIDDEN = { "pcall", "xpcall", "loadstring", "setfenv", "getfenv", "_G", "SlashCmdList", "RunScript" }
+-- Слова, которые песочница WeakAuras блокирует или которые запрещены в src/ (Global Constraints),
+-- и библиотеки Lua, которых нет в клиенте 3.3.5a (package, io, debug): обращение к ним падает в игре.
+B.FORBIDDEN = { "pcall", "xpcall", "loadstring", "setfenv", "getfenv", "_G", "SlashCmdList", "RunScript",
+                "package", "io", "debug" }
 
 function B.readFile(path)
   local f = assert(io.open(path, "rb"))
