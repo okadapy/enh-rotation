@@ -38,6 +38,11 @@ Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elem
 - **Solo leveling** is tested on recorded in-game fights (levels 52–54).
 - **Group / raid at 80** is checked against the wowsims/wotlk priority (18 situations) and a combat simulation, **not yet in a real raid**: treat it as beta and report what looks wrong.
 - Any client language is supported for talents (read through spell IDs).
+- **Not yet verified in game:** the swing rules behind weaving. The model assumes a Lightning Bolt / Chain Lightning with 1–4 Maelstrom stacks only *delays* the next swing to the end of the cast, while a 0-stack cast *resets* it (this rule comes from existing swing-timer packs). If your server behaves differently, 1–2 stack hard-casts may be suggested too eagerly — please report it with an export string.
+
+## First run
+
+After import the bar sits a little below the screen centre. Move it: `/wa` → the `EnhRot` group → drag. Stand at a training dummy with auto-attack on: gold ticks are your coming swings, and the text next to any alert tells you what is missing.
 
 ## Not included
 
