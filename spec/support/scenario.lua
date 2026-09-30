@@ -11,6 +11,11 @@ Sc.COST_PCT = { lightningBolt = 10, chainLightning = 26, earthShock = 18, flameS
                 callOfElements = 30, lightningShield = 0, shamanisticRage = 0 }
 Sc.BASE_MANA = { { 1, 55 }, { 10, 185 }, { 20, 410 }, { 30, 635 }, { 40, 860 }, { 50, 1085 }, { 60, 1520 }, { 70, 2678 }, { 80, 4396 } }
 Sc.HP = { { 1, 42 }, { 10, 200 }, { 20, 600 }, { 30, 1200 }, { 40, 2000 }, { 50, 3500 }, { 60, 4500 }, { 70, 7000 }, { 80, 12000 } }
+-- typical gear by level (level 80 = the wowsims reference: 4000 AP, 1200 SP, 440-640 base 1H)
+Sc.AP = { { 1, 20 }, { 10, 70 }, { 20, 180 }, { 30, 350 }, { 40, 600 }, { 50, 900 }, { 60, 1300 }, { 70, 2300 }, { 80, 4000 } }
+Sc.SP = { { 1, 0 }, { 40, 30 }, { 50, 250 }, { 60, 420 }, { 70, 750 }, { 80, 1200 } } -- Mental Quickness from ~50
+Sc.WEAPON_2H = { { 1, 6 }, { 10, 18 }, { 20, 40 }, { 30, 70 }, { 39, 100 } }            -- average base damage, 3.5 s
+Sc.WEAPON_1H = { { 40, 50 }, { 50, 75 }, { 60, 110 }, { 70, 230 }, { 80, 540 } }         -- average base damage, 2.6 s
 Sc.OPTS = { horizon = 6, beam = 6, depth = 4, budgetMs = 2, clock = function() return 0 end }
 
 local function interp(t, x)
@@ -71,7 +76,7 @@ function Sc.state(level, patch)
     mode = level >= 80 and "raid" or "solo",
     player = {
       level = level, mana = baseMana * 3.5 * 0.8, manaMax = baseMana * 3.5, baseMana = baseMana, hpPct = 1,
-      ap = level * 50, spNature = level * 15, spFire = level * 15,
+      ap = interp(Sc.AP, level), spNature = interp(Sc.SP, level), spFire = interp(Sc.SP, level),
       meleeCrit = 0.05 + level * 0.003, spellCrit = 0.05 + level * 0.002,
       meleeHit = level >= 80 and 0.08 or 0, spellHit = level >= 80 and 0.10 or 0,
       spellHaste = level >= 80 and 1.15 or 1.0, meleeHaste = level >= 80 and 1.2 or 1.0,
@@ -85,16 +90,23 @@ function Sc.state(level, patch)
       and { exists = true, enemy = true, level = 83, hp = 1e7, hpMax = 1e7, hpPct = 1, ttd = 180, range = "melee", fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
       or { exists = true, enemy = true, level = level, hp = mobHp, hpMax = mobHp, hpPct = 1, ttd = 20, range = "melee", fs = 0, ss = { charges = 0, remains = 0 }, guessed = false },
     totems = { fire = { kind = nil, remains = 0 }, water = { remains = 120 } },
-    swing = { attacking = true, mh = { next = 1.0, speed = dual and 2.6 or 3.5 }, resetByInstant = {} },
+    -- swing speeds are hasted (UnitAttackSpeed), weapon speeds are the base ones (UnitDamage, Windfury)
+    swing = { attacking = true, mh = { next = 1.0, speed = (dual and 2.6 or 3.5) / (level >= 80 and 1.2 or 1.0) }, resetByInstant = {} },
     enemies = { melee = 1, nearby = 1 },
     inflight = {},
   }
+  -- weapon min/max as UnitDamage returns them: base damage + AP/14 * speed, off hand halved
+  local ap = S.player.ap / 14
   if dual then
-    S.weapons.mh = { speed = 2.6, min = level * 6, max = level * 9, enchant = "wf" }
-    S.weapons.oh = { speed = 2.6, min = level * 3, max = level * 4.5, enchant = "ft" }
-    S.swing.oh = { next = 0.5, speed = 2.6 }
+    local w = interp(Sc.WEAPON_1H, level)
+    local lo, hi = w * 0.815 + ap * 2.6, w * 1.185 + ap * 2.6
+    S.weapons.mh = { speed = 2.6, min = lo, max = hi, enchant = "wf" }
+    S.weapons.oh = { speed = 2.6, min = lo / 2, max = hi / 2, enchant = "ft" }
+    S.swing.oh = { next = 0.5, speed = S.swing.mh.speed }
   else
-    S.weapons.mh = { speed = 3.5, min = level * 8, max = level * 12, enchant = level >= 30 and "wf" or (level >= 10 and "ft" or "rb") }
+    local w = interp(Sc.WEAPON_2H, level)
+    S.weapons.mh = { speed = 3.5, twoHand = true, min = w * 0.815 + ap * 3.5, max = w * 1.185 + ap * 3.5,
+                     enchant = level >= 30 and "wf" or (level >= 10 and "ft" or "rb") }
   end
   for key, k in pairs(Sc.knownAt(level)) do
     S.spells[key] = { id = k.id, rank = k.rank, cd = 0, cost = math.floor((Sc.COST_PCT[key] or 0) / 100 * baseMana), cast = castOf(key, k.rank) }
