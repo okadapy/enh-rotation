@@ -1,0 +1,6 @@
+services:
+  test:
+    build: .
+    volumes:
+      - .:/work
+    working_dir: /work
