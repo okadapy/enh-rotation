@@ -277,6 +277,24 @@ function M.resetSwings(n)
   end
 end
 
+-- Shamanistic Rage: every landed melee attack (auto, Windfury extra, Stormstrike, Lava Lash)
+-- returns RAGE_MANA_AP x AP as mana; `hits` = expected landed hits, up to manaMax
+local function rageMana(n, hits)
+  local p = n.player
+  setMana(n, math.min(p.manaMax or math.huge, p.mana + hits * M.RAGE_MANA_AP * (p.ap or 0)))
+end
+
+-- expected landed hits of one auto attack of `hand`: the swing itself and, for the main hand,
+-- its Windfury extra attacks (counted in damage.auto the same way)
+local function hitsPerSwing(n, hand)
+  local hits = damage.meleeTable(n, true).landed
+  if hand == "mh" then
+    local _, procs = damage.wf(n)
+    hits = hits + procs * 2 * damage.meleeTable(n, false).landed
+  end
+  return hits
+end
+
 -- swings of one hand landing within dt; only those before `life` (time to die) deal damage
 local function runHand(n, hand, dt, cast, life)
   local s = n.swing[hand]
@@ -291,7 +309,7 @@ local function runHand(n, hand, dt, cast, life)
     end
   end
   -- per-swing numbers do not change inside one advance (buffs only expire at its end)
-  local perSwing, mwPer
+  local perSwing, mwPer, hits
   while at <= dt + 1e-9 do
     if at <= life + 1e-9 then
       if not perSwing then
@@ -301,7 +319,8 @@ local function runHand(n, hand, dt, cast, life)
       dmg = dmg + perSwing
       M.addMw(n, mwPer)
       if (n.buffs.rage or 0) > at then
-        setMana(n, math.min(n.player.manaMax or math.huge, n.player.mana + M.RAGE_MANA_AP * (n.player.ap or 0)))
+        hits = hits or hitsPerSwing(n, hand)
+        rageMana(n, hits)
       end
     end
     at = at + speed
@@ -576,8 +595,12 @@ local function applyOn(n, key, ct, dt, adv)
     nss.charges, nss.remains = M.SS_CHARGES, M.SS_DURATION
     n.target.ss = nss
     M.addMw(n, damage.mwPerHit(n, "mh") + (n.weapons.oh and damage.mwPerHit(n, "oh") or 0))
+    if (n.buffs.rage or 0) > 0 and alive(n) then
+      rageMana(n, (n.weapons.oh and 2 or 1) * damage.meleeTable(n, false).landed)
+    end
   elseif key == "lavaLash" then
     M.addMw(n, damage.mwPerHit(n, "oh"))
+    if (n.buffs.rage or 0) > 0 and alive(n) then rageMana(n, damage.meleeTable(n, false).landed) end
   elseif key == "flameShock" then
     n.target.fs = fsDuration(n)
   elseif M.TOTEM_KIND[key] then
