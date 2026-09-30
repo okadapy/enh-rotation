@@ -127,6 +127,44 @@ describe("runtime", function()
     assert.is_nil(runtime.alert(Sc.state(80)))
   end)
 
+  it("asks for auto-attack in melee reach when it is off", function()
+    local S = Sc.state(53)
+    S.swing.attacking = false
+    local a = runtime.alert(S)
+    assert.are.equal("autoAttack", a.key)
+    assert.are.equal(runtime.ALERT_ICONS.autoAttack, a.icon)
+    S.target.range = "20"
+    assert.is_nil(runtime.alert(S))
+    S.target.range = "melee"; S.buffs.ls.charges = 0
+    assert.are.equal("autoAttack", runtime.alert(S).key) -- before a missing buff
+  end)
+
+  it("does not ask for Lightning Shield while its cast is on the way", function()
+    local S = Sc.state(80)
+    S.buffs.ls.charges = 0
+    S.inflight = { lightningShield = 0.6 }
+    assert.is_nil(runtime.alert(S))
+  end)
+
+  -- recorded: Rage pressed at 20 yards without auto-attack on the hint - its mana comes from hits
+  it("suggests Shamanistic Rage for mana only in melee with auto-attack on", function()
+    local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0
+    S.target.range = "20"
+    assert.is_nil(runtime.alert(S))
+    S.target.range = "melee"; S.swing.attacking = false
+    assert.are.equal("autoAttack", runtime.alert(S).key)
+  end)
+
+  it("hints to move into melee when nothing is worth pressing at 20-30 yards", function()
+    local S = Sc.state(53)
+    S.target.range = "20"
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    assert.is_nil(runtime.idleHint({ steps = { { key = "flameShock", at = 0 } } }, S))
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
+    S.target.range = "melee"
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+  end)
+
   it("registers 3.3.5 events only and reuses the engine frame", function()
     local rt = start()
     assert.is_true(rt.frame.events.UNIT_MANA)
