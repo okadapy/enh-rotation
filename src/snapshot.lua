@@ -3,6 +3,7 @@ local talents = require("talents")
 local damage = require("damage")
 local value = require("value")
 local util = require("util")
+local model = require("model")
 
 local M = {}
 
@@ -330,6 +331,31 @@ function M.ttdPrior(S)
   return t.hp / dps
 end
 
+-- The long cooldowns' gate for this snapshot (model.cooldownAllowed reads it along the whole
+-- plan): S.cdAllowed[key] = true / false for every gated key, nil without options. "auto" is
+-- latched per target (ctx.cdLatch = { guid = ..., [key] = true }): once allowed it holds until
+-- ttd < need x model.COOLDOWN_RELEASE or the target changes, so a noisy ttd near the line does
+-- not flip the first button.
+function M.cooldownGate(ctx, S, guid)
+  if not S.cooldowns then
+    ctx.cdLatch = nil
+    return nil
+  end
+  local latch = ctx.cdLatch
+  if not latch or latch.guid ~= guid then
+    latch = { guid = guid }
+    ctx.cdLatch = latch
+  end
+  local out = {}
+  for key in pairs(model.COOLDOWN_TTD) do
+    local ok = model.cooldownDecide(S, key, guid ~= nil and latch[key])
+    out[key] = ok
+    -- only "auto" on a known target latches (a boss or "always" needs no memory)
+    latch[key] = (ok and guid ~= nil and S.cooldowns[key] == "auto") or nil
+  end
+  return out
+end
+
 function M.targetTtd(ctx, S, now)
   local t = S.target
   local guid = t.enemy and ctx.ttd and UnitGUID("target")
@@ -417,6 +443,7 @@ function M.build(ctx)
   S.inflight = M.inflight(ctx.inflight, now)
   S.pets = { wolves = math.max(0, (ctx.wolvesUntil or 0) - now) }
   M.targetTtd(ctx, S, now)
+  S.cdAllowed = M.cooldownGate(ctx, S, S.target.exists and UnitGUID("target") or nil)
   return S
 end
 
