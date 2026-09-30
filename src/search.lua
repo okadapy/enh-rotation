@@ -4,7 +4,7 @@ M.HORIZON = 6.0
 M.BEAM = 7
 M.DEPTH = 4
 M.BUDGET_MS = 2 -- per frame: a search runs in slices (search.start), never cut by the clock
-M.NODE_CAP = 240 -- the whole search stops after this many candidates (deterministic)
+M.NODE_CAP = 220 -- the whole search stops after this many candidates (deterministic)
 M.READY_EPS = 0.05
 M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
 M.WEAVE = { lightningBolt = true, chainLightning = true }

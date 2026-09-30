@@ -129,6 +129,33 @@ function Sc.cd(S, map)
   return S
 end
 
+local function lcg(seed)
+  local s = seed
+  return function() s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648 end
+end
+Sc.lcg = lcg
+
+-- n random but realistic level-80 raid states (cooldowns, Flame Shock, Maelstrom stacks, swings,
+-- GCD, sometimes 3 targets); the same seed gives the same states
+function Sc.randomStates(n, seed)
+  local rng = lcg(seed or 42)
+  local out = {}
+  for _ = 1, n do
+    local S = Sc.state(80)
+    S.totems.fire = { kind = rng() < 0.8 and "magma" or false, remains = rng() * 20 }
+    S.target.fs = rng() < 0.7 and rng() * 18 or 0
+    S.buffs.mw = { stacks = math.floor(rng() * 6), remains = 20 }
+    for _, k in ipairs({ "stormstrike", "lavaLash", "fireNova" }) do S.spells[k].cd = rng() < 0.4 and 0 or rng() * 8 end
+    Sc.cd(S, { shock = rng() < 0.4 and 0 or rng() * 6 })
+    S.swing.mh.next = rng() * S.swing.mh.speed
+    S.swing.oh.next = rng() * S.swing.oh.speed
+    S.gcdRemains = rng() < 0.5 and 0 or rng() * 1.3
+    if rng() < 0.3 then S.enemies = { melee = 3, nearby = 3 } end
+    out[#out + 1] = S
+  end
+  return out
+end
+
 function Sc.best(S)
   -- lazy: search is only needed by the verification specs, not by the runtime spec
   return require("search").best(S, Sc.OPTS)
