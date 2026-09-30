@@ -47,6 +47,17 @@ describe("value.step", function()
     assert.are.near(1000 + 300 * price, value.step(S, after(S, S.target.hp - 1000), 1000, -300), 1e-6)
   end)
 
+  -- the search presses in the buffer of the wait before: it takes the price first and passes it
+  it("a price given by the caller is used instead of manaPrice(S), with the same result", function()
+    local S = fixtures.state({ mode = "solo", target = { hp = 500, hpMax = 10000 } })
+    local S2 = after(S, 0)
+    local price = value.manaPrice(S)
+    assert.are.equal(value.step(S, S2, 2000, 300), value.step(S, S2, 2000, 300, price))
+    local pre = { mode = S.mode, target = { hp = S.target.hp, hpMax = S.target.hpMax, dead = S.target.dead } }
+    assert.are.equal(value.step(S, S2, 2000, 300), value.step(pre, S2, 2000, 300, price))
+    assert.are.near(value.step(S, S2, 2000, 0) - 300 * 2 * price, value.step(S, S2, 2000, 300, 2 * price), 1e-6)
+  end)
+
   it("solo: a target that is already dead gives neither damage nor a second kill bonus", function()
     local S = fixtures.state({ mode = "solo", target = { hp = 0, hpMax = 10000 } })
     assert.are.near(0, value.step(S, after(S, 0), 2000, 0), 1e-9)

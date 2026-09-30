@@ -837,6 +837,31 @@ describe("model working copies (search speed)", function()
     assert.are.same(view(S2), view(P2))
   end)
 
+  -- the search presses after a wait in the wait's own buffer (no second fill)
+  it("peekApplyOver on a peekWait state gives exactly what wait, then apply give", function()
+    for _, S in ipairs(states()) do
+      for _, dt in ipairs({ 0.4, 1.2, 2.9 }) do
+        local W = model.wait(S, dt)
+        for _, a in ipairs(model.actions(W)) do
+          if a.key ~= "waitSwing" and a.readyIn <= 0 then
+            for _, limit in ipairs({ false, 0.7 }) do
+              local S2, d2, t2 = model.apply(W, a.key, limit or nil)
+              local P, dp, tp = model.peekApplyOver(model.peekWait(S, dt), a.key, limit or nil)
+              assert.are.equal(d2, dp, a.key)
+              assert.are.equal(t2, tp, a.key)
+              assert.are.same(view(S2), view(P), a.key)
+              -- and the buffer is filled right again from the same source afterwards
+              local Q, dq = model.peekApply(S, a.key)
+              local R, dr = model.apply(S, a.key)
+              assert.are.equal(dr, dq, a.key)
+              assert.are.same(view(R), view(Q), a.key)
+            end
+          end
+        end
+      end
+    end
+  end)
+
   it("a peek does not leave the mob's arrival in the scratch buffer for the next peek of the same state", function()
     local S = fixtures.state({ mode = "solo", target = { range = "20", meleeIn = 0.5, inCombat = true }, enemies = { melee = 0 } })
     S.memo = {}

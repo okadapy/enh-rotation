@@ -411,6 +411,23 @@ end
 
 local CAST2 = {} -- the rest of a cast after the target arrives inside one advance (reused)
 
+-- scratch state: a spell can be on cooldown only in its own entry, i.e. one on cooldown in the
+-- source (onCd) or one setCd has switched since the fill (dirty); lowered in place
+local function lowerOwnCds(n, dt)
+  local map, list = n.spells, n.onCd
+  for i = 1, n.nOnCd do
+    local sp = map[list[i]]
+    local cd = sp.cd
+    if cd and cd > 0 then sp.cd = cd > dt and cd - dt or 0 end
+  end
+  list = n.dirty
+  for i = 1, n.nDirty do
+    local sp = map[list[i]]
+    local cd = sp.cd
+    if cd and cd > 0 then sp.cd = cd > dt and cd - dt or 0 end
+  end
+end
+
 -- in place, no copy. cast = { ends = sec, reset = bool } | nil
 -- cdsDone: the caller already lowered spell cooldowns by dt (clone(S, dt))
 function M.advance(n, dt, cast, cdsDone)
@@ -471,20 +488,7 @@ function M.advance(n, dt, cast, cdsDone)
   end
   if not cdsDone then
     if n.ownSpells then
-      -- scratch state: a spell can be on cooldown only in its own entry, i.e. one on cooldown in
-      -- the source (onCd) or one setCd has switched since the fill (dirty); lowered in place
-      local map, list = n.spells, n.onCd
-      for i = 1, n.nOnCd do
-        local sp = map[list[i]]
-        local cd = sp.cd
-        if cd and cd > 0 then sp.cd = cd > dt and cd - dt or 0 end
-      end
-      list = n.dirty
-      for i = 1, n.nDirty do
-        local sp = map[list[i]]
-        local cd = sp.cd
-        if cd and cd > 0 then sp.cd = cd > dt and cd - dt or 0 end
-      end
+      lowerOwnCds(n, dt)
     else
       local keys, map = spellKeys(n), n.spells
       for i = 1, #keys do
@@ -838,6 +842,20 @@ function M.peekApply(S, key, limit)
   local dt = ct > g and ct or g -- = math.max(g, ct)
   local adv = (limit and limit < dt) and limit or dt
   return applyOn(fillScratch(S, adv), key, ct, dt, adv)
+end
+
+-- peekApply(n, ...) for a scratch state n, done in n itself instead of a copy in the other
+-- buffer: the same numbers, one fill less. n is gone afterwards (search: the press after a
+-- peekWait whose state nothing reads any more)
+function M.peekApplyOver(n, key, limit)
+  local ct = M.castTime(n, key)
+  local g = M.gcdFor(n, key)
+  local dt = ct > g and ct or g -- = math.max(g, ct)
+  local adv = (limit and limit < dt) and limit or dt
+  lowerOwnCds(n, adv) -- what fillScratch(n, adv) does to the cooldowns
+  local inf = n.inflight -- and what it does to the spells in flight (a wait leaves none)
+  if next(inf) then for k in pairs(inf) do inf[k] = nil end end
+  return applyOn(n, key, ct, dt, adv)
 end
 
 -- candidates in spells.CATALOG order, waitSwing last

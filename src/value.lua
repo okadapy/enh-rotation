@@ -67,11 +67,12 @@ function M.manaPrice(S)
   return w.mana * ref
 end
 
--- Without mana spent only S.mode, S.target.hp, S.target.hpMax and S.target.dead are read from S
--- (search relies on it for its allocation-free tail).
+-- Without mana spent, or with price (= manaPrice(S), taken by the caller), only S.mode,
+-- S.target.hp, S.target.hpMax and S.target.dead are read from S (search relies on it for its
+-- allocation-free tail and for a press in the buffer of the wait before it).
 -- The kill counts when the target dies in this step, by our damage or at its time-to-die: the
 -- model stops counting damage there, so "killed by hp" alone flipped with every noisy estimate.
-function M.step(S, S2, dmg, manaSpent)
+function M.step(S, S2, dmg, manaSpent, price)
   local W = M.WEIGHTS
   local w = W[S.mode] or W.group
   dmg = dmg or 0
@@ -79,7 +80,7 @@ function M.step(S, S2, dmg, manaSpent)
   local hpLeft = hp > 0 and hp or 0 -- = math.max(0, hp), math.min below the same, inlined (hot)
   local useful = hpLeft < dmg and hpLeft or dmg
   local v = useful + (dmg - useful) * w.overkill
-  if manaSpent and manaSpent ~= 0 then v = v - manaSpent * M.manaPrice(S) end
+  if manaSpent and manaSpent ~= 0 then v = v - manaSpent * (price or M.manaPrice(S)) end
   if w.kill > 0 and hpLeft > 0 and not S.target.dead and ((S2.target.hp or 0) <= 0 or S2.target.dead) then
     v = v + w.kill * (S.target.hpMax or hpLeft)
   end

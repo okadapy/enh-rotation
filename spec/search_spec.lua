@@ -385,6 +385,45 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.equal("lightningBolt", plan.steps[1].key)
   end)
 
+  -- review example: with the node cap at 220 the last layer was cut before the Flame Shock line
+  -- (a diversity entry at the end of the beam) was expanded; the shown plan was Stormstrike,
+  -- Chain Lightning, Lava Lash, Bolt, and after Stormstrike the list put Flame Shock in front
+  it("level 80, everything ready, Flame Shock down: the plan is the full search's, Flame Shock in the first two", function()
+    local Sc = require("scenario")
+    local S = Sc.state(80)
+    S.totems.fire = { kind = "magma", remains = 15 }
+    local plan = search.best(S)
+    local full = search.best(S, { nodeCap = 1e6 })
+    local keys = {}
+    for i, st in ipairs(plan.steps) do keys[i] = st.key end
+    assert.is_true(keys[1] == "flameShock" or keys[2] == "flameShock", table.concat(keys, ", "))
+    assert.are.near(full.value, plan.value, 1e-6)
+    assert.are.equal(#full.steps, #plan.steps)
+    for i, st in ipairs(full.steps) do assert.are.equal(st.key, plan.steps[i].key, "step " .. i) end
+  end)
+
+  -- Shamanistic Rage returns mana with every swing: a Bolt the mana cannot pay for now is
+  -- possible right after the swing ("swing, then Bolt"); the replay used to check the button
+  -- before the swing, so the search's own plan did not replay (the planner then searched anew
+  -- on a pulse and the first button changed without an event)
+  it("a weave paid by the mana of the swing before it replays to the plan's own value", function()
+    local Sc = require("scenario")
+    local S = Sc.state(80)
+    S.totems.fire = { kind = "magma", remains = 15 }
+    S.target.fs = 12
+    S.player.mana = 300
+    S.buffs.rage = 10
+    S.buffs.mw = { stacks = 3, remains = 20 }
+    Sc.cd(S, { stormstrike = 7, lavaLash = 5, shock = 4, fireNova = 6 })
+    S.swing.mh.next, S.swing.oh.next = 0.5, 1.8
+    assert.is_nil(require("model").readyIn(S, "lightningBolt"))
+    local plan = search.best(S)
+    assert.are.equal("lightningBolt", plan.steps[1].key)
+    assert.is_true(plan.steps[1].afterSwing)
+    assert.are.near(plan.value, search.evaluate(S, plan.steps), 1e-6)
+    for f, steps in pairs(plan.byFirst) do assert.is_number(search.evaluate(S, steps), f) end
+  end)
+
   -- the beam compares chains by button count: "Chain Lightning, then wait for Stormstrike" beat
   -- "Chain Lightning, Fire Nova in the gap, Stormstrike" at the cut; fillIdle tries the gap
   it("a wait of a GCD or more inside the plan gets a ready button", function()
