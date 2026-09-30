@@ -165,7 +165,7 @@ local function extend(o, node, a, rootNow)
   end
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
-  local S2, dmg = o.model.apply(S, a.key)
+  local S2, dmg = o.model.apply(S, a.key, o.horizon - at)
   v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   local steps = {}
   for i, s in ipairs(node.steps) do steps[i] = s end
@@ -226,7 +226,7 @@ local function candidate(o, node, a, rootNow)
   else
     c.pre, c.reasonAfterSwing = S, afterSwing
   end
-  local S2, dmg = peekApply(S, a.key)
+  local S2, dmg = peekApply(S, a.key, o.horizon - at)
   c.v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   return c, S2
 end
@@ -253,7 +253,7 @@ local function materialize(o, c)
   else
     local pre = c.pre
     if not pre then pre = o.model.wait(c.parent.S, c.a.readyIn) end
-    c.S = o.model.apply(pre, c.a.key)
+    c.S = o.model.apply(pre, c.a.key, o.horizon - c.at)
   end
 end
 
@@ -266,7 +266,7 @@ local function peekState(o, c)
   local m = o.model
   if c.waited then return (m.peekWait(c.parent.S, c.a.readyIn)) end
   local pre = c.pre or m.peekWait(c.parent.S, c.a.readyIn)
-  return (m.peekApply(pre, c.a.key))
+  return (m.peekApply(pre, c.a.key, o.horizon - c.at))
 end
 
 local function scoreFrom(o, CS, v, rootNow)

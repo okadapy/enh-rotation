@@ -173,6 +173,15 @@ describe("search on the real model (wowsims rules) #integration", function()
 
   -- a cast that ends after the horizon would get its damage while its cost (the delayed swings)
   -- falls outside the horizon: it is not planned at all
+  it("swings after the horizon are not counted for a button pressed just before it", function()
+    local soon = busy({ swing = { mh = { next = 6.1 }, oh = { next = 6.3 } }, spells = { earthShock = { cd = 0 } } })
+    local late = busy({ swing = { mh = { next = 9 }, oh = { next = 9.2 } }, spells = { earthShock = { cd = 0 } } })
+    local plan = { { key = "earthShock", at = 5.9, reason = "" } }
+    local v1 = search.evaluate(soon, plan, { budgetMs = 1e9 })
+    local v2 = search.evaluate(late, plan, { budgetMs = 1e9 })
+    assert.are.near(v2, v1, 1e-6)
+  end)
+
   it("never plans a cast that would end after the horizon", function()
     local S = busy({ talents = { maelstromWeapon = 0 }, spells = { lightningBolt = { cd = 0 } } })
     local ct = require("model").castTime(S, "lightningBolt")

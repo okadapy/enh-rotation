@@ -502,15 +502,16 @@ end
 
 local CAST = {} -- apply's cast description for advance, reused (advance does not keep it)
 
--- apply() on a copy n of S whose cooldowns are already lowered by dt
-local function applyOn(n, key, ct, dt)
+-- apply() on a copy n of S whose cooldowns are already lowered by adv (<= dt): the state moves
+-- adv seconds on; if adv < dt the rest of the GCD / cast stays in gcdRemains / castRemains
+local function applyOn(n, key, ct, dt, adv)
   local meta = spells.byKey[key]
   local sp = n.spells[key]
   local dmg = alive(n) and damage.action(n, key) or 0
   local mwAtCast = math.floor((n.buffs.mw.stacks or 0) + 1e-9)
 
   setMana(n, n.player.mana - (sp.cost or 0))
-  local cd = M.cooldownFor(n, key) - dt
+  local cd = M.cooldownFor(n, key) - adv
   if cd < 0 then cd = 0 end
   if meta.sharedCd then
     for _, k in ipairs(M.SHARED[meta.sharedCd]) do
@@ -562,22 +563,26 @@ local function applyOn(n, key, ct, dt)
   elseif n.swing.resetByInstant and n.swing.resetByInstant[key] then
     M.resetSwings(n)
   end
-  local autoDmg = M.advance(n, dt, cast, true)
-  return n, dmg + autoDmg, dt
+  n.gcdRemains, n.castRemains = dt, ct
+  local autoDmg = M.advance(n, adv, cast, true)
+  return n, dmg + autoDmg, adv
 end
 
-function M.apply(S, key)
+-- limit (optional): move the state at most this far (search: not past its horizon)
+function M.apply(S, key, limit)
   local ct = M.castTime(S, key)
   local dt = math.max(M.gcdFor(S, key), ct)
-  -- cooldowns are lowered by dt right in the copy; advance skips them
-  return applyOn(M.clone(S, dt), key, ct, dt)
+  local adv = (limit and limit < dt) and limit or dt
+  -- cooldowns are lowered by adv right in the copy; advance skips them
+  return applyOn(M.clone(S, adv), key, ct, dt, adv)
 end
 
 -- like apply(), but the result is a scratch state (see peekWait)
-function M.peekApply(S, key)
+function M.peekApply(S, key, limit)
   local ct = M.castTime(S, key)
   local dt = math.max(M.gcdFor(S, key), ct)
-  return applyOn(fillScratch(S, dt), key, ct, dt)
+  local adv = (limit and limit < dt) and limit or dt
+  return applyOn(fillScratch(S, adv), key, ct, dt, adv)
 end
 
 -- candidates in spells.CATALOG order, waitSwing last

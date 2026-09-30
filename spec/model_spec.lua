@@ -398,6 +398,22 @@ describe("model", function()
       for _, a in ipairs(model.actions(S)) do assert.are_not.equal("lavaLash", a.key) end
     end)
 
+    it("apply with a time limit stops there: the rest of the GCD stays, later swings are not counted", function()
+      local S = fixtures.state({ swing = { mh = { next = 1.0 }, oh = { next = 1.2 } } })
+      local full, dFull, dt = model.apply(S, "earthShock")
+      local cut, dCut, dtCut = model.apply(S, "earthShock", 0.5)
+      assert.are.near(1.5, dt, 1e-9)
+      assert.are.near(0.5, dtCut, 1e-9)
+      assert.are.near(S.now + 0.5, cut.now, 1e-9)
+      assert.are.near(1.0, cut.gcdRemains, 1e-9)
+      assert.is_true(dCut < dFull) -- the swings at 1.0 and 1.2 fall after the limit
+      assert.are.equal(0, full.gcdRemains)
+      local P, dP, dtP = model.peekApply(S, "earthShock", 0.5)
+      assert.are.equal(dCut, dP)
+      assert.are.equal(dtCut, dtP)
+      assert.are.near(1.0, P.gcdRemains, 1e-9)
+    end)
+
     it("every ready action of the fixture applies without errors and without mutating S", function()
       local S = fixtures.state({ buffs = { ls = { charges = 0 } } })
       local before = util.copy(S)
