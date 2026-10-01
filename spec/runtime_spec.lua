@@ -209,6 +209,25 @@ describe("runtime", function()
     assert.is_nil(runtime.idleHint({ steps = { { key = "flameShock", at = 0 } } }, S))
     assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
     S.target.range = "melee"
+    assert.are.equal("saveMana", runtime.idleHint({ steps = {} }, S).key)
+  end)
+
+  it("explains an empty plan in solo melee: auto-attacks, spells are not worth the mana", function()
+    local S = Sc.state(53)
+    S.target.range = "melee"
+    local h = runtime.idleHint({ steps = {} }, S)
+    assert.are.equal("saveMana", h.key)
+    assert.are.equal("Auto-attack: save mana", h.reason)
+    assert.are.equal(runtime.ALERT_ICONS.saveMana, h.icon)
+    assert.is_nil(runtime.idleHint({ steps = { { key = "lavaLash", at = 1 } } }, S))
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
+    S.swing.attacking = false -- no auto-attack: that is an alert of its own
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S.swing.attacking = true
+    S.target.dead = true
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S = Sc.state(80) -- raid: mana is cheap, an empty plan is only the GCD or cooldowns
+    S.target.range = "melee"
     assert.is_nil(runtime.idleHint({ steps = {} }, S))
   end)
 

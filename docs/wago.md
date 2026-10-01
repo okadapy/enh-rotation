@@ -20,7 +20,7 @@ There is no fixed priority list inside. A small combat simulator tries sequences
 - **Tick marks** — your coming main-hand (gold) and off-hand (grey) swings.
 - **Green band** — start a 1–4 stack Lightning Bolt here and the swing is not delayed.
 - **Dots** — Maelstrom Weapon stacks.
-- **Alert icon with text** — auto-attack off, shield missing, weapon imbue missing, low mana, out of range, Bloodlust ready.
+- **Alert icon with text** — auto-attack off, shield missing, weapon imbue missing, low mana, out of range, Bloodlust ready; when nothing is worth pressing it says why (`Move into melee`, `Drink`, `Out of mana`, `Auto-attack: save mana`).
 - **Text under the icon** — why this button (e.g. `5 stacks: instant`, `pull: target out of melee`).
 
 The suggestion changes only after a combat event, and only when the new plan is clearly better (8%). It does not flicker between two equal buttons.

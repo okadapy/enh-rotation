@@ -26,6 +26,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт). На �
   - `Auto-attack is off` — в ближнем бою без автоатаки нет ударов, стаков Maelstrom и маны от Shamanistic Rage;
   - `Lightning Shield missing` / `Water Shield missing` (какой щит держать — настройка **Shield**);
   - `Main-hand imbue missing` / `Off-hand imbue missing` — нет чар на оружии;
+  - `Auto-attack: save mana` — соло, ближний бой, автоатака идёт, мана есть, но за 6 с ни одно заклинание не окупает свою ману (её потом придётся пить): бей автоатакой. Тратить больше — настройка **Mana policy (solo)** = `spend`;
   - `Low mana: Shamanistic Rage`, `Out of mana` (в ближнем бою ни на что не хватает маны и Rage не готов), `Drink` (вне боя без цели, маны меньше половины; соло — и с целью не в ближнем бою, если ни вы, ни она не в бою, а маны не больше 30%: сначала попить, потом подходить; не показывается, пока висит бафф Drink или Refreshment от наколдованной еды мага);
   - `Target out of range`, `Move into melee`;
   - `Bloodlust ready` / `Heroism ready` — только в группе, в бою с врагом, без Sated/Exhaustion и если включено в настройках.
