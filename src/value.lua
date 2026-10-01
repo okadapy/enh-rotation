@@ -421,16 +421,20 @@ end
 -- the margin an Earth Shock that saved 2.0-2.8 s (130 damage a second at 52) was within 50 of
 -- its mana, and the shock came and went as the mob's health fell. Without a memo (direct
 -- calls) the kill counts in full.
+--
+-- The expected time of death can fall after the horizon's end with the health already gone (the
+-- model's survival integral): the seconds to it count below zero, so a press that moves it from
+-- 7.2 s to 5.8 s saves as much as one inside the horizon. Cut at 0 there, every kill expected
+-- after the end was worth the same, and a press that sped it up was pure mana.
 M.FINISH_MIN = 0.5
 function M.killCredit(S, live)
   local died = S.target.diedAt
-  if live or not died or S.now <= died then return 0 end
+  if live or not died then return 0 end
   local m = S.memo
   local base = m and m.killBase
   if base and died < base then
     died = died + M.FINISH_MIN
     if died > base then died = base end
-    if S.now <= died then return 0 end
   end
   return (S.now - died) * M.dpsEstimate(S) * M.DISCOUNT
 end

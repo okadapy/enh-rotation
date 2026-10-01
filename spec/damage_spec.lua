@@ -284,10 +284,14 @@ describe("damage", function()
       assert.are.near(0.2 / 1.2, procs, 1e-9)
       assert.are.near((0.2 / 1.2) * 2 * (750 + 1250 / 14 * 2.6) * 1.187 * AM80, dmg, 1e-6)
     end)
-    it("windfury: Elemental Weapons 3/3 adds 40% to AP bonus", function()
-      local S = s80(); S.talents.elementalWeapons = 3
-      local dmg = damage.wf(S)
-      assert.are.near((0.2 / 1.2) * 2 * (750 + 1250 * 1.4 / 14 * 2.6) * 1.187 * AM80, dmg, 1e-6)
+    -- tooltip 29080: "Increases the damage caused by your Windfury Weapon effect by 40%";
+    -- wowsims weapon_imbues.go: DamageMultiplier 1.13 / 1.27 / 1.4 on the whole attack
+    it("windfury: Elemental Weapons multiplies the whole attack's damage, not the AP bonus", function()
+      for rank, mult in ipairs({ 1.13, 1.27, 1.4 }) do
+        local S = s80(); S.talents.elementalWeapons = rank
+        local dmg = damage.wf(S)
+        assert.are.near((0.2 / 1.2) * 2 * (750 + 1250 / 14 * 2.6) * mult * 1.187 * AM80, dmg, 1e-6)
+      end
     end)
     it("no windfury without the enchant", function()
       local S = s80(); S.weapons.mh.enchant = "ft"
@@ -337,12 +341,18 @@ describe("damage", function()
       local w = (750 - AP14 * 2.6 + AP14 * 2.4) + (375 + 0.5 * (AP14 * 2.4 - AP14 * 2.6))
       assert.are.near(w * 1.187 * AM80, damage.action(S, "stormstrike"), 1e-6)
     end)
-    it("Lava Lash = off hand normalized, +25% with flametongue, no armor, plus FT proc", function()
+    -- tooltip 60103 effect "Weapon Damage - %: 100" (not Normalized Weapon Damage, as Stormstrike);
+    -- wowsims lavalash.go: OHWeaponDamage(sim, AP), the weapon's own speed
+    it("Lava Lash = off hand not normalized, +25% with flametongue, no armor, plus FT proc", function()
       local S = s80()
       S.spells.lavaLash = { id = 60103, rank = 1, cd = 0, cost = 200, cast = 0 }
-      local oh = 375 + 0.5 * (AP14 * 2.4 - AP14 * 2.6)
-      local expected = oh * 1.25 * 1.187 + damage.ftHit(S, "oh") * 0.935
+      local expected = 375 * 1.25 * 1.187 + damage.ftHit(S, "oh") * 0.935
       assert.are.near(expected, damage.action(S, "lavaLash"), 1e-6)
+    end)
+    it("Lava Lash with a fast off hand: the tooltip damage, the hasted swing does not matter", function()
+      local S = s80(); S.weapons.oh = { speed = 1.0, base = 1.5, min = 200, max = 300 }
+      S.spells.lavaLash = { id = 60103, rank = 1, cd = 0, cost = 200, cast = 0 }
+      assert.are.near(250 * 1.187, damage.action(S, "lavaLash"), 1e-6)
     end)
     it("Lava Lash without off hand = 0", function()
       local S = s80(); S.weapons.oh = nil
