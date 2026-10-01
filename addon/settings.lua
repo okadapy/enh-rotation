@@ -8,8 +8,10 @@ M.HELP = {
   "/dmr lock | unlock - move the timeline; /dmr show | hide",
   "/dmr check - is everything ready (imbues, shield, totems, ranks)",
   "/dmr guide - the first-run guide again",
+  "/dmr last - review of the last fights; /dmr history - per boss",
 }
-M.ACTIONS = { export = true, lock = true, unlock = true, show = true, hide = true, check = true, guide = true }
+M.ACTIONS = { export = true, lock = true, unlock = true, show = true, hide = true, check = true, guide = true,
+              last = true, history = true }
 
 -- the addon's own options, on top of the aura's (tools/aura.lua M.OPTIONS): the aura has none of these
 M.ADDON_OPTIONS = {
@@ -21,6 +23,10 @@ M.ADDON_OPTIONS = {
     desc = "A short card at levels 10, 20 ... 80, out of combat, once", default = true },
   { type = "toggle", key = "elvui", name = "ElvUI style",
     desc = "Style these windows like ElvUI when it is installed. Turning it off takes a /reload", default = true },
+  -- addon/review.lua: a line in chat once a fight is valued (/dmr last opens the full review)
+  { type = "toggle", key = "fightSummary", name = "Fight summary in chat after a fight",
+    desc = "After a fight of 20s or more: presses that matched the plan and the top tip (/dmr last: the full review)",
+    default = true },
 }
 
 -- options plus the extra ones not in it yet, as a new list: the build's list stays the aura's

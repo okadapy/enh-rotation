@@ -529,12 +529,25 @@ local function search(o, S, check)
     if check then check() end
   end
   -- byFirst: the best chain found for every first button ("key" or "key+swing"), so the planner
-  -- can weigh a held first button by its best continuation, not by the old plan's stale tail
+  -- can weigh a held first button by its best continuation, not by the old plan's stale tail;
+  -- firstValue: its score (after fillIdle when it was filled) - the fight review prices a press by it
   local byFirst = {}
+  --@addon
+  local firstValue = {}
+  --@end
   local function result(value, steps)
-    return { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes, byFirst = byFirst }
+    local r = { value = value, steps = steps, capped = capped, timedOut = capped, nodes = nodes, byFirst = byFirst }
+    --@addon
+    r.firstValue = firstValue
+    --@end
+    return r
   end
-  for f, c in pairs(bestByFirst) do byFirst[f] = stepsOf(c) end
+  for f, c in pairs(bestByFirst) do
+    byFirst[f] = stepsOf(c)
+    --@addon
+    firstValue[f] = c.score
+    --@end
+  end
   if not bestNode then return result(0, {}) end
   -- The best chain of every first button close enough to the best gets its waits filled
   -- (fillIdle), then the best of them wins: a first button must not lose only because its chain
@@ -551,6 +564,9 @@ local function search(o, S, check)
   for _, c in ipairs(list) do
     local v, st = fillIdle(o, S, c.score, stepsOf(c), check, budget)
     byFirst[c.first] = st
+    --@addon
+    firstValue[c.first] = v
+    --@end
     if v > top then top, steps = v, st end
   end
   best = top

@@ -106,6 +106,7 @@ function G.frame(kind, name)
   function f:GetRegions() return unpack(self.children) end
   -- dialog frames (export window): backdrop, dragging, edit box, scroll frame, buttons
   function f:SetBackdrop(b) self.backdrop = b end
+  function f:SetBackdropColor(...) self.backdropColor = { ... } end
   function f:SetFrameStrata(s) self.strata = s end
   function f:SetMovable(m) self.movable = m end
   function f:EnableMouse(m) self.mouse = m end
@@ -258,6 +259,13 @@ function G.install(cfg)
     local t = tgt()
     return t and t.classification or "normal"
   end
+  _G.UnitName = function(u)
+    if u == "player" then return "Me" end
+    local t = tgt()
+    return t and (t.name or "Mob") or nil
+  end
+  _G.time = function() return 1000 end
+  _G.date = function() return "2026-01-01" end
   _G.UnitClass = function() return "Shaman", cfg.class or "SHAMAN" end
   _G.UnitAttackPower = function() return cfg.ap or 4000, 0, 0 end
   _G.GetSpellBonusDamage = function(school) return ((cfg.sp or {})[school]) or 1000 end
@@ -317,6 +325,7 @@ function G.install(cfg)
     return f
   end
   _G.UIParent = G.frame("Frame", "UIParent")
+  _G.tinsert = table.insert
   _G.WorldFrame = G.frame("Frame", "WorldFrame")
   _G.InCombatLockdown = function() return cfg.lockdown and 1 or nil end
   -- IsInInstance's second value: "none", "pvp", "arena", "party", "raid" (FrameXML WorldStateFrame.lua)
@@ -355,7 +364,7 @@ function G.install(cfg)
   _G.SendAddonMessage = function(...) G.addonSent[#G.addonSent + 1] = { ... } end
   for _, k in ipairs({ "Addon", "DB", "CharDB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat",
                        "PanelAdvanced", "PanelProfiles", "Highlight", "Explain", "Checks", "Ready", "Wizard", "Card",
-                       "MinimapButton", "Guide", "Coach", "Events" }) do
+                       "MinimapButton", "Guide", "Coach", "Events", "FightWindow", "FightWindowHistory", "Fights" }) do
     _G["DoubtMyRotation" .. k] = nil
   end
   return cfg
