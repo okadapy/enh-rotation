@@ -258,7 +258,7 @@ function fillState(n, S)
   n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
   n.cooldowns, n.cdAllowed, n.weaveMin, n.memo = S.cooldowns, S.cdAllowed, S.weaveMin, S.memo
   --@addon
-  n.mods = S.mods
+  if n.mods ~= S.mods then n.mods = S.mods end -- never a nil set on a missing key (Lua 5.1 adds it)
   --@end
   local map, sp = n.spells, S.spells
   map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
@@ -1043,7 +1043,7 @@ local function fillScratch(S, dt)
     n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
     n.weaveMin = S.weaveMin
     --@addon
-    n.mods = S.mods
+    if n.mods ~= S.mods then n.mods = S.mods end -- never a nil set on a missing key
     --@end
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
@@ -1268,9 +1268,8 @@ local function applyOn(n, key, ct, dt, adv)
   if CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
   --@addon
   local mods = n.mods
-  local proc = mods and mods.proc
-  if proc and (proc.key == key or (proc.key == "shock" and SHOCK_RANGE[key])) then
-    procRelic(n.buffs.relic, proc, ct > 0 and ct + (n.latency or 0) or 0)
+  if mods then local proc = mods.proc -- without S.mods: one test (hot)
+    if proc and (proc.key == key or (proc.key == "shock" and SHOCK_RANGE[key])) then procRelic(n.buffs.relic, proc, ct > 0 and ct + (n.latency or 0) or 0) end
   end
   --@end
   -- Stormstrike and Lava Lash start auto attack (3.3.5a, as every melee attack): the next swing
