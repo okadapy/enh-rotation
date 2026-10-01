@@ -1,8 +1,8 @@
-# EnhRot — wago.io listing
+# DoubtMyRotation — wago.io listing
 
 Copy the sections below into the wago.io form. Title, then the description (wago renders Markdown).
 
-**Title:** EnhRot — Enhancement Shaman rotation helper (3.3.5a)
+**Title:** DoubtMyRotation - Enh Shaman
 
 **Game version:** Wrath of the Lich King, 3.3.5a (WeakAuras 5.22 backport). Not for WotLK Classic or Retail.
 
@@ -12,7 +12,7 @@ Copy the sections below into the wago.io form. Title, then the description (wago
 
 ## What it does
 
-EnhRot shows, on one short timeline, what to press now and what comes next, together with your weapon swings and the window in which a Lightning Bolt fits without delaying a swing.
+DoubtMyRotation shows, on one short timeline, what to press now and what comes next, together with your weapon swings and the window in which a Lightning Bolt fits without delaying a swing.
 
 There is no fixed priority list inside. A small combat simulator tries sequences of buttons over the next 6 seconds and picks the one that deals the most damage. It accounts for mana, cooldowns, Maelstrom Weapon stacks, swing timing, totems, the number of enemies and how long the target will live.
 
@@ -43,7 +43,7 @@ Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elem
 
 ## First run
 
-After import the bar sits a little below the screen centre. Move it: `/wa` → the `EnhRot` group → drag. Stand at a training dummy with auto-attack on: gold ticks are your coming swings, and the text next to any alert tells you what is missing.
+After import the bar sits a little below the screen centre. Move it: `/wa` → the `DoubtMyRotation` group → drag. Stand at a training dummy with auto-attack on: gold ticks are your coming swings, and the text next to any alert tells you what is missing.
 
 ## Not included
 
@@ -65,7 +65,7 @@ Not affiliated with Blizzard Entertainment.
 
 ## Publishing checklist (maintainer)
 
-1. Import string: `EnhRot.txt` from the v1.0.0 GitHub release.
+1. Import string: `DoubtMyRotation.txt` from the latest GitHub release.
 2. Screenshots: the bar in melee with ticks, the green window and a 3-stack Bolt; an alert with text; the options tab. A short pull GIF if possible.
 3. After the first upload wago gives the aura a slug and version. The WeakAuras Companion app then offers updates for new wago versions: each release is uploaded as a new version of the same wago page (Import → "update existing").
 4. Licence field: MIT.

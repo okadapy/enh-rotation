@@ -1,11 +1,11 @@
-# EnhRot
+# DoubtMyRotation (код: EnhRot)
 
 WeakAura-подсказчик для энх-шамана под WotLK 3.3.5a (WeakAuras 5.22 backport): мини-симулятор боя на 6 с вперёд, лента времени, часы ударов. Инструкция для игрока — `README.md`.
 
 - Тесты: `docker compose run --rm test busted`
 - Один файл: `docker compose run --rm test busted spec/<name>_spec.lua`
 - Без интеграционных (настоящие соседние модули): `docker compose run --rm test busted --exclude-tags=integration`
-- Сборка строки импорта: `docker compose run --rm test lua tools/build.lua` → `dist/EnhRot.txt` (`dist/` не в git)
+- Сборка строки импорта: `docker compose run --rm test lua tools/build.lua` → `dist/DoubtMyRotation.txt` (`dist/` не в git)
 - Декодировать строку: `docker compose run --rm test lua tools/build.lua decode <file>`
 - Снимки из игры в тесты: `docker compose run --rm test lua tools/build.lua import-snapshots <WeakAuras.lua>` → `spec/fixtures/recorded.lua`
 - Сводка журнала нажатий из отчёта: `docker compose run --rm test lua tools/build.lua presses <файл>` (строка экспорта или `WeakAuras.lua`)

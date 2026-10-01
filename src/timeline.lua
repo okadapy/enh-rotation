@@ -125,7 +125,7 @@ function M.exportWindow(text, refresh)
     w:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     local title = w:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", w, "TOP", 0, -14)
-    title:SetText("EnhRot snapshots: Ctrl+C, paste into the bug report")
+    title:SetText("DoubtMyRotation snapshots: Ctrl+C, paste into the bug report")
     w.title = title
     local close = CreateFrame("Button", nil, w, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", w, "TOPRIGHT", -4, -4)
