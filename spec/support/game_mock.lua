@@ -91,6 +91,7 @@ function G.frame(kind, name)
   function f:GetRegions() return unpack(self.children) end
   -- dialog frames (export window): backdrop, dragging, edit box, scroll frame, buttons
   function f:SetBackdrop(b) self.backdrop = b end
+  function f:SetBackdropColor(...) self.backdropColor = { ... } end
   function f:SetFrameStrata(s) self.strata = s end
   function f:SetMovable(m) self.movable = m end
   function f:EnableMouse(m) self.mouse = m end
@@ -296,7 +297,7 @@ function G.install(cfg)
   _G.InterfaceOptionsFrame_OpenToCategory = function(panel) G.opened = panel; G.opens = G.opens + 1 end
   G.addonSent = {}
   _G.SendAddonMessage = function(...) G.addonSent[#G.addonSent + 1] = { ... } end
-  for _, k in ipairs({ "Addon", "DB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat", "PanelAdvanced" }) do
+  for _, k in ipairs({ "Addon", "DB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat", "PanelAdvanced", "FightWindow", "FightWindowHistory" }) do
     _G["DoubtMyRotation" .. k] = nil
   end
   return cfg
