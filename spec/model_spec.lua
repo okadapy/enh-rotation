@@ -612,7 +612,8 @@ describe("model", function()
       -- its health: 2.6, 2.6, 1.9, 2.4, 3.2, 3.8, 3.4 s saved by an Earth Shock)
       it("the expected time of death grows smoothly with the health", function()
         local st = damage.swingStats(solo(1))
-        assert.is_true(st.vmh > 0 and st.voh > 0)
+        local sv = damage.swingVars(solo(1))
+        assert.is_true(sv.mh > 0 and sv.oh > 0)
         local prev
         for hp = 50, 2 * (st.mh + st.oh), 10 do -- swings at 0.5 and 1.6, then 2.6 s later: dead by 4.2
           local S = solo(hp)

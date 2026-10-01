@@ -223,7 +223,7 @@ function M.cloneState(S)
   return {
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
-    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, manaPolicy = S.manaPolicy, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
@@ -251,7 +251,6 @@ function fillState(n, S)
   n.now, n.gcdRemains, n.castRemains, n.gcd, n.latency = S.now, S.gcdRemains, S.castRemains, S.gcd, S.latency
   n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
   n.cooldowns, n.cdAllowed, n.weaveMin, n.memo = S.cooldowns, S.cdAllowed, S.weaveMin, S.memo
-  n.manaPolicy = S.manaPolicy
   local map, sp = n.spells, S.spells
   map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
   map.frostShock, map.lightningBolt, map.chainLightning = sp.frostShock, sp.lightningBolt, sp.chainLightning
@@ -635,7 +634,8 @@ local function firstSwing(s, cast)
   return at
 end
 
--- the share of an area spell's damage (damage.targets: Magma Totem, Fire Nova, Chain Lightning)
+-- Solo (the health ends the target): the share of an area spell's damage (damage.targets: Magma
+-- Totem, Fire Nova, Chain Lightning)
 -- that falls on the target. The rest hits the other enemies, not the target's health: counted
 -- there, Magma Totem and a Fire Nova on two mobs took the target's health twice as fast, a mob
 -- of 2438 hp "died" in 6 s, and a plan with Stormstrike lost the remaining totem and swings to it.
@@ -701,9 +701,9 @@ local function survival(n, hp, cast, v, from, T, k)
   local fire = n.totems.fire
   local src = fire.kind and FIRE_SOURCE[fire.kind]
   local r = damage.rates(n)
-  local amh, aoh, smh, soh, st
+  local amh, aoh, smh, soh, st, sv
   if sw.attacking and t.range == "melee" then
-    st = damage.swingStats(n)
+    st, sv = damage.swingStats(n), damage.swingVars(n)
     local mh, oh = sw.mh, sw.oh
     if mh and (mh.speed or 0) > 0 then amh, smh = firstSwing(mh, cast), mh.speed end
     if oh and (oh.speed or 0) > 0 then aoh, soh = firstSwing(oh, cast), oh.speed end
@@ -722,9 +722,9 @@ local function survival(n, hp, cast, v, from, T, k)
     if e >= T then return acc + (1 - p) * (T - prev) end
     acc = acc + (1 - p) * (e - prev)
     if hand == 1 then
-      done, v, amh = done + st.mh, v + st.vmh, amh + smh
+      done, v, amh = done + st.mh, v + sv.mh, amh + smh
     elseif hand == 2 then
-      done, v, aoh = done + st.oh, v + st.voh, aoh + soh
+      done, v, aoh = done + st.oh, v + sv.oh, aoh + soh
     end
     p = pDead(periodicUpTo(n, e, r, src) + done - hp, v)
     prev = e
@@ -749,19 +749,20 @@ killTime = function(n, dt, cast)
   local total, var = periodicUpTo(n, dt, r, src), 0
   if swings then
     st = damage.swingStats(n)
+    local sv = damage.swingVars(n)
     local mh, oh = sw.mh, sw.oh
     if mh and (mh.speed or 0) > 0 then
       amh, smh = firstSwing(mh, cast), mh.speed
       if amh <= dt + 1e-9 then
         local c = math.floor((dt + 1e-9 - amh) / smh) + 1
-        total, var = total + st.mh * c, var + st.vmh * c
+        total, var = total + st.mh * c, var + sv.mh * c
       end
     end
     if oh and (oh.speed or 0) > 0 then
       aoh, soh = firstSwing(oh, cast), oh.speed
       if aoh <= dt + 1e-9 then
         local c = math.floor((dt + 1e-9 - aoh) / soh) + 1
-        total, var = total + st.oh * c, var + st.voh * c
+        total, var = total + st.oh * c, var + sv.oh * c
       end
     end
   end
@@ -875,7 +876,7 @@ function M.advance(n, dt, cast, cdsDone)
         -- only Searing Totem can be out of reach (damage.fireUptime is the identity for the rest)
         if src == "searingTotem" then span = damage.fireUptime(n, src, span) end
         dmg = dmg + r[src] * span
-        if src == "magmaTotem" then splash = r[src] * span * (1 - ownShare(n, src)) end
+        if byHp and src == "magmaTotem" then splash = r[src] * span * (1 - ownShare(n, src)) end
       end
       if wolves > 0 then dmg = dmg + r.feralSpirit * (wolves < life and wolves or life) end
     end
@@ -1004,7 +1005,6 @@ local function fillScratch(S, dt)
     n.shieldPref = S.shieldPref
     n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
     n.weaveMin = S.weaveMin
-    n.manaPolicy = S.manaPolicy
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.resetByInstant = S.swing.resetByInstant
@@ -1237,10 +1237,11 @@ local function applyOn(n, key, ct, dt, adv)
   local left -- the health the press leaves, below 0 when it kills (survival)
   if dmg > 0 then
     local own = dmg
-    if key == "fireNova" or key == "chainLightning" then own = dmg * ownShare(n, key) end
+    local solo = n.mode == "solo" and not t.guessed -- M.hpDeath(n), inlined
+    if solo and (key == "fireNova" or key == "chainLightning") then own = dmg * ownShare(n, key) end
     left = (t.hp or 0) - own
     t.hp = left > 0 and left or 0 -- = math.max(0, left)
-    if n.mode == "solo" and not t.guessed then t.varDealt = (t.varDealt or 0) + own * own * damage.actionCv2(n, key) end
+    if solo then t.varDealt = (t.varDealt or 0) + own * own * damage.actionCv2(n, key) end
   end
 
   local cast

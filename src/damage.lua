@@ -512,8 +512,28 @@ function M.actionCv2(S, key)
   return M.tableCv2(S, YELLOW[key] and "yellow" or "spell")
 end
 
--- expected damage and Maelstrom stacks of one auto attack per hand, for S's buffs; vmh / voh:
--- the variance of one auto attack's damage (swingVar)
+-- the variance of one auto attack's damage per hand (swingVar), for S's buffs (as swingStats);
+-- solo only (model.killTime), so a group search never computes it
+function M.swingVars(S)
+  local m = S.memo
+  local f = 1
+  if m then
+    local ls, ss = S.buffs.ls, S.target.ss
+    if ls and ls.charges and ls.charges > 0 then f = 2 end
+    if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    local slot = m.swingVars
+    local r = slot and slot[f]
+    if r then return r end
+  end
+  local r = { mh = M.swingVar(S, "mh"), oh = M.swingVar(S, "oh") }
+  if m then
+    m.swingVars = m.swingVars or {}
+    m.swingVars[f] = r
+  end
+  return r
+end
+
+-- expected damage and Maelstrom stacks of one auto attack per hand, for S's buffs
 function M.swingStats(S)
   local m = S.memo
   local f = 1
@@ -525,8 +545,7 @@ function M.swingStats(S)
     local r = slot and slot[f]
     if r then return r end
   end
-  local r = { mh = M.auto(S, "mh"), oh = M.auto(S, "oh"), mwmh = M.mwPerSwing(S, "mh"), mwoh = M.mwPerSwing(S, "oh"),
-              vmh = M.swingVar(S, "mh"), voh = M.swingVar(S, "oh") }
+  local r = { mh = M.auto(S, "mh"), oh = M.auto(S, "oh"), mwmh = M.mwPerSwing(S, "mh"), mwoh = M.mwPerSwing(S, "oh") }
   if m then
     m.swingStats = m.swingStats or {}
     m.swingStats[f] = r

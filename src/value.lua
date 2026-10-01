@@ -93,7 +93,10 @@ function M.manaPrice(S)
     -- idle with Stormstrike and Lava Lash ready. A bar that runs dry needs no extra price: what
     -- cannot be paid cannot be pressed.
     -- The player's option (MANA_POLICY) scales it; the reserve (reserveValue) stays as it is.
-    local f = M.MANA_POLICY[S.manaPolicy] or 1
+    -- the search's states carry it in their memo (search.root), not as a field of every copy
+    local pol = S.manaPolicy
+    if pol == nil then local m = S.memo; pol = m and m.manaPolicy end
+    local f = M.MANA_POLICY[pol] or 1
     local dps = M.dpsEstimate(S)
     if dps > 0 then return f * w.mana * dps / M.drinkRate(p.level) end
     return f * w.mana * ref

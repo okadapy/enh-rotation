@@ -287,6 +287,8 @@ local function root(S, o)
   local r = {}
   for k, v in pairs(S) do r[k] = v end
   r.memo = {}
+  -- the solo mana option (value.manaPrice): the model's copies keep the memo, not the field
+  r.memo.manaPolicy = S.manaPolicy
   if o and r.mode == "solo" and r.target then
     local S2 = (o.model.peekWait or o.model.wait)(r, o.horizon)
     local t = S2.target
