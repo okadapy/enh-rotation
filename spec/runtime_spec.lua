@@ -237,6 +237,45 @@ describe("runtime", function()
     assert.is_nil(runtime.idleHint({ steps = {} }, S))
   end)
 
+  -- recorded #63 (level 54, solo, a mob at 30 yd not pulled, 11% mana, empty plan): the hint said
+  -- "Move into melee"; with the bar that empty the drink comes first
+  it("solo, a mob out of melee, nobody in combat, mana at most 30%: Drink before the walk", function()
+    local S = dofile("spec/fixtures/recorded.lua")[63].S
+    assert.are.equal("solo", S.mode)
+    assert.are.equal("30", S.target.range)
+    local h = runtime.idleHint({ steps = {} }, S, false, function() return false end)
+    assert.are.equal("drink", h.key)
+    assert.are.equal("Drink", h.reason)
+    assert.are.equal(runtime.ALERT_ICONS.drink, h.icon)
+    -- already drinking: nothing to add (the walk waits for the drink)
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, false, function() return true end))
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
+    assert.is_nil(runtime.idleHint({ steps = { { key = "lightningBolt", at = 0 } } }, S))
+    -- boundaries: 30% drinks, above it the walk as before
+    local p = S.player
+    p.mana = p.manaMax * 0.3
+    assert.are.equal("drink", runtime.idleHint({ steps = {} }, S).key)
+    p.mana = p.manaMax * 0.31
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    p.mana = p.manaMax * 0.1
+    -- in combat (the player or the mob): the fight is on, go
+    p.inCombat = true
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    p.inCombat = false
+    S.target.inCombat = true
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    S.target.inCombat = false
+    -- in a group: as before
+    S.mode = "group"
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    S.mode = "solo"
+    S.target.range = "20"
+    assert.are.equal("drink", runtime.idleHint({ steps = {} }, S).key)
+    -- in melee the rule does not apply
+    S.target.range = "melee"
+    assert.are_not.equal("drink", (runtime.idleHint({ steps = {} }, S) or {}).key)
+  end)
+
   it("shows the drink hint with no target, and not while the Drink buff is on", function()
     local rt = start(nil, { target = { exists = false }, inCombat = false, mana = 2000, manaMax = 10000 })
     runtime.update(rt, 0.3)

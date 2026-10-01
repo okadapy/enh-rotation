@@ -46,9 +46,12 @@ function M.swingTimes(S, seconds)
   return out
 end
 
+-- The gap before a swing where a Bolt fits. Not when a cast at these stacks would not be
+-- suggested: the weaving option (model.weaveAllowed) keeps Bolt below S.weaveMin stacks in melee.
 function M.castWindow(S, swings)
   local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
   if not (S.spells and S.spells.lightningBolt) or mw < 1 or mw >= 5 or #swings == 0 then return nil end
+  if not model.weaveAllowed(S) then return nil end
   local need = model.castTime(S, "lightningBolt") + (S.latency or 0)
   local prev = 0
   for _, s in ipairs(swings) do
