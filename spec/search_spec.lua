@@ -57,7 +57,7 @@ describe("search.best", function()
     stub.value.step = function(_, _, dmg) return dmg end
     assert.are.equal("lightningBolt", plan.steps[1].key)
     assert.are.near(0.31, plan.steps[1].at, 1e-9)
-    assert.are.equal("3 stacks, fits before swing", plan.steps[1].reason)
+    assert.are.equal("3 Maelstrom: no swing lost", plan.steps[1].reason)
   end)
 
   -- the old wall-clock cut made the plan depend on the computer's speed (and flicker)
@@ -149,29 +149,29 @@ describe("search.signature and reason", function()
 
   it("explains Lightning Bolt and Flame Shock", function()
     stub.setup({})
-    assert.are.equal("5 stacks: instant", search.reason(stub.state({ mw = 5 }), "lightningBolt", false))
-    assert.are.equal("3 stacks, fits before swing", search.reason(stub.state({ mw = 3 }), "lightningBolt", true))
+    assert.are.equal("5 Maelstrom: instant", search.reason(stub.state({ mw = 5 }), "lightningBolt", false))
+    assert.are.equal("3 Maelstrom: no swing lost", search.reason(stub.state({ mw = 3 }), "lightningBolt", true))
     -- the cast (2.5 s x 0.4 = 1 s, + latency) against the next main-hand swing
-    assert.are.equal("3 stacks, fits before swing", search.reason(stub.state({ mw = 3, swing = 1.5 }), "lightningBolt", false))
-    assert.are.equal("3 stacks: delays swing", search.reason(stub.state({ mw = 3, swing = 0.6 }), "lightningBolt", true))
+    assert.are.equal("3 Maelstrom: no swing lost", search.reason(stub.state({ mw = 3, swing = 1.5 }), "lightningBolt", false))
+    assert.are.equal("3 Maelstrom: swing waits", search.reason(stub.state({ mw = 3, swing = 0.6 }), "lightningBolt", true))
     local S = stub.state({ mw = 3, swing = 1.05 })
     S.latency = 0.1
-    assert.are.equal("3 stacks: delays swing", search.reason(S, "lightningBolt", false))
+    assert.are.equal("3 Maelstrom: swing waits", search.reason(S, "lightningBolt", false))
     -- the off hand is held back by a cast too
     S = stub.state({ mw = 4, swing = 1.5 })
     S.swing.oh = { next = 0.2, speed = 2 }
-    assert.are.equal("4 stacks: delays swing", search.reason(S, "chainLightning", false))
+    assert.are.equal("4 Maelstrom: swing waits", search.reason(S, "chainLightning", false))
     S.swing.oh.next = 1.9
-    assert.are.equal("4 stacks, fits before swing", search.reason(S, "chainLightning", false))
-    assert.are.equal("1 stack, fits before swing", search.reason(stub.state({ mw = 1, swing = 3 }), "lightningBolt", false))
-    assert.are.equal("1 stack: delays swing", search.reason(stub.state({ mw = 1, swing = 1 }), "lightningBolt", false))
+    assert.are.equal("4 Maelstrom: no swing lost", search.reason(S, "chainLightning", false))
+    assert.are.equal("1 Maelstrom: no swing lost", search.reason(stub.state({ mw = 1, swing = 3 }), "lightningBolt", false))
+    assert.are.equal("1 Maelstrom: swing waits", search.reason(stub.state({ mw = 1, swing = 1 }), "lightningBolt", false))
     -- no stacks: the cast resets the swing timer whenever it ends
-    assert.are.equal("0 stacks: resets swing", search.reason(stub.state({ mw = 0, swing = 9 }), "lightningBolt", true))
+    assert.are.equal("0 Maelstrom: costs a swing", search.reason(stub.state({ mw = 0, swing = 9 }), "lightningBolt", true))
     -- not attacking: no swing to fit before
     S = stub.state({ mw = 2 })
     S.swing.attacking = false
-    assert.are.equal("2 stacks: hard-cast", search.reason(S, "lightningBolt", false))
-    assert.are.equal("Flame Shock not ticking", search.reason(stub.state({ fs = 0 }), "flameShock", false))
+    assert.are.equal("2 Maelstrom: full cast time", search.reason(S, "lightningBolt", false))
+    assert.are.equal("Flame Shock not on target", search.reason(stub.state({ fs = 0 }), "flameShock", false))
     assert.are.equal("refresh Flame Shock", search.reason(stub.state({ fs = 4 }), "flameShock", false))
   end)
 
@@ -181,20 +181,20 @@ describe("search.signature and reason", function()
     for _, range in ipairs({ "20", "30", "far" }) do
       local S = stub.state({ mw = 0 })
       S.target.range = range
-      assert.are.equal("pull: target out of melee", search.reason(S, "lightningBolt", false))
-      assert.are.equal("pull: target out of melee", search.reason(S, "chainLightning", true))
+      assert.are.equal("pull: not in melee yet", search.reason(S, "lightningBolt", false))
+      assert.are.equal("pull: not in melee yet", search.reason(S, "chainLightning", true))
     end
     local S = stub.state({ mw = 5 })
     S.target.range = "30"
-    assert.are.equal("5 stacks: instant", search.reason(S, "lightningBolt", false))
+    assert.are.equal("5 Maelstrom: instant", search.reason(S, "lightningBolt", false))
     S = stub.state({ mw = 2, swing = 0.5 })
     S.target.range = "melee"
-    assert.are.equal("2 stacks: delays swing", search.reason(S, "lightningBolt", false))
+    assert.are.equal("2 Maelstrom: swing waits", search.reason(S, "lightningBolt", false))
   end)
 
   it("Earth Shock says whether Flame Shock is ticking", function()
     stub.setup({})
-    assert.are.equal("Flame Shock up: Earth Shock", search.reason(stub.state({ fs = 9 }), "earthShock", false))
+    assert.are.equal("Flame Shock on: Earth Shock", search.reason(stub.state({ fs = 9 }), "earthShock", false))
     assert.are.equal("Earth Shock: instant damage", search.reason(stub.state({ fs = 0 }), "earthShock", false))
   end)
 
@@ -215,9 +215,9 @@ describe("search.signature and reason", function()
     stub.setup({})
     local S = stub.state()
     S.player.mana = 200
-    assert.are.equal("mana: Shamanistic Rage", search.reason(S, "shamanisticRage", false))
+    assert.are.equal("low mana: Shamanistic Rage", search.reason(S, "shamanisticRage", false))
     S.player.mana = 900
-    assert.are.equal("Rage: mana, -30% damage", search.reason(S, "shamanisticRage", false))
+    assert.are.equal("Rage: +mana, -30% dmg taken", search.reason(S, "shamanisticRage", false))
   end)
 
   it("Lightning Shield: missing or low", function()
@@ -227,6 +227,15 @@ describe("search.signature and reason", function()
     assert.are.equal("Lightning Shield missing", search.reason(S, "lightningShield", false))
     S.buffs.ls = { charges = 1 }
     assert.are.equal("Lightning Shield low", search.reason(S, "lightningShield", false))
+  end)
+
+  -- read by a new player: no "filler", no "-30% damage" (Rage cuts the damage taken)
+  it("the fixed reasons say it in plain words", function()
+    stub.setup({})
+    local S = stub.state()
+    assert.are.equal("nothing better ready", search.reason(S, "lavaLash", false))
+    assert.are.equal("recast totems", search.reason(S, "callOfElements", false))
+    assert.are.equal("Stormstrike: +20% spell dmg", search.reason(S, "stormstrike", false))
   end)
 
   it("every reason fits under an icon (28 characters at most)", function()
@@ -291,7 +300,7 @@ describe("search on the real model (wowsims rules) #integration", function()
     local plan = search.best(busy({ spells = { flameShock = { cd = 0 }, earthShock = { cd = 0 } }, target = { fs = 0 } }),
       { budgetMs = 1e9 })
     assert.are.equal("flameShock", plan.steps[1].key)
-    assert.are.equal("Flame Shock not ticking", plan.steps[1].reason)
+    assert.are.equal("Flame Shock not on target", plan.steps[1].reason)
   end)
 
   -- Fire Nova goes off around the fire totem (10 yd), and the totem stands at the shaman's feet
@@ -308,7 +317,7 @@ describe("search on the real model (wowsims rules) #integration", function()
   it("5 Maelstrom stacks -> instant Lightning Bolt", function()
     local plan = search.best(busy({ buffs = { mw = { stacks = 5, remains = 20 } } }), { budgetMs = 1e9 })
     assert.are.equal("lightningBolt", plan.steps[1].key)
-    assert.are.equal("5 stacks: instant", plan.steps[1].reason)
+    assert.are.equal("5 Maelstrom: instant", plan.steps[1].reason)
   end)
 
   -- a cast that ends after the horizon would get its damage while its cost (the delayed swings)
@@ -540,7 +549,7 @@ describe("search on the real model (wowsims rules) #integration", function()
     local plan = search.best(S, { budgetMs = 1e9 })
     assert.are.equal("lightningBolt", plan.steps[1].key)
     assert.is_true(plan.steps[1].at >= 0.29 and plan.steps[1].at < 0.45, "at=" .. plan.steps[1].at)
-    assert.are.equal("3 stacks, fits before swing", plan.steps[1].reason)
+    assert.are.equal("3 Maelstrom: no swing lost", plan.steps[1].reason)
     assert.is_true(plan.steps[1].afterSwing)
   end)
 end)

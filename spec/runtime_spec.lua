@@ -160,6 +160,7 @@ describe("runtime", function()
     local a = runtime.alert(S)
     assert.are.equal("autoAttack", a.key)
     assert.are.equal(runtime.ALERT_ICONS.autoAttack, a.icon)
+    assert.are.equal("Start auto-attack (right-click target)", a.reason) -- what to do, not what is wrong
     S.target.range = "20"
     assert.is_nil(runtime.alert(S))
     S.target.range = "melee"; S.buffs.ls.charges = 0
@@ -187,7 +188,7 @@ describe("runtime", function()
     S.shieldPref = "water"
     local a = runtime.alert(S)
     assert.are.equal("waterShield", a.key)
-    assert.are.equal("Water Shield missing", a.reason)
+    assert.are.equal("Cast Water Shield", a.reason)
     assert.are.equal(runtime.ALERT_ICONS.waterShield, a.icon)
     S.player.shield = "lightning"; S.buffs.ls.charges = 3
     assert.are.equal("waterShield", runtime.alert(S).key) -- Lightning Shield up, Water wanted
@@ -217,7 +218,7 @@ describe("runtime", function()
     S.target.range = "melee"
     local h = runtime.idleHint({ steps = {} }, S)
     assert.are.equal("saveMana", h.key)
-    assert.are.equal("Auto-attack: save mana", h.reason)
+    assert.are.equal("Save mana: just auto-attack", h.reason)
     assert.are.equal(runtime.ALERT_ICONS.saveMana, h.icon)
     assert.is_nil(runtime.idleHint({ steps = { { key = "lavaLash", at = 1 } } }, S))
     assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
@@ -237,7 +238,7 @@ describe("runtime", function()
     S.player.mana = 0
     local h = runtime.idleHint({ steps = {} }, S)
     assert.are.equal("outOfMana", h.key)
-    assert.are.equal("Out of mana", h.reason)
+    assert.are.equal("Out of mana: just auto-attack", h.reason)
     assert.are.equal(runtime.ALERT_ICONS.outOfMana, h.icon)
     S.spells.shamanisticRage.cd = 0 -- Rage is ready: that is the hint (runtime.alert), not "Out of mana"
     assert.is_nil(runtime.idleHint({ steps = {} }, S))
@@ -337,11 +338,11 @@ describe("runtime", function()
     local S = Sc.state(80); S.weapons.mh.enchant = nil
     local a = runtime.alert(S)
     assert.are.equal(runtime.IMBUE_ICONS.windfury, a.icon)
-    assert.are.equal("Main-hand imbue missing", a.reason)
+    assert.are.equal("No imbue on main hand", a.reason)
     S = Sc.state(80); S.weapons.oh.enchant = nil
     a = runtime.alert(S)
     assert.are.equal(runtime.IMBUE_ICONS.flametongue, a.icon)
-    assert.are.equal("Off-hand imbue missing", a.reason)
+    assert.are.equal("No imbue on off hand", a.reason)
     S = Sc.state(20); S.weapons.mh.enchant = nil
     assert.are.equal(runtime.IMBUE_ICONS.flametongue, runtime.alert(S).icon)
     S = Sc.state(8); S.weapons.mh.enchant = nil

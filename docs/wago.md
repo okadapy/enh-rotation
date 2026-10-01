@@ -16,12 +16,12 @@ DoubtMyRotation shows, on one short timeline, what to press now and what comes n
 
 There is no fixed priority list inside. A small combat simulator tries sequences of buttons over the next 6 seconds and picks the one that deals the most damage. It accounts for mana, cooldowns, Maelstrom Weapon stacks, swing timing, totems, the number of enemies and how long the target will live.
 
-- **Big icon** — press this. **Icons to the right** — what follows, each at its time.
+- **Big icon** — slides to the line; press it when it gets there and glows. **Icons to the right** — what follows, each at its time.
 - **Tick marks** — your coming main-hand (gold) and off-hand (grey) swings.
 - **Green band** — start a 1–4 stack Lightning Bolt here and the swing is not delayed.
 - **Dots** — Maelstrom Weapon stacks.
-- **Alert icon with text** — auto-attack off, shield missing, weapon imbue missing, low mana, out of range, Bloodlust ready; when nothing is worth pressing it says why (`Move into melee`, `Drink`, `Out of mana`, `Auto-attack: save mana`).
-- **Text under the icon** — why this button (e.g. `5 stacks: instant`, `pull: target out of melee`).
+- **Alert icon with text** — auto-attack off, shield missing, weapon imbue missing, low mana, out of range, Bloodlust ready; when nothing is worth pressing it says why (`Move into melee`, `Drink`, `Out of mana: just auto-attack`, `Save mana: just auto-attack`).
+- **Text under the icon** — why this button (e.g. `5 Maelstrom: instant`, `pull: not in melee yet`).
 
 The suggestion changes only after a combat event, and only when the new plan is clearly better (8%). It does not flicker between two equal buttons.
 

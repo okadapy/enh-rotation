@@ -17,12 +17,12 @@ M.IDLE_MIN = 1.0 -- a wait this long inside the plan gets each ready button trie
 -- the text under the first icon: short (it fits under a 64 px icon), plain words, and it says why
 -- this button and not its neighbour (M.reason picks the case; these are the fixed ones)
 M.REASONS = {
-  stormstrike = "Stormstrike: +20% nature",
-  lavaLash = "filler",
+  stormstrike = "Stormstrike: +20% spell dmg",
+  lavaLash = "nothing better ready",
   frostShock = "Frost Shock: damage + slow",
-  fireElemental = "big cooldown",
-  feralSpirit = "big cooldown",
-  callOfElements = "totems expiring",
+  fireElemental = "big cooldown ready",
+  feralSpirit = "big cooldown ready",
+  callOfElements = "recast totems",
   lightningShield = "Lightning Shield missing",
 }
 
@@ -103,11 +103,11 @@ end
 -- built once: the search asks for a reason for many candidates
 local FITS, DELAYS, HARD = {}, {}, {}
 for n = 0, 4 do
-  local st = n == 1 and "1 stack" or n .. " stacks"
-  FITS[n], DELAYS[n], HARD[n] = st .. ", fits before swing", st .. ": delays swing", st .. ": hard-cast"
+  local st = n .. " Maelstrom"
+  FITS[n], DELAYS[n], HARD[n] = st .. ": no swing lost", st .. ": swing waits", st .. ": full cast time"
 end
 -- with no stacks the cast resets the swing timer however short it is (model: cast.reset)
-DELAYS[0], FITS[0] = "0 stacks: resets swing", "0 stacks: resets swing"
+DELAYS[0], FITS[0] = "0 Maelstrom: costs a swing", "0 Maelstrom: costs a swing"
 
 local castModel
 -- the swing clock goes on when the server ends a cast (castTime + latency after the press, as in
@@ -129,16 +129,16 @@ function M.reason(S, key, afterSwing)
   local t = S.target
   if key == "lightningBolt" or key == "chainLightning" then
     local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
-    if mw >= 5 then return "5 stacks: instant" end
-    if t.range and t.range ~= "melee" then return "pull: target out of melee" end
+    if mw >= 5 then return "5 Maelstrom: instant" end
+    if t.range and t.range ~= "melee" then return "pull: not in melee yet" end
     mw = math.floor(mw)
     local fits = beforeSwing(S, key)
     if fits == nil then return HARD[mw] end
     return fits and FITS[mw] or DELAYS[mw]
   elseif key == "flameShock" then
-    return (t.fs or 0) <= 0 and "Flame Shock not ticking" or "refresh Flame Shock"
+    return (t.fs or 0) <= 0 and "Flame Shock not on target" or "refresh Flame Shock"
   elseif key == "earthShock" then
-    return (t.fs or 0) > 0 and "Flame Shock up: Earth Shock" or "Earth Shock: instant damage"
+    return (t.fs or 0) > 0 and "Flame Shock on: Earth Shock" or "Earth Shock: instant damage"
   elseif key == "searingTotem" or key == "magmaTotem" or key == "fireNova" then
     local n = require("damage").totemTargets(S)
     if key == "searingTotem" then return n <= 1 and "1 target: Searing Totem" or "fire totem: Searing Totem" end
@@ -146,8 +146,8 @@ function M.reason(S, key, afterSwing)
     return key == "fireNova" and "Fire Nova ready" or "fire totem: Magma Totem"
   elseif key == "shamanisticRage" then
     local p = S.player
-    return (p.manaMax and p.manaMax > 0 and p.mana / p.manaMax < 0.3) and "mana: Shamanistic Rage"
-      or "Rage: mana, -30% damage"
+    return (p.manaMax and p.manaMax > 0 and p.mana / p.manaMax < 0.3) and "low mana: Shamanistic Rage"
+      or "Rage: +mana, -30% dmg taken"
   elseif key == "lightningShield" then
     local ls = S.buffs and S.buffs.ls
     if ls and (ls.charges or 0) > 0 then return "Lightning Shield low" end

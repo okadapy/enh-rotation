@@ -4,7 +4,7 @@ local model = require("model")
 local M = {}
 
 M.DEFAULTS = { width = 340, height = 120, nowX = 60, seconds = 6, big = 64, small = 38, icons = 4, gap = 2, lerp = 12, showReason = true,
-               fade = 0.15 }
+               fade = 0.15, glowAt = 0.3 } -- glowAt: the big icon glows once it is due within this many seconds
 M.ICON_Y = 70
 M.TICK_Y = 22
 M.WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -340,9 +340,12 @@ function TL:tick(dt)
       ic:SetTexture(it.icon)
       ic:SetAlpha(a)
       place(ic, f, x, M.ICON_Y, it.size, it.size)
-      if it.big then
+      -- the glow says "press now": not while the big icon is still on its way to the line
+      if it.big and it.t <= o.glowAt then
         place(self.glow, f, x, M.ICON_Y, it.size * 1.7, it.size * 1.7)
         self.glow:SetAlpha(a)
+      elseif it.big then
+        self.glow:Hide()
       end
     else
       ic:Hide()
