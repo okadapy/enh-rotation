@@ -296,7 +296,8 @@ function G.install(cfg)
   _G.InterfaceOptionsFrame_OpenToCategory = function(panel) G.opened = panel; G.opens = G.opens + 1 end
   G.addonSent = {}
   _G.SendAddonMessage = function(...) G.addonSent[#G.addonSent + 1] = { ... } end
-  for _, k in ipairs({ "Addon", "DB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat", "PanelAdvanced" }) do
+  for _, k in ipairs({ "Addon", "DB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat", "PanelAdvanced",
+                          "Highlight", "Explain", "Checks", "Ready" }) do
     _G["DoubtMyRotation" .. k] = nil
   end
   return cfg

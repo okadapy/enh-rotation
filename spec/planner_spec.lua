@@ -119,6 +119,24 @@ describe("planner", function()
     assert.are.same({ "a", "c" }, { plan.steps[1].key, plan.steps[2].key })
   end)
 
+  it("keeps the last search's best chain of every first button (alts) for the addon's tooltip", function()
+    local s = stubSearch({ best = 100, bestKey = "a" })
+    local byFirst = { a = later("a"), b = later("b") }
+    function s.best() return { value = 100, steps = later("a"), byFirst = byFirst } end
+    local p = planner.new({ search = s })
+    p:update(at(100))
+    assert.are.equal(byFirst, p.alts)
+    assert.are.equal(100, p.altsNow)
+    -- the new search is no better: the old plan is held, the alternatives are the new ones
+    local byFirst2 = { a = later("a"), c = later("c") }
+    function s.best() return { value = 100, steps = later("c"), byFirst = byFirst2 } end
+    function s.evaluate(_, steps) return 100, steps, 100 end
+    p:update(at(100.5), AURA)
+    assert.are.equal("a", p:view(100.5).steps[1].key)
+    assert.are.equal(byFirst2, p.alts)
+    assert.are.equal(100.5, p.altsNow)
+  end)
+
   it("gives a just-pressed button its cooldown until the game shows it", function()
     local p = planner.new({ search = stubSearch({ best = 100, bestKey = "a" }) })
     p:update(at(100))

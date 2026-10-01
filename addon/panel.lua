@@ -10,11 +10,12 @@ M.ACTIONS = { "lock", "export", "hide" }
 M.TITLE = "DoubtMyRotation"
 
 M.SECTIONS = {
-  { key = "general", options = { "scale", "seconds", "icons", "showReason", "showLust" }, actions = true },
+  { key = "general", options = { "scale", "seconds", "icons", "showReason", "showLust",
+                                 "highlightButtons", "showKeybind", "hoverTips" }, actions = true },
   { key = "combat", title = "Combat",
     options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield" } },
   { key = "advanced", title = "Advanced",
-    options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck" } },
+    options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck", "readyCheck", "rankWarning" } },
 }
 
 local function copy(t)
