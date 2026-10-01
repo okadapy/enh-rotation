@@ -21,6 +21,17 @@ package.loaded.update = {
   end,
 }
 
+local helperRuns = {}
+package.loaded.helpers = {
+  options = function() return { { type = "toggle", key = "highlightButtons", name = "Light up", default = true } } end,
+  start = function(core, say)
+    local h = { core = core, say = say, checks = 0 }
+    h.check = function() h.checks = h.checks + 1 end
+    helperRuns[#helperRuns + 1] = h
+    return h
+  end,
+}
+
 local core = require("core")
 local settings = require("settings")
 local spells = require("spells")
@@ -54,6 +65,7 @@ describe("addon core", function()
   before_each(function()
     core.db, core.frame, core.env, core.rt, core.panel, core.updates, core.due = nil, nil, nil, nil, nil, nil, nil
     panels, checkers = {}, {}
+    core.helpers, helperRuns = nil, {}
   end)
 
   it("a shaman gets the timeline frame and a running engine on login", function()
@@ -258,6 +270,71 @@ describe("addon core", function()
     end)
   end)
 
+  describe("the helpers", function()
+    it("start once on a shaman's login, their options are in the list", function()
+      shaman()
+      local o = opts()
+      login(o, nil)
+      assert.are.equal(1, #helperRuns)
+      assert.are.equal(core, helperRuns[1].core)
+      local keys = {}
+      for _, opt in ipairs(o.options) do keys[opt.key] = (keys[opt.key] or 0) + 1 end
+      assert.are.equal(1, keys.highlightButtons)
+      assert.are.equal(1, keys.updateCheck)
+      assert.is_true(DoubtMyRotationDB.config.highlightButtons)
+      -- a second login (the loader's event again) starts nothing more
+      core.login(o)
+      assert.are.equal(1, #helperRuns)
+    end)
+
+    it("a list that already has their keys gets no second copy", function()
+      shaman()
+      local o = opts()
+      o.options[#o.options + 1] = { type = "toggle", key = "highlightButtons", name = "Mine", default = false }
+      local n = #o.options
+      login(o, nil)
+      assert.are.equal(n + 1, #o.options) -- only updateCheck joins
+      assert.are.equal("Mine", o.options[n].name)
+    end)
+
+    it("/dmr check opens the checklist", function()
+      shaman()
+      login(opts(), nil)
+      SlashCmdList.DOUBTMYROTATION("check")
+      assert.are.equal(1, helperRuns[1].checks)
+    end)
+
+    it("not a shaman: no helpers", function()
+      shaman({ class = "WARRIOR" })
+      login(opts(), nil)
+      assert.are.equal(0, #helperRuns)
+      assert.is_nil(core.helpers)
+    end)
+
+    it("view: the running engine's plan, snapshot, cache and big icon; nil before login", function()
+      assert.is_nil(core.view())
+      shaman()
+      login(opts(), nil)
+      local v = core.view()
+      local rt = core.rt
+      assert.are.equal(rt.tl.icons[1], v.icon)
+      assert.are.equal(rt.tl.frame, v.frame)
+      assert.are.equal(rt.tl.at, v.at)
+      assert.are.equal(rt.ctx.cache, v.cache)
+      assert.are.equal(rt.planner, v.planner)
+      assert.are.equal(rt.plan, v.plan)
+      assert.are.equal(rt.S, v.S)
+      assert.is_true(v.active)
+      -- one table, filled anew from whatever engine runs now
+      rt.sleeping = true
+      assert.are.equal(v, core.view())
+      assert.is_false(v.active)
+      rt.sleeping = false
+      rt.stopped = true
+      assert.is_false(core.view().active)
+    end)
+  end)
+
   describe("the update check", function()
     it("its option joins the settings, the given list stays as it was", function()
       shaman()
@@ -265,8 +342,8 @@ describe("addon core", function()
       local given, n = o.options, #o.options
       login(o)
       assert.are.equal(n, #given)
-      assert.are.equal(n + 1, #o.options)
-      assert.are.equal("updateCheck", o.options[#o.options].key)
+      assert.are.equal(n + 2, #o.options)
+      assert.are.equal("updateCheck", o.options[n + 1].key)
       assert.is_true(DoubtMyRotationDB.config.updateCheck)
       assert.are.equal(o.options, panels[1].o.options)
     end)

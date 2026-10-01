@@ -440,7 +440,10 @@ describe("addon build", function()
     assert.are.equal("dist/DoubtMyRotation", build.ADDON_DIR)
     assert.are.same({ { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
                       { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
-                      { "update", "addon/update.lua" }, { "core", "addon/core.lua" } }, build.ADDON_MODULES)
+                      { "update", "addon/update.lua" }, { "actionbars", "addon/actionbars.lua" },
+                      { "highlight", "addon/highlight.lua" }, { "explain", "addon/explain.lua" },
+                      { "ready", "addon/ready.lua" }, { "helpers", "addon/helpers.lua" },
+                      { "core", "addon/core.lua" } }, build.ADDON_MODULES)
   end)
 
   it("the addon's toc: 3.3.5a, its SavedVariables, its one file", function()
@@ -569,6 +572,22 @@ describe("addon build", function()
     end
     assert.is_true(runtime.validPlan(rt.plan))
     assert.is_true(#rt.plan.steps >= 1)
+    -- the helpers run on frames of their own; with no action bars and no GetActionInfo in this
+    -- client, nothing lights up and nothing fails
+    assert.is_truthy(core.helpers)
+    assert.is_truthy(DoubtMyRotationHighlight)
+    assert.is_truthy(DoubtMyRotationExplain)
+    assert.is_truthy(DoubtMyRotationChecks)
+    assert.is_truthy(core.view().active)
+    for _ = 1, 3 do
+      DoubtMyRotationHighlight.scripts.OnUpdate(DoubtMyRotationHighlight, 0.016)
+      DoubtMyRotationExplain.scripts.OnUpdate(DoubtMyRotationExplain, 0.2)
+      DoubtMyRotationChecks.scripts.OnUpdate(DoubtMyRotationChecks, 0.016)
+    end
+    assert.are.same({}, core.helpers.highlight.map)
+    assert.is_falsy(core.helpers.highlight:hotkey(rt.plan.steps[1].key))
+    genv.SlashCmdList.DOUBTMYROTATION("check")
+    assert.is_truthy(DoubtMyRotationReady)
     genv.SlashCmdList.DOUBTMYROTATION("")
     assert.are.equal(DoubtMyRotationPanel, G.opened)
   end)

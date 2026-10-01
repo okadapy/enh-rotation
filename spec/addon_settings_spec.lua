@@ -61,8 +61,12 @@ describe("addon settings", function()
     assert.are.same(settings.defaults(OPTIONS), c)
   end)
 
+  it("/dmr check is an action: the checklist", function()
+    assert.are.same({ lines = {}, changed = false, action = "check" }, settings.command(OPTIONS, {}, "check"))
+  end)
+
   it("plain words are actions", function()
-    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide" }) do
+    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide", "check" }) do
       assert.are.equal(a, settings.command(OPTIONS, {}, " " .. a:upper() .. " ").action)
     end
   end)
@@ -77,6 +81,9 @@ describe("addon settings", function()
     assert.is_false(r.changed)
     assert.are.same(settings.HELP, r.lines)
     assert.are.equal("/dmr list - settings; /dmr set <key> <value> - change one", r.lines[1])
+    local check
+    for _, line in ipairs(r.lines) do if line:find("^/dmr check") then check = line end end
+    assert.are.equal("/dmr check - is everything ready (imbues, shield, totems, ranks)", check)
     r = settings.command(OPTIONS, {}, "whatever")
     assert.is_nil(r.action)
     assert.are.same(settings.HELP, r.lines)

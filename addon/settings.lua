@@ -6,8 +6,9 @@ M.HELP = {
   "/dmr list - settings; /dmr set <key> <value> - change one",
   "/dmr reset - defaults; /dmr export - copy window with snapshots",
   "/dmr lock | unlock - move the timeline; /dmr show | hide",
+  "/dmr check - is everything ready (imbues, shield, totems, ranks)",
 }
-M.ACTIONS = { export = true, lock = true, unlock = true, show = true, hide = true }
+M.ACTIONS = { export = true, lock = true, unlock = true, show = true, hide = true, check = true }
 
 function M.defaults(options)
   local c = {}
