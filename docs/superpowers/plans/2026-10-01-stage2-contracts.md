@@ -73,7 +73,11 @@
 
 ## Волна 2 — параллельно, от `feat/accuracy` после слияния волны 1
 
-Уточнения после волны 1 интегратор дописывает сюда (размер ауры после слияния, судьба кода пинга).
+Уточнения после волны 1 (интегратор, коммит `7ea2735`):
+- Строка ауры — **62 537 байт**, до `B.MAX_IMPORT` (63 000) **463 байта**. Всё новое, что не обязано быть в ауре, — в модулях `B.ADDON_SRC` (`raid`, `gear_data`, `gear`) или в блоках `--@addon` … `--@end` (маркер — один на строке, внутри только целые строки, без вложенности; `B.strip` уже в сборке). Каждый исполнитель в отчёте пишет размер строки ауры до/после.
+- Код пинга (B) — общий для ауры и аддона, без блоков `--@addon`.
+- C: в `damage.lua` уже есть `damage.spellCrit(S)`, `S.mods` в `armorMult`, `spellDamage`, `ftHit`, `dot`, `periodic`, Lava Lash (`local wpn`), `meleeTable`, `spellHit`; в `model` — `mods` одной ссылкой в копиях; в `value.autoValue` — `mods.support`. Смотри фактический код перед правкой.
+- Docker: если `docker compose run …` падает с «all predefined address pools have been fully subnetted» — `docker compose -p enh-rotation run --rm test …` (файлы не менять).
 
 ### D. Модуль `raid` (задача 4 плана)
 
