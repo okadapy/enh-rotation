@@ -81,6 +81,19 @@ describe("snapshot", function()
     assert.are.equal("ft", S.weapons.oh.enchant)
   end)
 
+  it("reads the weapon's own speed from the tooltip, the swing interval stays hasted", function()
+    install({ speed = { 1.73, 1.73 }, enchants = { mh = true, oh = true },
+              tooltip = { [16] = { "Some Axe", "209 - 273 Damage", "Speed 2.70", "Windfury 8 (30 min)" },
+                          [17] = { "Other Axe", "Скорость 2,60", "Flametongue 10 (30 min)" } } })
+    local S = snapshot.build(ctx())
+    assert.are.equal(1.73, S.weapons.mh.speed)
+    assert.are.equal(2.7, S.weapons.mh.base)
+    assert.are.equal(2.6, S.weapons.oh.base)
+    install({ speed = { 1.73, 1.73 }, enchants = {} })
+    S = snapshot.build(ctx())
+    assert.is_nil(S.weapons.mh.base)
+  end)
+
   it("an imbue it does not know (Frostbrand, Earthliving) is 'other', not missing", function()
     install({ enchants = { mh = true, oh = true },
               tooltip = { [16] = { "Some Axe", "Frostbrand 9 (30 min)" }, [17] = { "Other Axe", "Earthliving 6 (30 min)" } } })

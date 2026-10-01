@@ -289,6 +289,20 @@ describe("damage", function()
       assert.are.near((52 * 2.6 + 0.1 * 1200) * 0.93 * 1.1, damage.ftHit(s80(), "oh"), 1e-6)
       assert.are.equal(0, damage.ftHit(s80(), "mh"))
     end)
+    it("weapon formulas use the weapon's own speed, not the hasted swing interval", function()
+      local plain = s80(); plain.talents.maelstromWeapon = 5
+      local hasted = s80(); hasted.talents.maelstromWeapon = 5
+      hasted.weapons.mh.speed, hasted.weapons.mh.base = 1.73, 2.6
+      hasted.weapons.oh.speed, hasted.weapons.oh.base = 1.73, 2.6
+      for _, f in ipairs({ "normalized", "ftHit", "mwPerHit", "rageChance" }) do
+        for _, h in ipairs({ "mh", "oh" }) do
+          assert.are.near(damage[f](plain, h), damage[f](hasted, h), 1e-9)
+        end
+      end
+      local _, p1 = damage.wf(plain)
+      local d2, p2 = damage.wf(hasted)
+      assert.are.near(damage.wf(plain) / p1, d2 / p2, 1e-9)
+    end)
     it("static shock needs shield charges", function()
       local S = s80(); S.talents.staticShock = 3
       assert.are.equal(0, damage.staticHit(S))
