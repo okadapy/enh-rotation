@@ -1,5 +1,5 @@
-# Каждый мердж в main — новый релиз: тесты, сборка строки импорта, тег vX.Y.Z (patch + 1),
-# релиз с DoubtMyRotation.txt. Старые релизы удаляются — остаётся только последний (теги остаются:
+# Каждый мердж в main — новый релиз: тесты, сборка строки импорта и аддона, тег vX.Y.Z (patch + 1),
+# релиз с DoubtMyRotation.txt (аура) и DoubtMyRotation-addon.zip (аддон) одной версии. Старые релизы удаляются — остаётся только последний (теги остаются:
 # по ним считается версия). Вручную (Actions → Release → Run workflow) можно поднять minor или major;
 # при мердже — словом «[major]» или «[minor]» в сообщении мердж-коммита.
 name: Release
@@ -76,6 +76,12 @@ jobs:
           docker compose run --rm -e RELEASE_TAG="$RELEASE_TAG" test lua tools/build.lua | tee build.log
           grep -q "version $RELEASE_TAG\$" build.log
           head -c 6 dist/DoubtMyRotation.txt | grep -qx '!WA:2!'
+          # аддон собран той же версией, что и аура
+          test -s dist/DoubtMyRotation/DoubtMyRotation.lua
+          grep -Fqx "## Version: $RELEASE_TAG" dist/DoubtMyRotation/DoubtMyRotation.toc
+          # dist/ создан контейнером от root
+          sudo chown -R "$(id -u):$(id -g)" dist
+          (cd dist && zip -qr DoubtMyRotation-addon.zip DoubtMyRotation)
 
       - name: Релиз
         if: steps.version.outputs.skip != 'true'
@@ -83,6 +89,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           PREV: ${{ steps.version.outputs.prev }}
+          # в переменной, а не в echo '…': обратные кавычки Markdown не должны трогать shell
+          ADDON_NOTE: "Или аддоном (WeakAuras не нужен): скачать `DoubtMyRotation-addon.zip`, распаковать в `World of Warcraft/Interface/AddOns/` (должна получиться папка `DoubtMyRotation`), перезайти. Настройки — `/dmr`. Ауру тогда лучше удалить: при аддоне она не запускается."
         run: |
           {
             echo "## Установка"
@@ -90,6 +98,8 @@ jobs:
             echo '1. Скачать `DoubtMyRotation.txt` ниже (Assets) или скопировать строку из блока в конце.'
             echo '2. В игре: `/wa` → **Import** → вставить строку → **Import**.'
             echo '3. Появится группа `DoubtMyRotation` с аурой `DoubtMyRotation Timeline`. Настройки прежней версии WeakAuras предложит сохранить.'
+            echo
+            echo "$ADDON_NOTE"
             echo
             echo "Подробнее — [README](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/README.md)."
             echo
@@ -103,7 +113,7 @@ jobs:
           } > notes.md
           args=()
           if [ -n "$PREV" ]; then args+=(--notes-start-tag "$PREV"); fi
-          gh release create "$TAG" dist/DoubtMyRotation.txt \
+          gh release create "$TAG" dist/DoubtMyRotation.txt dist/DoubtMyRotation-addon.zip \
             --target "$GITHUB_SHA" \
             --title "DoubtMyRotation $TAG" \
             --notes-file notes.md \

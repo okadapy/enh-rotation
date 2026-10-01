@@ -1,27 +1,28 @@
 # DoubtMyRotation (код: EnhRot)
 
-WeakAura-подсказчик для энх-шамана под WotLK 3.3.5a (WeakAuras 5.22 backport): мини-симулятор боя на 6 с вперёд, лента времени, часы ударов. Инструкция для игрока — `README.md`.
+WeakAura и аддон-подсказчик для энх-шамана под WotLK 3.3.5a (WeakAuras 5.22 backport): мини-симулятор боя на 6 с вперёд, лента времени, часы ударов. Инструкция для игрока — `README.md`.
 
 Карта проекта (стек, дерево, модули) — `.claude/rules/ARCHITECTURE.md`; операционная память — `.claude/docs/`.
 
 - Тесты: `docker compose run --rm test busted`
 - Один файл: `docker compose run --rm test busted spec/<name>_spec.lua`
 - Без интеграционных (настоящие соседние модули): `docker compose run --rm test busted --exclude-tags=integration`
-- Сборка строки импорта: `docker compose run --rm test lua tools/build.lua` → `dist/DoubtMyRotation.txt` (`dist/` не в git)
+- Сборка: `docker compose run --rm test lua tools/build.lua` → `dist/DoubtMyRotation.txt` (аура) и `dist/DoubtMyRotation/` (аддон: `DoubtMyRotation.toc`, `DoubtMyRotation.lua`); `dist/` не в git
 - Декодировать строку: `docker compose run --rm test lua tools/build.lua decode <file>`
 - Снимки из игры в тесты: `docker compose run --rm test lua tools/build.lua import-snapshots <WeakAuras.lua>` → `spec/fixtures/recorded.lua`
 - Сводка журнала нажатий из отчёта: `docker compose run --rm test lua tools/build.lua presses <файл>` (строка экспорта или `WeakAuras.lua`)
-- Релиз: каждый мердж в `main` — `.github/workflows/release.yml`, patch + 1; `[minor]` / `[major]` в сообщении мердж-коммита (или запуск вручную) поднимает minor / major.
+- Релиз: каждый мердж в `main` — `.github/workflows/release.yml` (`DoubtMyRotation.txt` и `DoubtMyRotation-addon.zip` одной версии), patch + 1; `[minor]` / `[major]` в сообщении мердж-коммита (или запуск вручную) поднимает minor / major.
 - Версия в сборке: `RELEASE_TAG`, иначе `git describe --tags`, иначе `dev` (подставляется вместо `src/version.lua`)
 - Разбор отчёта об ошибке: `docker compose run --rm test lua tools/report.lua <строка экспорта | WeakAuras.lua | фикстура> [--baseline <git-ref | фикстура>] [--save <файл>]` — по строке на снимок (план из игры и `search.best` сейчас) и сводка: расхождения, дрожание у умирающих мобов, подсказки, мана по мобам, нажатия. Логика — чистые функции `report.analyze` / `report.format` (`spec/report_spec.lua`)
 - Перегенерировать данные рангов: `docker compose run --rm test python3 tools/spelldata.py data/Spell.dbc src/spells_data.lua`
   (`data/Spell.dbc` — из `rebuffed.mpq` клиента, в git не хранится)
 - Claude в GitHub: `.github/workflows/claude.yml` — `@claude` в issue/комментарии/ревью (владелец и участники); там нет Lua локально, тесты — через `docker compose`.
-- Дизайн: `docs/superpowers/specs/2026-09-30-enh-rotation-design.md`; план: `docs/superpowers/plans/2026-09-30-enh-rotation.md`
+- Дизайн: `docs/superpowers/specs/2026-09-30-enh-rotation-design.md`; план: `docs/superpowers/plans/2026-09-30-enh-rotation.md`; аддон: `docs/superpowers/plans/2026-10-01-addon.md`
 
 Конвенции:
 - Lua 5.1. В `src/` нельзя `pcall`, `loadstring`, `setfenv`, `getfenv`, `_G`, `SlashCmdList` — песочница WeakAuras; и `package`, `io`, `debug` — их нет в клиенте (проверяет `spec/build_spec.lua`, даже в комментариях). Интеграционный тест сборки запускает её без этих библиотек.
 - API игры читают только `snapshot`, `runtime`, `timeline`; остальные модули — чистые функции над `S`.
+- Код аддона — `addon/` (не в песочнице WeakAuras, но `io`, `package`, `debug`, `require` в клиенте нет); новый модуль аддона — в `tools/build.lua` `B.ADDON_MODULES`. Движок в `src/` к `WeakAuras` не обращается: хозяин (аура или аддон) даёт `env.region`, `env.saved`, `env.show`, `env.libs`. Настройки аддона — опции `tools/aura.lua` `M.OPTIONS` без `export`.
 - Тексты в игре — на английском. Новый модуль в `src/` — добавить в `tools/build.lua` `B.MODULES`.
 - Сборка кладёт код без комментариев и лишних пробелов (`B.minify`, переводы строк на месте — номера строк в ошибках совпадают с `src/`). Строка импорта — не длиннее `B.MAX_IMPORT`: клиент 3.3.5a обрезает длинную вставку, WeakAuras пишет "Error decompressing" (issue #20); тест в `spec/build_spec.lua` падает, если сборка выросла.
 - `src/spells_data.lua` не править руками.
