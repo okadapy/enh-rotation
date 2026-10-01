@@ -80,7 +80,7 @@ function B.minify(code)
       n = n + 1; out[n] = "\n"
       ws, lineStart = false, true
       i = i + 1
-    elseif c == " " or c == "\t" or c == "\r" then
+    elseif c:find("%s") then -- остальные пробельные Lua: " ", \t, \r, \f, \v
       ws = true
       i = i + 1
     elseif code:sub(i, i + 1) == "--" then

@@ -321,6 +321,10 @@ describe("build (pure)", function()
     assert.are.same({ run(code) }, { run(m) })
   end)
 
+  it("treats every Lua whitespace as a separator when minifying", function()
+    assert.are.equal("local a=1\nreturn a", build.minify("local\fa\v=\t1\r\nreturn\f\va"))
+  end)
+
   it("imports recorded snapshots into a fixture file", function()
     local out = os.tmpname()
     assert.are.equal(2, build.importSnapshots(SAMPLE, out))
