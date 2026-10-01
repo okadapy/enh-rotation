@@ -440,6 +440,23 @@ describe("value.terminal", function()
     assert.are.near(2.5 * per, value.killCredit(S, false), 1e-6)
   end)
 
+  -- the expected time of death (model: survival) can fall after the horizon's end with the health
+  -- already gone: a press that moves it from 7.2 s to 5.8 s (horizon 6 s) saves the same seconds
+  -- as one inside the horizon. At 0 for every death after S.now it saved nothing, and a mob dying
+  -- just after the horizon was finished by the swings alone (recorded #55, #65).
+  it("solo: a kill expected after the horizon's end counts the seconds to it below zero", function()
+    local S = base({ mode = "solo", target = { hp = 0, dead = true } })
+    local per = value.dpsEstimate(S) * value.DISCOUNT
+    S.memo = { killBase = S.now + 1.2 }
+    S.target.diedAt = S.now + 1.2 -- nothing pressed
+    local idle = value.killCredit(S, false)
+    assert.are.near(-1.2 * per, idle, 1e-6)
+    S.target.diedAt = S.now - 0.2 -- 1.4 s sooner
+    assert.are.near((1.4 - value.FINISH_MIN) * per, value.killCredit(S, false) - idle, 1e-6)
+    S.target.diedAt = S.now + 0.5 -- 0.7 s sooner, still after the end
+    assert.are.near((0.7 - value.FINISH_MIN) * per, value.killCredit(S, false) - idle, 1e-6)
+  end)
+
   -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing
   it("solo and group: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
     for _, mode in ipairs({ "solo", "group" }) do
