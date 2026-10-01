@@ -21,6 +21,7 @@ WeakAura-подсказчик для энх-шамана под WotLK 3.3.5a (We
 - Lua 5.1. В `src/` нельзя `pcall`, `loadstring`, `setfenv`, `getfenv`, `_G`, `SlashCmdList` — песочница WeakAuras; и `package`, `io`, `debug` — их нет в клиенте (проверяет `spec/build_spec.lua`, даже в комментариях). Интеграционный тест сборки запускает её без этих библиотек.
 - API игры читают только `snapshot`, `runtime`, `timeline`; остальные модули — чистые функции над `S`.
 - Тексты в игре — на английском. Новый модуль в `src/` — добавить в `tools/build.lua` `B.MODULES`.
+- Сборка кладёт код без комментариев и лишних пробелов (`B.minify`, переводы строк на месте — номера строк в ошибках совпадают с `src/`). Строка импорта — не длиннее `B.MAX_IMPORT`: клиент 3.3.5a обрезает длинную вставку, WeakAuras пишет "Error decompressing" (issue #20); тест в `spec/build_spec.lua` падает, если сборка выросла.
 - `src/spells_data.lua` не править руками.
 - Git и GitHub: без подписи ИИ — никаких `Co-Authored-By`, «Generated with …», ссылок на сессию в коммитах, PR и комментариях. Ветки — `fix/<что чиним>` или `feat/<что добавляем>`, латиницей через дефис, одна задача на ветку.
 - Общие помощники — `src/util.lua`; заглушки соседних модулей — `spec/support/stubs.lua`; сценарии по уровню для проверочных спеков — `spec/support/scenario.lua`; мок API клиента — `spec/support/game_mock.lua`.
