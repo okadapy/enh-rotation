@@ -440,7 +440,9 @@ describe("addon build", function()
     assert.are.equal("dist/DoubtMyRotation", build.ADDON_DIR)
     assert.are.same({ { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
                       { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
-                      { "update", "addon/update.lua" }, { "core", "addon/core.lua" } }, build.ADDON_MODULES)
+                      { "update", "addon/update.lua" }, { "fightlog", "addon/fightlog.lua" }, { "advice", "addon/advice.lua" },
+                      { "history", "addon/history.lua" }, { "fightwin", "addon/fightwin.lua" }, { "review", "addon/review.lua" },
+                      { "core", "addon/core.lua" } }, build.ADDON_MODULES)
   end)
 
   it("the addon's toc: 3.3.5a, its SavedVariables, its one file", function()

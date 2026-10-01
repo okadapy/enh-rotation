@@ -102,6 +102,8 @@ end
 function P:finish(job)
   local fresh, s = job.search.result, job.s
   self.job = nil
+  -- the last finished search as found (not the held plan): the fight review prices presses by it
+  self.last = { now = s.now, value = fresh.value, firstValue = fresh.firstValue, s = s }
   if not job.force and self.plan then
     local old = shifted(self.plan, s.now - self.planNow)
     -- a search's "press nothing" is held too: without it any new search replaced it at once,

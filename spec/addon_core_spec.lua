@@ -53,6 +53,7 @@ end
 describe("addon core", function()
   before_each(function()
     core.db, core.frame, core.env, core.rt, core.panel, core.updates, core.due = nil, nil, nil, nil, nil, nil, nil
+    core.review = nil
     panels, checkers = {}, {}
   end)
 
@@ -177,6 +178,42 @@ describe("addon core", function()
     assert.are.same(DoubtMyRotationDB.saved.enhrotSnapshots, require("build").decodeExport(EnhRotExportFrame.box.text))
   end)
 
+  it("/dmr last opens the fight review window, /dmr history its boss history", function()
+    shaman()
+    login(opts())
+    SlashCmdList.DOUBTMYROTATION("last")
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+    DoubtMyRotationFightWindow:Hide()
+    SlashCmdList.DOUBTMYROTATION("history")
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+  end)
+
+  it("hands the engine a press hook and adds the fight summary option once", function()
+    shaman()
+    local o = opts()
+    local loader = login(o)
+    assert.are.equal("function", type(core.env.onPress))
+    -- the hook reaches the review's collector
+    core.review.log:begin()
+    core.env.onPress({ t = 101, key = "stormstrike", sug = "stormstrike", due = 101,
+                       last = { now = 101, value = 60, firstValue = { stormstrike = 60 } } })
+    assert.are.equal(1, core.review.log.f.presses)
+    -- booting a second time must not add the options again
+    core.boot(o)
+    local summary, check = 0, 0
+    for _, opt in ipairs(o.options) do
+      if opt.key == "fightSummary" then summary = summary + 1 end
+      if opt.key == "updateCheck" then check = check + 1 end
+    end
+    assert.are.equal(1, summary)
+    assert.are.equal(1, check)
+    assert.is_true(DoubtMyRotationDB.config.fightSummary)
+    -- a second login keeps the same review
+    local review = core.review
+    loader.scripts.OnEvent(loader, "PLAYER_LOGIN")
+    assert.are.equal(review, core.review)
+  end)
+
   it("/dmr before login does nothing", function()
     shaman()
     core.boot(opts())
@@ -265,8 +302,9 @@ describe("addon core", function()
       local given, n = o.options, #o.options
       login(o)
       assert.are.equal(n, #given)
-      assert.are.equal(n + 1, #o.options)
-      assert.are.equal("updateCheck", o.options[#o.options].key)
+      assert.are.equal(n + 2, #o.options)
+      assert.are.equal("updateCheck", o.options[#o.options - 1].key)
+      assert.are.equal("fightSummary", o.options[#o.options].key)
       assert.is_true(DoubtMyRotationDB.config.updateCheck)
       assert.are.equal(o.options, panels[1].o.options)
     end)

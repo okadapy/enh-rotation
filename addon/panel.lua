@@ -12,7 +12,7 @@ M.TITLE = "DoubtMyRotation"
 M.SECTIONS = {
   { key = "general", options = { "scale", "seconds", "icons", "showReason", "showLust" }, actions = true },
   { key = "combat", title = "Combat",
-    options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield" } },
+    options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield", "fightSummary" } },
   { key = "advanced", title = "Advanced",
     options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck" } },
 }

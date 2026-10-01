@@ -62,7 +62,7 @@ describe("addon settings", function()
   end)
 
   it("plain words are actions", function()
-    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide" }) do
+    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide", "last", "history" }) do
       assert.are.equal(a, settings.command(OPTIONS, {}, " " .. a:upper() .. " ").action)
     end
   end)

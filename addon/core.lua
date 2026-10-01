@@ -6,6 +6,8 @@ local runtime = require("runtime")
 local settings = require("settings")
 local panel = require("panel")
 local update = require("update")
+local review = require("review")
+local fightlog = require("fightlog")
 
 local M = {}
 M.NAME = "DoubtMyRotation"
@@ -14,14 +16,17 @@ M.PAUSE = 0.3
 
 local function say(line) print(M.TAG .. line) end
 
--- the build's option list plus the update check's, as a copy: the caller's list stays the aura's
-local function withUpdate(options)
-  local list = {}
+-- the build's option list plus the update check's and the fight summary's, as a copy: the
+-- caller's list stays the aura's; one already there is not added twice (boot may run twice)
+local function withExtras(options)
+  local list, have = {}, {}
   for i, opt in ipairs(options) do
-    if opt.key == update.OPTION.key then return options end
     list[i] = opt
+    have[opt.key] = true
   end
-  list[#list + 1] = update.OPTION
+  for _, opt in ipairs({ update.OPTION, fightlog.OPTION }) do
+    if not have[opt.key] then list[#list + 1] = opt end
+  end
   return list
 end
 
@@ -76,8 +81,14 @@ function M.login(o)
   if class ~= "SHAMAN" then return end
   M.frame = M.frame or M.newFrame(o, M.db)
   M.frame:Show()
-  M.env = { region = M.frame, saved = M.db.saved, libs = o.libs }
+  M.env = { region = M.frame, saved = M.db.saved, libs = o.libs,
+            onPress = function(e) if M.review then M.review:press(e) end end }
   start()
+  M.review = M.review or review.new({
+    rt = function() return M.rt end, db = M.db, say = say, config = function() return M.db.config end,
+    now = GetTime, time = time, date = date,
+  })
+  M.review:start(DoubtMyRotationFights or CreateFrame("Frame", "DoubtMyRotationFights"))
   M.panel = M.panel or panel.new(o, M.host(o))
   M.updates = M.updates or update.new(runtime.VERSION, {
     db = M.db, send = SendAddonMessage, say = say,
@@ -120,7 +131,8 @@ function M.handle(o, msg)
     M.frame:EnableMouse(a == "unlock")
     if a == "unlock" then M.frame.bg:Show() else M.frame.bg:Hide() end
   elseif a == "hide" then M.db.hidden = true; M.frame:Hide()
-  elseif a == "show" then M.db.hidden = false; M.frame:Show() end
+  elseif a == "show" then M.db.hidden = false; M.frame:Show()
+  elseif a == "last" or a == "history" then M.review:open(a) end
   -- reset: the place too, the one way back for a timeline lost off screen
   if (msg or ""):match("^%s*(%S*)"):lower() == "reset" then
     M.db.point = nil
@@ -150,7 +162,7 @@ function M.host(o)
 end
 
 function M.boot(o)
-  o.options = withUpdate(o.options)
+  o.options = withExtras(o.options)
   -- the aura (tools/build.lua B.initCode) stays idle while the addon is installed
   DoubtMyRotationAddon = M
   SLASH_DOUBTMYROTATION1 = "/dmr"

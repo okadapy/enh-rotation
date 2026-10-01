@@ -106,6 +106,22 @@ describe("search.best", function()
     assert.are.equal(0, #plan.steps)
     assert.are.equal(0, plan.value)
   end)
+
+  -- firstValue: the score of the best chain of every first button (the fight review weighs a
+  -- press by it); the plan's own first button scores the plan's value, no other more
+  it("keeps the score of every first button's best chain", function()
+    stub.setup({ a = { dmg = 50, cd = 3 }, b = { dmg = 45, cd = 2 }, c = { dmg = 20, cd = 0 } })
+    local plan = search.best(stub.state(), opts())
+    assert.is_true(#plan.steps > 0)
+    assert.are.equal(plan.value, plan.firstValue[search.firstKey(plan.steps[1])])
+    local n = 0
+    for f, v in pairs(plan.firstValue) do
+      n = n + 1
+      assert.is_true(plan.byFirst[f] ~= nil, f)
+      assert.is_true(v <= plan.value, f)
+    end
+    assert.is_true(n >= 2)
+  end)
 end)
 
 describe("search.best edge cases", function()
