@@ -196,10 +196,16 @@ function M.trackDue(rt, plan, now)
   end
 end
 
--- press log (recording on): what was pressed against what was shown
+-- a press: to the host's hook (the addon's fight review) and, recording on, to the press log -
+-- what was pressed against what was shown
 local function logPress(rt, key, now)
-  if not rt.rec then return end
   local d = rt.due
+  local hook = rt.env and rt.env.onPress
+  if hook then
+    local st = rt.plan and rt.plan.steps[1]
+    hook({ t = now, key = key, sug = st and st.key, due = d and d.at, last = rt.planner and rt.planner.last })
+  end
+  if not rt.rec then return end
   rt.rec:press(key, now, rt.plan, d and d.at)
 end
 
