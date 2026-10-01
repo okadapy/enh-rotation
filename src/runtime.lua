@@ -45,6 +45,7 @@ M.ALERT_ICONS = {
   waterShield = "Interface\\Icons\\Ability_Shaman_WaterShield",
   outOfMana = "Interface\\Icons\\Spell_Shadow_ManaBurn",
   drink = "Interface\\Icons\\INV_Drink_07",
+  saveMana = "Interface\\Icons\\Ability_MeleeDamage",
 }
 -- the imbue a missing one most likely was: Windfury from 30 on the main hand, else Flametongue
 -- (10), else Rockbiter; the off hand (dual wield from 40) carries Flametongue
@@ -594,6 +595,12 @@ function M.idleHint(plan, S, searching, isDrinking)
   end
   if t.range == "20" or t.range == "30" then return withIcon({ key = "moveIn", reason = "Move into melee" }) end
   if t.range == "melee" and M.outOfMana(S) then return withIcon({ key = "outOfMana", reason = "Out of mana" }) end
+  -- solo, in melee, swinging, mana left, and still nothing for 6 s: no spell pays for its mana
+  -- (the drink it costs) - say so, the bar is not broken (Mana policy "spend" spends more)
+  if S.mode == "solo" and t.range == "melee" and not t.dead and (t.hp or 1) > 0
+    and S.swing and S.swing.attacking then
+    return withIcon({ key = "saveMana", reason = "Auto-attack: save mana" })
+  end
   return nil
 end
 
