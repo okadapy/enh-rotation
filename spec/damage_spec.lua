@@ -77,6 +77,15 @@ describe("damage", function()
     it("uses 4% base miss against same level", function()
       assert.are.near(0.96, damage.spellHit(s20()), 1e-9)
     end)
+    it("adds 11% miss per level above +3", function()
+      local S = s20(); S.player.spellHit = 0
+      for d, hit in pairs({ [4] = 0.72, [5] = 0.61, [6] = 0.50 }) do
+        S.target.level = S.player.level + d
+        assert.are.near(hit, damage.spellHit(S), 1e-9)
+      end
+      S.target.level = S.player.level + 20
+      assert.are.equal(0, damage.spellHit(S))
+    end)
     it("treats unknown target level (-1) as +3", function()
       local S = s80(); S.target.level = -1
       assert.are.near(0.93, damage.spellHit(S), 1e-9)

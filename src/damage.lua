@@ -55,7 +55,7 @@ end
 function M.spellHit(S)
   local d = lvlDiff(S)
   local miss
-  if d >= 3 then miss = 0.17
+  if d >= 3 then miss = math.min(1, 0.17 + 0.11 * (d - 3))
   elseif d <= 0 then miss = math.max(0.01, 0.04 + 0.01 * d)
   else miss = 0.04 + 0.01 * d end
   return 1 - math.max(0, miss - (S.player.spellHit or 0))
