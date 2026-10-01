@@ -39,6 +39,7 @@ Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elem
 - **Group / raid at 80** is checked against the wowsims/wotlk priority (18 situations) and a combat simulation, **not yet in a real raid**: treat it as beta and report what looks wrong.
 - Any client language is supported for talents (read through spell IDs).
 - **Not yet verified in game:** the swing rules behind weaving. The model assumes a Lightning Bolt / Chain Lightning with 1–4 Maelstrom stacks only *delays* the next swing to the end of the cast, while a 0-stack cast *resets* it (this rule comes from existing swing-timer packs). That is why the **Weaving** option defaults to 3+ stacks, the conservative choice until the rule is verified: 1–2 stack hard-casts are suggested only with Weaving set to "any (model decides)" (worth about 2% if the rule holds). If your server behaves differently, please report it with an export string.
+- **Assumed, not measured:** Shamanistic Rage returns mana as a proc at 10 per minute per weapon (the 3.3.5a spell data; wowsims uses 15), and solo mana is priced by the drink of your level (time spent drinking instead of fighting). The solo **Mana policy** option shifts that price if you prefer to save or spend mana.
 
 ## First run
 
