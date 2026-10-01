@@ -528,8 +528,11 @@ describe("search on the real model (wowsims rules) #integration", function()
     assert.are.near(0.02, done[1].at, 1e-9)
   end)
 
+  -- raid: mana nearly free, the weave alone decides (in a group the totems' mana makes a second Bolt
+  -- in the horizon worth the clip)
   it("3 stacks: waits for the main-hand swing, then weaves Lightning Bolt without a clip", function()
     local S = busy({
+      mode = "raid",
       buffs = { mw = { stacks = 3, remains = 20 } },
       player = { meleeHaste = 1.25, spellHaste = 1.10 },
       swing = { attacking = true, mh = { next = 0.3, speed = 2.6 }, oh = { next = 1.5, speed = 2.6 } },

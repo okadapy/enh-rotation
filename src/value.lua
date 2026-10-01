@@ -4,9 +4,14 @@ local util = require("util")
 
 local M = {}
 
+-- drink: mana is priced as the drinking it costs later (manaPrice); mana: that price's share.
+-- A party drinks between pulls too, but half of it falls into the healer's drinking anyway
+-- (issue #22: Dire Maul at 56, the bar down to 30% on the first pack; at the old 0.05 of the
+-- AP-based price Chain Lightning's 367 mana "cost" 3 damage, and Shamanistic Rage was never worth
+-- a GCD). A raid has Replenishment and long fights: nearly free until the fight outlasts the mana.
 M.WEIGHTS = {
-  solo  = { mana = 1.0,  overkill = 0.0, kill = 0.15 },
-  group = { mana = 0.05, overkill = 0.2, kill = 0.0 },
+  solo  = { mana = 1.0,  overkill = 0.0, kill = 0.15, drink = true },
+  group = { mana = 0.5,  overkill = 0.2, kill = 0.0,  drink = true },
   raid  = { mana = 0.05, overkill = 0.2, kill = 0.0 },
 }
 M.WEIGHTS.pvp = M.WEIGHTS.group
@@ -82,7 +87,7 @@ function M.manaPrice(S)
   local ref = ((p.ap or 0) + (p.spNature or 0)) / 4000
   local W = M.WEIGHTS
   local w = W[S.mode] or W.group
-  if S.mode == "solo" then
+  if w.drink then
     -- Mana spent now is drunk back later: every point costs 1 / drinkRate seconds of sitting,
     -- i.e. that much of the character's damage. The drink is the best water of the character's
     -- level: at 52-54 Morning Glory Dew gives 98 mana a second, a full bar is ~30 s. (A fixed 20 s
@@ -94,9 +99,12 @@ function M.manaPrice(S)
     -- cannot be paid cannot be pressed.
     -- The player's option (MANA_POLICY) scales it; the reserve (reserveValue) stays as it is.
     -- the search's states carry it in their memo (search.root), not as a field of every copy
-    local pol = S.manaPolicy
-    if pol == nil then local m = S.memo; pol = m and m.manaPolicy end
-    local f = M.MANA_POLICY[pol] or 1
+    local f = 1
+    if S.mode == "solo" then
+      local pol = S.manaPolicy
+      if pol == nil then local m = S.memo; pol = m and m.manaPolicy end
+      f = M.MANA_POLICY[pol] or 1
+    end
     local dps = M.dpsEstimate(S)
     if dps > 0 then return f * w.mana * dps / M.drinkRate(p.level) end
     return f * w.mana * ref
@@ -356,8 +364,8 @@ end
 -- melee with auto attack on counts for the seconds left of it (the mob's ttd, the mana bar's
 -- room). Both at the discount, at the mana's price. Without this the ready Rage was worth nothing
 -- and a press cost nothing: its mana on a mob dying in 4 s (a quarter of the window) beat the
--- melee buttons, and the full window was missing on the next pull. Solo only (terminal): in a
--- group or raid mana is nearly free (manaPrice), and there the window is a small part of the plan.
+-- melee buttons, and the full window was missing on the next pull. Solo and group (terminal): in
+-- a raid mana is nearly free (manaPrice), and there the window is a small part of the plan.
 function M.rageValue(S, damage, live)
   local sp = S.spells and S.spells.shamanisticRage
   if not sp or not damage.rageManaRate then return 0 end
@@ -389,8 +397,8 @@ end
 -- the discount. Put up now, in a GCD with nothing better to do (a mob about to die), it costs
 -- nothing; the shield's own damage (Static Shock) is in the auto attacks. Without this the
 -- shield was worth its Static Shock procs alone, and it took the free GCD at a dying mob only by
--- a few points, or lost it to a Flame Shock for one tick. Solo only (terminal), like rageValue: the leveling pull, where a mob about to die leaves free
--- GCDs; a group keeps the old worth (the shield's Static Shock damage in the auto attacks).
+-- a few points, or lost it to a Flame Shock for one tick. Solo and group (terminal), like rageValue: a mob about to die leaves free
+-- GCDs; a raid keeps the old worth (the shield's Static Shock damage in the auto attacks).
 function M.shieldValue(S)
   local spells = S.spells
   if not (spells and spells.lightningShield) then return 0 end
@@ -445,7 +453,9 @@ function M.terminal(S)
     mael = stacks * M.MW_SHARE * lb * M.DISCOUNT
   end
   local v = mael + readyValue(S, damage, A, live)
-  if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) + M.killCredit(S, live) end
+  local mode = S.mode
+  if mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) + M.killCredit(S, live)
+  elseif mode == "group" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
   if live then
     v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
   end
