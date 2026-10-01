@@ -669,3 +669,75 @@ describe("snapshot", function()
     end)
   end)
 end)
+
+-- S.mods: snapshot only reads the client and hands it on; raid.lua and gear.lua have their own
+-- specs for the numbers. Here both are fakes that record what they were given.
+describe("snapshot: S.mods (addon)", function()
+  local snap, got
+  local saved = {}
+  local NAMES = { "snapshot", "raid", "gear" }
+  before_each(function()
+    got = {}
+    for _, n in ipairs(NAMES) do saved[n] = package.loaded[n]; package.loaded[n] = nil end
+    package.loaded.raid = {
+      DEBUFFS = { [7386] = "sunder", [1490] = "elements" },
+      BUFFS = { [57330] = "hornOfWinter", [8512] = "windfuryTotem" },
+      OWN_TOTEMS = { [8075] = "strength", [8512] = "haste" },
+      effects = function(found, buffs, own, gearMods)
+        got.found, got.buffs, got.own, got.gear = found, buffs, own, gearMods
+        return { spellTaken = 1.13 }
+      end,
+    }
+    package.loaded.gear = { effects = function(items, glyphs)
+      got.items, got.glyphs = items, glyphs
+      return { ssFlat = 155 }
+    end }
+    snap = require("snapshot")
+  end)
+  after_each(function()
+    for _, n in ipairs(NAMES) do package.loaded[n] = saved[n] end
+  end)
+
+  it("reads every caster's debuffs on the target, the player's buffs and our earth and air totems", function()
+    install({ auras = {
+                target = { HARMFUL = { { name = "Sunder Armor", count = 5, expires = 125, caster = "raid7" },
+                                       { name = "Curse of the Elements", expires = 300, caster = "raid2" },
+                                       { name = "Flame Shock", expires = 109, caster = "player" } } },
+                player = { HELPFUL = { { name = "Horn of Winter", expires = 200, caster = "raid4" },
+                                       { name = "Windfury Totem", expires = 0, caster = "player" } } } },
+              totems = { [2] = { "Strength of Earth Totem VIII", 90, 300 }, [4] = { "Windfury Totem", 90, 300 } } })
+    local S = snap.build(ctx())
+    assert.are.same({ spellTaken = 1.13 }, S.mods)
+    assert.are.equal(5, got.found.sunder.count)
+    assert.is_table(got.found.elements)
+    assert.is_nil(got.found.fs)
+    assert.is_table(got.buffs.hornOfWinter)
+    assert.is_table(got.buffs.windfuryTotem)
+    assert.are.same({ earth = "strength", air = "haste" }, got.own)
+    assert.are.same({ ssFlat = 155 }, got.gear)
+    assert.are.near(9, S.target.fs, 1e-9) -- our own Flame Shock is read as before
+  end)
+
+  it("no target: no target debuffs, the group and the gear still count", function()
+    install({ target = { exists = false } })
+    snap.build(ctx())
+    assert.is_nil(got.found)
+    assert.are.same({ ssFlat = 155 }, got.gear)
+  end)
+
+  it("reads the tier slots, trinkets and relic and the active glyphs once, at scan", function()
+    install({ inventory = { [1] = 45412, [3] = 45413, [13] = 50355, [18] = 45169, [16] = 50737 },
+              glyphs = { [1] = { 55446, 1 }, [2] = { 58057, 2 } } })
+    local c = snap.scan()
+    assert.are.same({ 45412, 45413, 50355, 45169 }, c.gearItems) -- the weapons (16, 17) are read elsewhere
+    assert.are.same({ 55446, 58057 }, c.gearGlyphs)
+    assert.are.same({ ssFlat = 155 }, c.gearMods)
+  end)
+
+  -- an elemental shaman's Totem of Wrath outranks our Flametongue Totem: ours is a foreign kind,
+  -- worth no damage, and the model drops Searing / Magma over it (spec/wowsims_spec.lua)
+  it("our Flametongue Totem is a fire totem of the kind 'other'", function()
+    install({ totems = { [1] = { "Flametongue Totem VIII", 90, 300 } } })
+    assert.are.equal("other", snap.build(ctx()).totems.fire.kind)
+  end)
+end)

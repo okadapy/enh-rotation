@@ -9,6 +9,14 @@ G.EXTRA_NAMES = {
   [8050] = "Flame Shock", [17364] = "Stormstrike",
   [3599] = "Searing Totem", [8190] = "Magma Totem", [2894] = "Fire Elemental Totem",
   [8232] = "Windfury Weapon", [8024] = "Flametongue Weapon", [8017] = "Rockbiter Weapon",
+  -- raid.lua: target debuffs, the player's buffs, our own earth / air totems
+  [7386] = "Sunder Armor", [8647] = "Expose Armor", [55749] = "Acid Spit", [770] = "Faerie Fire",
+  [16857] = "Faerie Fire (Feral)", [56631] = "Sting", [702] = "Curse of Weakness", [53598] = "Spore Cloud",
+  [1490] = "Curse of the Elements", [51726] = "Ebon Plague", [60431] = "Earth and Moon", [30708] = "Totem of Wrath",
+  [21183] = "Heart of the Crusader", [58410] = "Master Poisoner", [30069] = "Blood Frenzy", [58683] = "Savage Combat",
+  [22959] = "Improved Scorch", [12579] = "Winter's Chill", [17800] = "Shadow Mastery", [33198] = "Misery",
+  [57330] = "Horn of Winter", [8076] = "Strength of Earth", [8512] = "Windfury Totem", [55610] = "Improved Icy Talons",
+  [8075] = "Strength of Earth Totem",
 }
 
 function G.names()
@@ -126,6 +134,7 @@ end
 -- inRange={[name]=0|1}, interact, auras={[unit]={HELPFUL={...},HARMFUL={...}}} (name,count,expires,caster,id),
 -- target={exists,enemy,level,hp,hpMax,guid,classification,dead,player}, totems={[slot]={name,start,dur}},
 -- enchants={mh=bool,oh=bool}, tooltip={[16]={lines},[17]={lines}}, links={[slot]=itemLink}, casting={name,startMs,endMs}, talents={[tab]={{name,rank}}}
+-- inventory={[slot]=itemId}, glyphs={[socket]={spellId,glyphType}}
 function G.install(cfg)
   cfg = cfg or {}
   G.cfg = cfg
@@ -245,6 +254,13 @@ function G.install(cfg)
   _G.GetNumRaidMembers = function() return cfg.raid or 0 end
   _G.GetNumPartyMembers = function() return cfg.party or 0 end
   _G.GetInventoryItemLink = function(_, slot) return ((cfg.links or {})[slot]) end
+  _G.GetInventoryItemID = function(_, slot) return ((cfg.inventory or {})[slot]) end
+  -- 3.3.5a: enabled, glyphType (1 major, 2 minor), glyphSpell, icon (Blizzard_GlyphUI.lua)
+  _G.GetGlyphSocketInfo = function(i)
+    local g = (cfg.glyphs or {})[i]
+    if not g then return true, i % 2 == 0 and 2 or 1, nil, nil end
+    return true, g[2] or 1, g[1], "icon"
+  end
   _G.GetUnitSpeed = function() return cfg.moving and 7 or 0 end
   _G.UnitAffectingCombat = function(u)
     local t = u == "target" and tgt()
