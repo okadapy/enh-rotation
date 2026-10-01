@@ -81,7 +81,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт) — и�
 Настройки одни и те же, кроме двух: **Export snapshots** в аддоне — кнопка и команда, а **Tell me when a newer version is out** есть только у аддона. В аддоне они разложены по трём страницам:
 
 - **General** (`DoubtMyRotation`) — Scale, Timeline length, Icons on timeline, Show reason under icon, Show Bloodlust ready in group и кнопки **Unlock timeline** / **Lock timeline**, **Export snapshots**, **Hide timeline** / **Show timeline**;
-- **Combat** — Mode, Feral Spirit, Fire Elemental, Shamanistic Rage, Shield;
+- **Combat** — Mode, Feral Spirit, Fire Elemental, Shamanistic Rage, Shield, Fight summary in chat;
 - **Advanced** — Weaving, Mana policy (solo), Record snapshots, Print debug, Tell me when a newer version is out.
 
 Изменения применяются сразу, лента перестраивается через долю секунды. **Cancel** возвращает всё, как было при открытии окна. **Defaults** спросит: сбросить только открытую страницу (These settings) или все (All settings).
@@ -103,6 +103,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт) — и�
 - **Show reason under icon** — текст под крупной иконкой и у предупреждения.
 - **Show Bloodlust ready in group** — значок «Bloodlust готов» (по умолчанию выключен).
 - **Shield** — какой щит держать: `auto` (Lightning Shield, если не висит Water Shield), `Lightning Shield`, `Water Shield`. С Water Shield подсказчик не предлагает Lightning Shield.
+- **Fight summary in chat** — печатать в чат краткий разбор боя: процент совпадений с подсказкой, среднюю задержку и потерю урона за счёт ошибок (включено по умолчанию). Подробный разбор по ссылке `/dmr last`.
 - **Record snapshots for bug reports** — записывать ситуации для отчёта об ошибке (до 30 штук) и журнал нажатий (последние 200).
 - **Export snapshots (copy window)** — открыть окно со строкой записанных данных для копирования в issue.
 - **Print debug to chat** — печатать план в чат при каждой смене первого действия.
@@ -120,6 +121,8 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт) — и�
 | `/dmr set <ключ> <значение>` | поменять одну настройку, например `/dmr set mode group`, `/dmr set scale 1.2`, `/dmr set showReason off`. Вариант из списка — словом или номером, галочка — `on` / `off` |
 | `/dmr reset` | вернуть все настройки по умолчанию и ленту на место (если её утащило за край) |
 | `/dmr export` | окно со строкой для отчёта об ошибке (как **Export snapshots**) |
+| `/dmr last` | окно с разбором последних боёв: совпадений с подсказкой, задержек, потери урона |
+| `/dmr history` | история боёв по боссам (20 последних для каждого), тренд лучше / хуже / как было |
 | `/dmr unlock` / `/dmr lock` | разрешить перетаскивать ленту / закрепить её на месте |
 | `/dmr hide` / `/dmr show` | скрыть ленту (подсказчик спит) / показать. Запоминается и после `/reload` |
 
