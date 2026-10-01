@@ -415,4 +415,18 @@ describe("build #integration", function()
     assert.is_true(w.shown)
     assert.are.same(saved.enhrotSnapshots, build.decodeExport(w.box.text))
   end)
+
+  it("the aura stays idle when the addon is installed", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    _G.DoubtMyRotationAddon = {} -- the addon's global, seen by the chunk through the client env
+    local env = { config = aura.defaultConfig(), region = CreateFrame("Frame"), saved = {} }
+    local chunk = assert(loadstring(build.initCode("src")))
+    setfenv(chunk, clientEnv({ aura_env = env }))
+    chunk()
+    _G.DoubtMyRotationAddon = nil
+    assert.is_nil(env.rt)
+    assert.is_nil(EnhRotEngineFrame)
+    assert.are.equal("DoubtMyRotation: the addon is installed, this aura stays idle", G.printed[#G.printed])
+  end)
 end)

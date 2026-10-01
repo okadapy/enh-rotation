@@ -488,8 +488,15 @@ function M.listen(frame)
   for e in pairs(M.RESCAN) do frame:RegisterEvent(e) end
 end
 
--- the host aura was hidden (unloaded, disabled): sleep, and once a second ask it to show again;
--- WeakAuras only lets that event through while the aura is loaded
+-- the host shows itself on request: the aura sends its trigger an event (env.show), the
+-- addon's frame needs nothing (no env.show)
+local function showHost(rt)
+  local f = rt.env.show
+  if f then f() end
+end
+
+-- the host was hidden: sleep, and once a second ask it to show again (WeakAuras only lets
+-- that event through while the aura is loaded)
 function M.sleep(rt)
   if rt.stopped or rt.sleeping then return end
   rt.sleeping = true
@@ -499,7 +506,7 @@ function M.sleep(rt)
     waited = waited + (dt or 0)
     if waited >= M.SLEEP_POLL then
       waited = 0
-      WeakAuras.ScanEvents("ENHROT_SHOW")
+      showHost(rt)
     end
   end)
 end
@@ -641,7 +648,7 @@ function M.step(rt, dt)
   rt.elapsed = rt.elapsed + (dt or 0)
   if not rt.shown then
     rt.shown = true
-    WeakAuras.ScanEvents("ENHROT_SHOW")
+    showHost(rt)
   end
   if not rt.pending and rt.elapsed < M.PULSE then return work(rt) end
   -- in raids target auras change nearly every frame: minor events wait a little, casts do not
@@ -681,8 +688,9 @@ function M.step(rt, dt)
   return M.show(rt, plan, S, now)
 end
 
--- LibSerialize / LibDeflate come with WeakAuras (its own import strings use them)
-function M.exportLibs()
+-- LibSerialize / LibDeflate: the host's (the addon brings its own), else WeakAuras' via LibStub
+function M.exportLibs(env)
+  if env and env.libs then return env.libs end
   if not LibStub then return nil end
   local ser, def = LibStub("LibSerialize", true), LibStub("LibDeflate", true)
   if not (ser and def) then return nil end
@@ -694,7 +702,7 @@ function M.showExport(env)
   local function text()
     local saved = env.saved or {}
     local list, presses = saved[recorder.KEY] or {}, saved[recorder.PRESS_KEY] or {}
-    local s = recorder.export({ version = M.VERSION, snapshots = list, presses = presses }, M.exportLibs())
+    local s = recorder.export({ version = M.VERSION, snapshots = list, presses = presses }, M.exportLibs(env))
     if not s then return "DoubtMyRotation: this client has no LibSerialize/LibDeflate, send WeakAuras.lua instead" end
     if #list == 0 and #presses == 0 then return "DoubtMyRotation: no snapshots yet - turn on Record snapshots and play a while" end
     return s
