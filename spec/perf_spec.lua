@@ -86,4 +86,31 @@ describe("performance #integration #perf", function()
       end
     end
   end)
+
+  -- the raid's debuffs and the equipment (S.mods) are read only under the damage memo: a search
+  -- with them does the same work, within the same limits
+  it("with raid debuffs and equipment the work and the garbage stay under their limits", function()
+    local modded = Sc.randomStates(150)
+    for _, S in ipairs(modded) do
+      local m = Sc.raidMods()
+      for k, v in pairs(Sc.gearMods()) do m[k] = v end
+      S.mods = m
+    end
+    for i = 1, 5 do search.best(modded[i]) end
+    local n = 0
+    debug.sethook(function() n = n + 1 end, "", 1000)
+    for _, S in ipairs(modded) do search.best(S) end
+    debug.sethook()
+    local k = n / #modded
+    collectgarbage("collect")
+    collectgarbage("stop")
+    local kb0 = collectgarbage("count")
+    for _, S in ipairs(modded) do search.best(S) end
+    local kb = (collectgarbage("count") - kb0) / #modded
+    collectgarbage("restart")
+    local info = ("with S.mods: %.0f thousand Lua instructions, %.0f KB per search"):format(k, kb)
+    print("\nperf: " .. info)
+    assert.is_true(k <= 600, info)
+    assert.is_true(kb <= 300, info)
+  end)
 end)
