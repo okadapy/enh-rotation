@@ -553,13 +553,22 @@ describe("snapshot", function()
       assert.are.near(S.target.hp / dps, rec.prior, 1e-9)
     end)
 
-    it("none in a group or raid: others hit the mob too", function()
-      for _, extra in ipairs({ { party = 2 }, { raid = 10 } }) do
-        mob(extra)
+    it("in a party every other member adds GROUP_MATE of our kill rate", function()
+      for _, n in ipairs({ 1, 4 }) do
+        mob({ party = n })
         local rec = seen()
-        snapshot.build(ctx({ ttd = rec.ttd }))
-        assert.is_nil(rec.prior)
+        local S = snapshot.build(ctx({ ttd = rec.ttd }))
+        assert.are.equal("group", S.mode)
+        local rate = value.dpsEstimate(S) * (1 + snapshot.GROUP_MATE * n)
+        assert.are.near(S.target.hp / rate, rec.prior, 1e-9)
       end
+    end)
+
+    it("none in a raid: its damage says nothing of ours", function()
+      mob({ raid = 10 })
+      local rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_nil(rec.prior)
     end)
 
     it("none before the pull", function()
