@@ -101,33 +101,45 @@ function M.tooltip()
   return EnhRotScanTip or CreateFrame("GameTooltip", "EnhRotScanTip", nil, "GameTooltipTemplate")
 end
 
+-- imbue kind and the weapon's own speed ("Speed 2.70", "Скорость 2,70") from the item tooltip
 function M.enchantOf(tip, slot, names)
   tip:SetOwner(WorldFrame, "ANCHOR_NONE")
   tip:ClearLines()
   tip:SetInventoryItem("player", slot)
+  local found, speed
   local regions = { tip:GetRegions() }
   for _, r in ipairs(regions) do
     if r:GetObjectType() == "FontString" and r:IsShown() then
       local text = r:GetText()
       if text then
-        for base, kind in pairs(names) do
-          if text:find(base, 1, true) then return kind end
+        if not found then
+          for base, kind in pairs(names) do
+            if text:find(base, 1, true) then found = kind; break end
+          end
         end
+        local a, b = text:match("^%D+(%d)[%.,](%d%d)$")
+        if a and not speed then speed = tonumber(a .. "." .. b) end
       end
     end
   end
-  return nil
+  return found, speed
 end
 
 function M.enchants(c, now)
   local hasMH, _, _, hasOH = GetWeaponEnchantInfo()
-  local sig = tostring(hasMH) .. "/" .. tostring(hasOH)
+  -- the equipped items too: a weapon swap with the same imbues changes the tooltip speed
+  local link = GetInventoryItemLink
+  local sig = tostring(hasMH) .. "/" .. tostring(hasOH) .. "/" .. tostring(link and link("player", 16))
+    .. "/" .. tostring(link and link("player", 17))
   if sig ~= c.enchantSig or now - c.enchantAt > M.ENCHANT_RESCAN then
     local tip = M.tooltip()
+    local mh, mhSpeed = M.enchantOf(tip, 16, c.enchantNames)
+    local oh, ohSpeed = M.enchantOf(tip, 17, c.enchantNames)
     c.enchant = {
       -- present but not Windfury/Flametongue/Rockbiter (Frostbrand, Earthliving): "other"
-      mh = hasMH and (M.enchantOf(tip, 16, c.enchantNames) or "other") or nil,
-      oh = hasOH and (M.enchantOf(tip, 17, c.enchantNames) or "other") or nil,
+      mh = hasMH and (mh or "other") or nil,
+      oh = hasOH and (oh or "other") or nil,
+      mhSpeed = mhSpeed, ohSpeed = ohSpeed,
     }
     c.enchantSig, c.enchantAt = sig, now
   end
@@ -250,10 +262,10 @@ function M.weapons(c, now)
   local mhSpeed, ohSpeed = UnitAttackSpeed("player")
   local minMH, maxMH, minOH, maxOH = UnitDamage("player")
   local ench = M.enchants(c, now)
-  local w = { mh = { speed = mhSpeed or 2.0, min = minMH or 0, max = maxMH or 0, enchant = ench.mh } }
+  local w = { mh = { speed = mhSpeed or 2.0, base = ench.mhSpeed, min = minMH or 0, max = maxMH or 0, enchant = ench.mh } }
   if ohSpeed and ohSpeed > 0 then
-    w.oh = { speed = ohSpeed, min = minOH or 0, max = maxOH or 0, enchant = ench.oh }
-  elseif M.twoHand(w.mh.speed) then
+    w.oh = { speed = ohSpeed, base = ench.ohSpeed, min = minOH or 0, max = maxOH or 0, enchant = ench.oh }
+  elseif M.twoHand(ench.mhSpeed or w.mh.speed) then
     w.mh.twoHand = true
   end
   return w

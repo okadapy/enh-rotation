@@ -139,6 +139,9 @@ function M.white(S, hand)
   return avg(w) * M.meleeTable(S, true).factor * M.armorMult(S)
 end
 
+-- the weapon's own speed (tooltip): AP bonus, normalization, imbues, PPM procs; w.speed is the hasted swing
+local function wspeed(w) return w.base or w.speed end
+
 -- UnitDamage already holds AP * speed / 14 (halved for the off hand); swap speed for 2.4 / 3.3
 function M.normalized(S, hand)
   local w = S.weapons[hand]
@@ -146,7 +149,7 @@ function M.normalized(S, hand)
   local ap = (S.player.ap or 0) / 14
   local mult = hand == "oh" and 0.5 or 1
   local norm = w.twoHand and 3.3 or 2.4
-  return avg(w) - ap * w.speed * mult + ap * norm * mult
+  return avg(w) - ap * wspeed(w) * mult + ap * norm * mult
 end
 
 function M.wf(S)
@@ -155,7 +158,7 @@ function M.wf(S)
   local ew = talent(S, "elementalWeapons")
   local bonus = byLevel(M.WF_AP, S.player.level) * (1 + (M.EW_WF[ew] or 0))
   local procs = M.WF_CHANCE / (1 + M.WF_CHANCE * math.floor(M.WF_ICD / w.speed))
-  local attack = (avg(w) + bonus / 14 * w.speed) * M.meleeTable(S, false).factor * M.armorMult(S)
+  local attack = (avg(w) + bonus / 14 * wspeed(w)) * M.meleeTable(S, false).factor * M.armorMult(S)
   return procs * 2 * attack, procs
 end
 
@@ -163,8 +166,8 @@ function M.ftHit(S, hand)
   local w = S.weapons[hand]
   if not w or w.enchant ~= "ft" then return 0 end
   local ew = talent(S, "elementalWeapons")
-  local base = byLevel(M.FT_PER_SPEED, S.player.level) * w.speed * (1 + (M.EW_FT[ew] or 0))
-  local dmg = base + 0.1 * w.speed / 2.6 * (S.player.spFire or 0)
+  local base = byLevel(M.FT_PER_SPEED, S.player.level) * wspeed(w) * (1 + (M.EW_FT[ew] or 0))
+  local dmg = base + 0.1 * wspeed(w) / 2.6 * (S.player.spFire or 0)
   return dmg * M.spellHit(S) * M.spellCritFactor(S)
 end
 
@@ -194,7 +197,7 @@ local function mwChance(S, hand)
   local r = talent(S, "maelstromWeapon")
   local w = S.weapons[hand]
   if r == 0 or not w then return 0 end
-  return math.min(1, 2 * r * w.speed / 60)
+  return math.min(1, 2 * r * wspeed(w) / 60)
 end
 
 -- Shamanistic Rage (30823): "gives your successful melee attacks a chance to regenerate mana
@@ -205,7 +208,7 @@ M.RAGE_PPM, M.RAGE_MANA_AP = 10, 0.15
 function M.rageChance(S, hand)
   local w = S.weapons[hand]
   if not w then return 0 end
-  local c = M.RAGE_PPM * (w.speed or 0) / 60
+  local c = M.RAGE_PPM * (wspeed(w) or 0) / 60
   return c < 1 and c or 1
 end
 
