@@ -445,6 +445,53 @@ function M.killCredit(S, live)
   return (S.now - died) * M.dpsEstimate(S) * M.DISCOUNT
 end
 
+--@addon
+-- A relic's proc buff still up at the end of the plan (gear_data.PROCS): its stat for the time
+-- left, up to TAIL and the target's death, at the stat's worth in damage per second. The horizon
+-- itself is counted at the snapshot's stats (a proc up now is in them already), so a press of its
+-- button is worth the buff time it keeps up after the plan.
+M.HASTE_RATING = 32.79 -- haste rating per 1% at level 80 (3.3.5a, hybrid classes' melee haste)
+
+-- damage per second of one point of `stat` ("ap" | "haste"), once per search (S.memo): attack
+-- power by each hand's share of its weapon damage (UnitDamage holds AP / 14 x speed, the off hand
+-- half of it), times MELEE_SHARE; haste rating as 1% of the auto attacks per HASTE_RATING
+function M.statDps(S, stat)
+  local m = S.memo
+  local slot = stat == "ap" and "statDpsAp" or "statDpsHaste"
+  local v = m and m[slot]
+  if v then return v end
+  local damage = D()
+  local sw, w = S.swing, S.weapons
+  v = 0
+  for i = 1, 2 do
+    local hand = i == 1 and "mh" or "oh"
+    local s, wp = sw and sw[hand], w and w[hand]
+    if s and wp and (s.speed or 0) > 0 then
+      local dps = damage.auto(S, hand) / s.speed
+      if stat == "ap" then
+        local avgW = (wp.min + wp.max) / 2
+        if avgW > 0 then v = v + dps * (wp.base or wp.speed) * (hand == "oh" and 0.5 or 1) / 14 / avgW end
+      else
+        v = v + dps / (M.HASTE_RATING * 100)
+      end
+    end
+  end
+  if stat == "ap" then v = v * M.MELEE_SHARE end
+  if m then m[slot] = v end
+  return v
+end
+
+local function relicValue(S, p)
+  local r = S.buffs.relic
+  if not (r and r.stacks > 0 and r.remains > 0) then return 0 end
+  local left = r.remains < M.TAIL and r.remains or M.TAIL
+  local ttd = S.target.ttd
+  if ttd and ttd < left then left = ttd end
+  if left <= 0 then return 0 end
+  return left * r.stacks * p.amount * M.statDps(S, p.stat) * M.DISCOUNT
+end
+--@end
+
 function M.terminal(S)
   local damage = D()
   -- one lookup of the per-buff action table for all parts (nothing below changes S's buffs)
@@ -470,6 +517,10 @@ function M.terminal(S)
   elseif (W[S.mode] or W.group).drink then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
   if live then
     v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
+    --@addon
+    local mods = S.mods
+    if mods and mods.proc then v = v + relicValue(S, mods.proc) end
+    --@end
   end
   return v
 end

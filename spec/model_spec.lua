@@ -774,6 +774,88 @@ describe("model", function()
       assert.are.equal(6, model.cooldownFor(S, "fireNova"))
     end)
   end)
+
+  describe("relic procs (S.mods.proc)", function()
+    local AVALANCHE = { key = "stormstrike", stat = "ap", amount = 146, stacks = 3, duration = 15, chance = 1, icd = 0, aura = 71216 }
+    local QUAKING = { key = "lavaLash", stat = "ap", amount = 400, stacks = 1, duration = 18, chance = 0.8, icd = 9, aura = 67391 }
+    local STONEBREAKER = { key = "shock", stat = "ap", amount = 110, stacks = 1, duration = 10, chance = 0.5, icd = 10, aura = 43749 }
+    local WIND = { key = "lightningBolt", stat = "haste", amount = 200, stacks = 1, duration = 12, chance = 1, icd = 0, aura = 67385 }
+    local function withProc(p, stacks, remains)
+      local S = fixtures.state()
+      S.mods = { proc = p }
+      S.buffs.relic = { stacks = stacks, remains = remains }
+      return S
+    end
+
+    -- an instant's proc comes with the press: the state after it is the GCD on, the buff that much older
+    it("Stormstrike adds a stack of Totem of the Avalanche and refreshes it, up to 3; other buttons do not", function()
+      local n, _, dt = model.apply(withProc(AVALANCHE, 1, 4), "stormstrike")
+      assert.are.equal(2, n.buffs.relic.stacks)
+      assert.are.near(15 - dt, n.buffs.relic.remains, 1e-9)
+      assert.are.equal(3, model.apply(withProc(AVALANCHE, 3, 4), "stormstrike").buffs.relic.stacks)
+      n, _, dt = model.apply(withProc(AVALANCHE, 1, 4), "earthShock")
+      assert.are.equal(1, n.buffs.relic.stacks)
+      assert.are.near(4 - dt, n.buffs.relic.remains, 1e-9)
+    end)
+
+    it("a chance below 1 adds that share of a stack and of the refresh; nothing while the internal cooldown runs", function()
+      local n, _, dt = model.apply(withProc(QUAKING, 0, 0), "lavaLash")
+      assert.are.near(0.8, n.buffs.relic.stacks, 1e-12)
+      assert.are.near(0.8 * 18 - dt, n.buffs.relic.remains, 1e-12)
+      n, _, dt = model.apply(withProc(QUAKING, 1, 15), "lavaLash") -- procced 3 s ago, 9 s cooldown
+      assert.are.equal(1, n.buffs.relic.stacks)
+      assert.are.near(15 - dt, n.buffs.relic.remains, 1e-12)
+    end)
+
+    it("Stonebreaker's Totem: every shock is its button", function()
+      assert.are.near(0.5, model.apply(withProc(STONEBREAKER, 0, 0), "flameShock").buffs.relic.stacks, 1e-12)
+      assert.are.near(0.5, model.apply(withProc(STONEBREAKER, 0, 0), "earthShock").buffs.relic.stacks, 1e-12)
+      assert.are.near(0.5, model.apply(withProc(STONEBREAKER, 0, 0), "frostShock").buffs.relic.stacks, 1e-12)
+      assert.are.equal(0, model.apply(withProc(STONEBREAKER, 0, 0), "stormstrike").buffs.relic.stacks)
+    end)
+
+    -- a cast's proc comes when the server ends it (castTime + latency after the press, as the
+    -- swing clock): the buff runs its full time from then
+    it("Lightning Bolt procs when the cast lands", function()
+      local S = withProc(WIND, 0, 0)
+      local ct = model.castTime(S, "lightningBolt")
+      assert.is_true(ct > 0)
+      local n, _, dt = model.apply(S, "lightningBolt")
+      assert.are.equal(1, n.buffs.relic.stacks)
+      assert.are.near(12 + ct + S.latency - dt, n.buffs.relic.remains, 1e-9)
+    end)
+
+    it("the buff runs out while waiting", function()
+      assert.are.same({ stacks = 0, remains = 0 }, model.wait(withProc(AVALANCHE, 2, 3), 4).buffs.relic)
+      assert.are.near(3, model.wait(withProc(AVALANCHE, 2, 5), 2).buffs.relic.remains, 1e-9)
+    end)
+
+    it("the parent state's buff is never changed by a press or a wait", function()
+      local S = withProc(AVALANCHE, 1, 4)
+      model.apply(S, "stormstrike")
+      model.peekApply(S, "stormstrike")
+      model.peekApplyOver(model.peekWait(S, 0.5), "stormstrike")
+      model.wait(S, 2)
+      model.peekWait(S, 2)
+      S.memo = { arena = model.newArena() }
+      model.apply(S, "stormstrike")
+      model.wait(S, 2)
+      model.release(S.memo.arena)
+      assert.are.same({ stacks = 1, remains = 4 }, S.buffs.relic)
+    end)
+
+    it("without a relic's proc no state gets a relic buff", function()
+      local S = fixtures.state()
+      S.memo = {}
+      assert.is_nil(model.apply(S, "stormstrike").buffs.relic)
+      assert.is_nil(model.peekApply(S, "stormstrike").buffs.relic)
+      -- a scratch buffer that held a relic state before forgets it
+      model.peekWait(withProc(AVALANCHE, 1, 4), 1)
+      model.peekWait(withProc(AVALANCHE, 1, 4), 1)
+      assert.is_nil(model.peekWait(S, 1).buffs.relic)
+      assert.is_nil(model.peekWait(S, 1).buffs.relic)
+    end)
+  end)
 end)
 
 describe("model: a mob running in (target.meleeIn)", function()
@@ -927,7 +1009,17 @@ describe("model working copies (search speed)", function()
                            { mods = { armor = 0.76, spellTaken = 1.13, physTaken = 1.04, critTaken = 0.03,
                                       spellCritTaken = 0.05, spellHitTaken = 0.03, support = 0.02 } },
                            -- glyphs of Shocking and Fire Nova (addon: S.mods)
-                           { gcd = 1.4, mods = { shockGcd = 1, fireNovaCd = 3 } } }) do
+                           { gcd = 1.4, mods = { shockGcd = 1, fireNovaCd = 3 } },
+                           -- a relic's proc buff (addon: S.mods.proc, S.buffs.relic)
+                           { mods = { proc = { key = "stormstrike", stat = "ap", amount = 146, stacks = 3, duration = 15,
+                                               chance = 1, icd = 0, aura = 71216 } },
+                             buffs = { relic = { stacks = 1, remains = 5 } } },
+                           { mods = { proc = { key = "shock", stat = "ap", amount = 110, stacks = 1, duration = 10,
+                                               chance = 0.5, icd = 10, aura = 43749 } },
+                             buffs = { relic = { stacks = 0.5, remains = 1.2 } } },
+                           { mods = { proc = { key = "lightningBolt", stat = "haste", amount = 200, stacks = 1, duration = 12,
+                                               chance = 0.7, icd = 6, aura = 67385 } },
+                             buffs = { relic = { stacks = 0, remains = 0 } } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S
@@ -1106,7 +1198,8 @@ describe("model working copies (search speed)", function()
     end
     for _, over in ipairs({ {}, { totems = { fire = { kind = "searing", remains = 3 } }, target = { range = "30", meleeIn = 2 } },
                             { buffs = { rage = 5, flurry = { charges = 2, remains = 10 } }, pets = { wolves = 20 },
-                              inflight = { flameShock = 0.5 } } }) do
+                              inflight = { flameShock = 0.5 } },
+                            { buffs = { relic = { stacks = 2, remains = 7 } } } }) do
       local S = fixtures.state(over)
       S.memo = { arena = model.newArena() }
       sentinel(S.target)

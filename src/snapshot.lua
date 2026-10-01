@@ -33,6 +33,10 @@ function M.scanGear(c)
   end
   c.gearItems, c.gearGlyphs = items, glyphs
   c.gearMods = gear.effects(items, glyphs)
+  -- the relic's proc buff by name (gear_data.PROCS); an unknown name: never up
+  local proc = c.gearMods and c.gearMods.proc
+  local name = proc and GetSpellInfo(proc.aura)
+  c.procNames = proc and (name and { [name] = "proc" } or {}) or nil
 end
 
 -- S.mods (raid.effects): raid debuffs on the target from every caster, the player's buffs the
@@ -547,6 +551,11 @@ function M.build(ctx)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }
   --@addon
   S.mods = M.mods(c, S, now)
+  -- the relic's proc buff: the model carries it along the plan (stacks at least 1 while up)
+  if c.procNames then
+    local a = M.auras("player", "HELPFUL", c.procNames, false, now).proc
+    S.buffs.relic = { stacks = a and math.max(1, a.count) or 0, remains = a and a.remains or 0 }
+  end
   --@end
   S.swing = M.swingInfo(ctx, now, S.weapons)
   local melee, nearby = 0, 0

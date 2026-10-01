@@ -94,7 +94,9 @@ describe("performance #integration #perf", function()
     for _, S in ipairs(modded) do
       local m = Sc.raidMods()
       for k, v in pairs(Sc.gearMods()) do m[k] = v end
+      m.proc = require("gear_data").PROCS[50463] -- Totem of the Avalanche: a buff the model carries
       S.mods = m
+      S.buffs.relic = { stacks = 2, remains = 8 }
     end
     for i = 1, 5 do search.best(modded[i]) end
     local n = 0

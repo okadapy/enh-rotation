@@ -1,8 +1,8 @@
 -- Enhancement equipment the model knows (WotLK 3.3.5a). Item ids: wowsims assets/database/db.json
 -- (setName); effects: wowsims sim/shaman/*.go; glyphs by the spell GetGlyphSocketInfo returns
 -- (assets/db_inputs/glyph_id_map.json maps the glyph item to it). Every mod is an addition to the
--- number without the item: wowsims adds them into one DamageMultiplier. Stat procs of trinkets and
--- relics are not here: while up they are in the character sheet already.
+-- number without the item: wowsims adds them into one DamageMultiplier. Stat procs of trinkets are
+-- not here: while up they are in the character sheet already (relics on a button: PROCS).
 -- Addon only (tools/build.lua B.ADDON_SRC).
 local M = {}
 
@@ -34,6 +34,25 @@ M.RELICS = {
   [40710] = { wfAp = 212 },   -- Totem of Splintering: Windfury +212 attack power
   [27815] = { wfAp = 80 },    -- Totem of the Astral Winds
   [38367] = { llFlat = 25 },  -- Venture Co. Flame Slicer: Lava Lash +25
+}
+
+-- ranged slot: relics whose proc a button triggers (wowsims items_wotlk.go, items.go,
+-- stormstrike.go, lavalash.go). The proc's stats are in the character sheet while it is up; the
+-- model carries the buff (S.buffs.relic) for what a press keeps up after the plan. key = the
+-- button ("shock": any shock); stat = "ap" | "haste" (rating, melee and spell) per stack; chance
+-- per press; icd in s; aura = the proc's buff on the player. Not here: Bizuri's Totem of
+-- Shattered Ice (procs from Flame Shock's ticks), Skycall Totem (spell haste only).
+M.PROCS = {
+  [40322] = { key = "stormstrike", stat = "haste", amount = 60, stacks = 1, duration = 6, chance = 1, icd = 0, aura = 60766 },     -- Totem of Dueling
+  [50463] = { key = "stormstrike", stat = "ap", amount = 146, stacks = 3, duration = 15, chance = 1, icd = 0, aura = 71216 },      -- Totem of the Avalanche
+  [42607] = { key = "lavaLash", stat = "ap", amount = 120, stacks = 1, duration = 10, chance = 1, icd = 0, aura = 60549 },         -- Deadly Gladiator's Totem of Indomitability
+  [42608] = { key = "lavaLash", stat = "ap", amount = 144, stacks = 1, duration = 10, chance = 1, icd = 0, aura = 60551 },         -- Furious
+  [42609] = { key = "lavaLash", stat = "ap", amount = 172, stacks = 1, duration = 10, chance = 1, icd = 0, aura = 60553 },         -- Relentless
+  [51507] = { key = "lavaLash", stat = "ap", amount = 204, stacks = 1, duration = 10, chance = 1, icd = 0, aura = 60555 },         -- Wrathful
+  [47667] = { key = "lavaLash", stat = "ap", amount = 400, stacks = 1, duration = 18, chance = 0.8, icd = 9, aura = 67391 },       -- Totem of Quaking Earth
+  [47666] = { key = "lightningBolt", stat = "haste", amount = 200, stacks = 1, duration = 12, chance = 0.7, icd = 6, aura = 67385 },  -- Totem of Electrifying Wind
+  [40708] = { key = "lightningBolt", stat = "haste", amount = 196, stacks = 1, duration = 10, chance = 0.15, icd = 30, aura = 60771 }, -- Totem of the Elemental Plane
+  [33507] = { key = "shock", stat = "ap", amount = 110, stacks = 1, duration = 10, chance = 0.5, icd = 10, aura = 43749 },         -- Stonebreaker's Totem
 }
 
 -- glyph spell -> mods

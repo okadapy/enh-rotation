@@ -498,6 +498,50 @@ describe("value.terminal", function()
     S.totems.water = nil
     assert.are.equal(0, value.terminal(S))
   end)
+
+  it("statDps: attack power by each hand's weapon share, haste rating at 1% of auto attacks per 32.79", function()
+    local S = base({})
+    local w = S.weapons
+    local dmh = damage.auto(S, "mh") / S.swing.mh.speed
+    local doh = damage.auto(S, "oh") / S.swing.oh.speed
+    local ap = (dmh * (w.mh.base or w.mh.speed) / 14 / ((w.mh.min + w.mh.max) / 2)
+              + doh * (w.oh.base or w.oh.speed) * 0.5 / 14 / ((w.oh.min + w.oh.max) / 2)) * value.MELEE_SHARE
+    assert.are.equal(32.79, value.HASTE_RATING)
+    assert.are.near(ap, value.statDps(S, "ap"), 1e-12)
+    assert.are.near((dmh + doh) / (value.HASTE_RATING * 100), value.statDps(S, "haste"), 1e-12)
+    -- once per search: the memo keeps both
+    S.memo = {}
+    local a, h = value.statDps(S, "ap"), value.statDps(S, "haste")
+    S.weapons = { mh = { speed = 1, min = 1, max = 1 }, oh = { speed = 1, min = 1, max = 1 } }
+    assert.are.equal(a, value.statDps(S, "ap"))
+    assert.are.equal(h, value.statDps(S, "haste"))
+  end)
+
+  it("a relic's proc still up at the end is worth its stat for the time left, up to TAIL and the target's death", function()
+    local P = { key = "stormstrike", stat = "ap", amount = 146, stacks = 3, duration = 15, chance = 1, icd = 0, aura = 71216 }
+    local function at(stacks, remains, target)
+      local S = base({ target = target })
+      S.mods = { proc = P }
+      S.buffs.relic = { stacks = stacks, remains = remains }
+      return S
+    end
+    local per = value.statDps(at(0, 0), "ap")
+    assert.is_true(per > 0)
+    local none = value.terminal(at(0, 0))
+    local plain = base({})
+    assert.are.equal(value.terminal(plain), none) -- no buff up: nothing, bit for bit
+    assert.are.near(math.min(15, value.TAIL) * 3 * 146 * per * value.DISCOUNT, value.terminal(at(3, 15)) - none, 1e-6)
+    assert.are.near(4 * 2 * 146 * per * value.DISCOUNT, value.terminal(at(2, 4)) - none, 1e-6)
+    local short = at(1, 10, { fs = 0, ttd = 3 })
+    assert.are.near(3 * 146 * per * value.DISCOUNT, value.terminal(short) - value.terminal(at(0, 0, { fs = 0, ttd = 3 })), 1e-6)
+    assert.are.near(value.terminal(at(0, 0, { fs = 0, dead = true })), value.terminal(at(3, 15, { fs = 0, dead = true })), 1e-9)
+    -- haste: the same, at the haste rating's worth
+    local H = { key = "lightningBolt", stat = "haste", amount = 200, stacks = 1, duration = 12, chance = 0.7, icd = 6, aura = 67385 }
+    local S = base({})
+    S.mods = { proc = H }
+    S.buffs.relic = { stacks = 0.7, remains = 8 }
+    assert.are.near(8 * 0.7 * 200 * value.statDps(S, "haste") * value.DISCOUNT, value.terminal(S) - none, 1e-6)
+  end)
 end)
 
 describe("value on the real damage module #integration", function()

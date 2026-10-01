@@ -741,3 +741,23 @@ describe("snapshot: S.mods (addon)", function()
     assert.are.equal("other", snap.build(ctx()).totems.fire.kind)
   end)
 end)
+
+describe("snapshot: a relic's proc buff (addon)", function()
+  it("reads the proc's stacks and time left into S.buffs.relic, only with such a relic", function()
+    install({ inventory = { [18] = 50463 }, spellNames = { [71216] = "Enraged" },
+              auras = { player = { HELPFUL = { { name = "Enraged", count = 2, expires = 110 } } } } })
+    local S = snapshot.build(ctx())
+    assert.are.same({ stacks = 2, remains = 10 }, S.buffs.relic)
+    assert.are.equal(require("gear_data").PROCS[50463], S.mods.proc)
+    install({ inventory = { [18] = 45169 } })
+    assert.is_nil(snapshot.build(ctx()).buffs.relic)
+  end)
+
+  it("a proc that is not up: no stacks, no time; a proc buff without stacks counts as one", function()
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" } })
+    assert.are.same({ stacks = 0, remains = 0 }, snapshot.build(ctx()).buffs.relic)
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" },
+              auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0, expires = 112 } } } } })
+    assert.are.same({ stacks = 1, remains = 12 }, snapshot.build(ctx()).buffs.relic)
+  end)
+end)

@@ -5,7 +5,7 @@ describe("gear", function()
   it("nothing the model knows: no mods", function()
     assert.is_nil(gear.effects({}, {}))
     assert.is_nil(gear.effects(nil, nil))
-    assert.is_nil(gear.effects({ 12345, 40322 }, { 99999 })) -- Totem of Dueling: a proc, not a constant (task 10)
+    assert.is_nil(gear.effects({ 12345 }, { 99999 }))
   end)
 
   it("relics with a constant bonus", function()
@@ -47,6 +47,30 @@ describe("gear", function()
   it("relic, set and glyphs together", function()
     assert.are.same({ ssFlat = 155, ssMult = 0.20, llMult = 0.20, ssNature = 0.08 },
       gear.effects({ 45169, 45412, 45414 }, { 55446 }))
+  end)
+
+  it("a relic with a proc on a button gives S.mods.proc, its gear_data.PROCS entry as it is", function()
+    local m = gear.effects({ 50463 }, { 55446 })
+    assert.are.equal(data.PROCS[50463], m.proc)
+    assert.are.equal(0.08, m.ssNature)
+    assert.are.same({ proc = data.PROCS[40322] }, gear.effects({ 40322 }, {}))
+  end)
+
+  it("relic procs as in wowsims (items_wotlk.go, items.go, stormstrike.go, lavalash.go)", function()
+    local P = data.PROCS
+    assert.are.same({ key = "stormstrike", stat = "ap", amount = 146, stacks = 3, duration = 15, chance = 1, icd = 0, aura = 71216 }, P[50463])
+    assert.are.same({ key = "lavaLash", stat = "ap", amount = 400, stacks = 1, duration = 18, chance = 0.8, icd = 9, aura = 67391 }, P[47667])
+    assert.are.same({ key = "shock", stat = "ap", amount = 110, stacks = 1, duration = 10, chance = 0.5, icd = 10, aura = 43749 }, P[33507])
+    local keys = { stormstrike = true, lavaLash = true, lightningBolt = true, shock = true }
+    local n = 0
+    for id, p in pairs(P) do
+      n = n + 1
+      assert.is_true(keys[p.key], tostring(id))
+      assert.is_true(p.stat == "ap" or p.stat == "haste", tostring(id))
+      assert.is_true(p.chance > 0 and p.chance <= 1 and p.stacks >= 1 and p.duration > 0 and p.icd >= 0, tostring(id))
+      assert.is_nil(data.RELICS[id], tostring(id)) -- a relic is either a constant or a proc
+    end
+    assert.are.equal(10, n)
   end)
 
   it("every set has distinct pieces; every bonus names a known set", function()
