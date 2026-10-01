@@ -472,6 +472,33 @@ describe("snapshot", function()
     assert.are.equal(4396, S.player.baseMana)
   end)
 
+  -- the latency is measured: the median gap between a press (SENT) and the server's answer
+  it("latency: GetNetStats + 0.1 until PING_MIN presses are measured, then their median", function()
+    install({ latencyMs = 80 })
+    local ping = { n = 0, i = 0 }
+    assert.are.near(0.18, snapshot.build(ctx({ ping = ping })).latency, 1e-9)
+    snapshot.addPing(ping, 0.30)
+    snapshot.addPing(ping, 0.12)
+    assert.are.near(0.18, snapshot.build(ctx({ ping = ping })).latency, 1e-9) -- 2 < PING_MIN
+    snapshot.addPing(ping, 0.20)
+    assert.are.near(0.20, snapshot.build(ctx({ ping = ping })).latency, 1e-9)
+    snapshot.addPing(ping, 0.90) -- one outlier: 0.12 0.20 0.30 0.90
+    assert.are.near(0.25, snapshot.build(ctx({ ping = ping })).latency, 1e-9)
+  end)
+
+  it("addPing keeps the last PING_N samples and ignores a negative gap", function()
+    assert.are.equal(15, snapshot.PING_N)
+    assert.are.equal(3, snapshot.PING_MIN)
+    local ping = { n = 0, i = 0 }
+    for k = 1, snapshot.PING_N + 5 do snapshot.addPing(ping, k / 100) end
+    assert.are.equal(snapshot.PING_N, ping.n)
+    assert.are.near(0.13, ping.median, 1e-9) -- the 15 newest: 0.06 .. 0.20
+    snapshot.addPing(ping, -0.5)
+    assert.are.equal(snapshot.PING_N, ping.n)
+    assert.are.near(0.13, ping.median, 1e-9)
+    assert.are.near(0.25, snapshot.latency(nil, 150), 1e-9) -- no ping table: GetNetStats + 0.1
+  end)
+
   it("turns in-flight deadlines into remains and drops expired ones", function()
     install({})
     local c = ctx({ inflight = { flameShock = 100.6, earthShock = 99.0 } })
