@@ -21,6 +21,14 @@ M.DISCOUNT = 0.5             -- ready cooldowns, DoT ticks and totem pulses afte
 M.DRINK = { { 75, 19200 / 30 }, { 70, 12840 / 30 }, { 65, 7200 / 30 }, { 60, 5100 / 30 }, { 55, 4200 / 30 },
             { 45, 2934 / 30 }, { 35, 1992 / 30 }, { 25, 1345 / 27 }, { 15, 835 / 24 }, { 5, 437 / 21 },
             { 1, 151 / 18 } }
+-- solo: the player's mana option (S.manaPolicy, nil = balanced) multiplies the drinking price.
+-- balanced: the level's water, as it is. save: 1.5x, drinking stops the grind for longer than
+-- the water's own time (sitting down, eating for health too, the walk back to the pull): fewer
+-- spells, fewer stops. spend: 0.5x, half of the drinking falls into time lost anyway (looting,
+-- the walk to the next mob, waiting for a respawn): at 52-54 a bar then costs ~14 s, a little
+-- under the fixed 20 s a bar the price had before the water (0.7x of balanced there), when plans
+-- pressed Earth Shock and Stormstrike whenever they were ready.
+M.MANA_POLICY = { balanced = 1.0, save = 1.5, spend = 0.5 }
 M.MELEE_SHARE = 1.5          -- enhancement damage / auto-attack damage, for the damage-per-second estimate
 M.SUPPORT = 0.06             -- share of auto-attack damage the support totems add (Windfury, Strength of Earth...)
 M.TAIL = 12                  -- s of remaining totem/pet time worth counting: later it can simply be recast
@@ -84,9 +92,11 @@ function M.manaPrice(S)
     -- AP-based price made it 4-6x the drinking time, and a level-53 player in melee was told to
     -- idle with Stormstrike and Lava Lash ready. A bar that runs dry needs no extra price: what
     -- cannot be paid cannot be pressed.
+    -- The player's option (MANA_POLICY) scales it; the reserve (reserveValue) stays as it is.
+    local f = M.MANA_POLICY[S.manaPolicy] or 1
     local dps = M.dpsEstimate(S)
-    if dps > 0 then return w.mana * dps / M.drinkRate(p.level) end
-    return w.mana * ref
+    if dps > 0 then return f * w.mana * dps / M.drinkRate(p.level) end
+    return f * w.mana * ref
   end
   local ttd = S.target and S.target.ttd
   if ttd and p.manaMax and (p.mana or 0) < ttd * p.manaMax * M.FIGHT_MANA_PER_SEC then
@@ -392,9 +402,25 @@ end
 -- (the next pull is not in the plan). Killing the mob sooner is worth that much; without it a mob
 -- the swings finish anyway was worth the same finished 1.5 s sooner by a Lava Lash, and the plan
 -- stood empty in melee.
+--
+-- A kill sooner than the one nothing pressed gives (search: S.memo.killBase) counts only the
+-- seconds beyond FINISH_MIN. The kill time is an expectation: one hit's damage is random (crits,
+-- glancing blows, misses), so a finisher that saves a fraction of a swing interval saves it only
+-- on average, and the next pull starts with retargeting and running that takes longer. Without
+-- the margin an Earth Shock that saved 2.0-2.8 s (130 damage a second at 52) was within 50 of
+-- its mana, and the shock came and went as the mob's health fell. Without a memo (direct
+-- calls) the kill counts in full.
+M.FINISH_MIN = 0.5
 function M.killCredit(S, live)
   local died = S.target.diedAt
   if live or not died or S.now <= died then return 0 end
+  local m = S.memo
+  local base = m and m.killBase
+  if base and died < base then
+    died = died + M.FINISH_MIN
+    if died > base then died = base end
+    if S.now <= died then return 0 end
+  end
   return (S.now - died) * M.dpsEstimate(S) * M.DISCOUNT
 end
 

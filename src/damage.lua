@@ -449,6 +449,7 @@ memoize("meleeTable")
 memoize("mwPerHit")
 memoize("mwPerSwing")
 memoize("periodic")
+memoize("tableCv2")
 memoizeFlags("auto")
 memoizeFlags("action")
 
@@ -465,7 +466,54 @@ function M.rates(S)
   return r
 end
 
--- expected damage and Maelstrom stacks of one auto attack per hand, for S's buffs
+-- The spread of one hit's damage, its variance over its squared mean (CV^2), from the outcomes
+-- of its table: "white" (auto attacks: misses, dodges, glancing blows, crits), "yellow"
+-- (Stormstrike, Lava Lash: no glancing) or "spell" (misses, crits at the spell multiplier). The
+-- model deals average damage; model.killTime uses the spread for the expected time of death.
+function M.tableCv2(S, kind)
+  local m1, m2
+  if kind == "spell" then
+    local h = M.spellHit(S)
+    local c = util.clamp(S.player.spellCrit or 0, 0, 1)
+    local k = 1.5 + 0.1 * talent(S, "elementalFury")
+    m1, m2 = h * (1 - c + c * k), h * (1 - c + c * k * k)
+  else
+    local t = M.meleeTable(S, kind == "white")
+    local hit = 1 - t.miss - t.dodge - t.glance - t.crit
+    local g = t.glance > 0 and (t.factor - hit - 2 * t.crit) / t.glance or 0 -- glancing damage share
+    m1, m2 = t.factor, hit + t.glance * g * g + 4 * t.crit
+  end
+  if m1 <= 0 then return 0 end
+  return m2 / (m1 * m1) - 1
+end
+
+-- variance of one auto attack's damage (M.auto): the white table, the weapon's damage range
+-- (even between min and max) and, for the main hand, whether Windfury procs
+function M.swingVar(S, hand)
+  local w = S.weapons and S.weapons[hand]
+  local a = w and M.auto(S, hand) or 0
+  if a <= 0 then return 0 end
+  local wfDmg, procs = 0, 0
+  if hand == "mh" then wfDmg, procs = M.wf(S) end
+  local base = a - wfDmg
+  local mean = avg(w)
+  local range = mean > 0 and (w.max - w.min) / mean or 0
+  local v = base * base * ((1 + M.tableCv2(S, "white")) * (1 + range * range / 12) - 1)
+  if procs > 0 and procs < 1 then
+    local size = wfDmg / procs
+    v = v + procs * (1 - procs) * size * size
+  end
+  return v
+end
+
+-- CV^2 of a press's damage (M.action): its table (M.tableCv2)
+local YELLOW = { stormstrike = true, lavaLash = true }
+function M.actionCv2(S, key)
+  return M.tableCv2(S, YELLOW[key] and "yellow" or "spell")
+end
+
+-- expected damage and Maelstrom stacks of one auto attack per hand, for S's buffs; vmh / voh:
+-- the variance of one auto attack's damage (swingVar)
 function M.swingStats(S)
   local m = S.memo
   local f = 1
@@ -477,7 +525,8 @@ function M.swingStats(S)
     local r = slot and slot[f]
     if r then return r end
   end
-  local r = { mh = M.auto(S, "mh"), oh = M.auto(S, "oh"), mwmh = M.mwPerSwing(S, "mh"), mwoh = M.mwPerSwing(S, "oh") }
+  local r = { mh = M.auto(S, "mh"), oh = M.auto(S, "oh"), mwmh = M.mwPerSwing(S, "mh"), mwoh = M.mwPerSwing(S, "oh"),
+              vmh = M.swingVar(S, "mh"), voh = M.swingVar(S, "oh") }
   if m then
     m.swingStats = m.swingStats or {}
     m.swingStats[f] = r

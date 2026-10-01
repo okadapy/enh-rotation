@@ -31,7 +31,7 @@ The suggestion changes only after a combat event, and only when the new plan is 
 
 ## Options (Custom Options tab)
 
-Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elemental / Shamanistic Rage: auto (bosses and long fights) / boss only / always / never. Weaving: the fewest Maelstrom stacks for a Lightning Bolt / Chain Lightning in melee — 3+ (default) / 5 / any (the model decides); at range and without the Maelstrom Weapon talent any stack count is allowed. Lightning Shield or Water Shield. Bloodlust-ready alert (off by default). Snapshot recording and export for bug reports.
+Scale, timeline length, icons shown, mode, reason text. Feral Spirit / Fire Elemental / Shamanistic Rage: auto (bosses and long fights) / boss only / always / never. Weaving: the fewest Maelstrom stacks for a Lightning Bolt / Chain Lightning in melee — 3+ (default) / 5 / any (the model decides); at range and without the Maelstrom Weapon talent any stack count is allowed. Mana policy (solo): balanced (default, mana priced by the time to drink it back with your level's water) / save (1.5x the price: fewer spells, less drinking) / spend (0.5x: more spells, more drinking). Lightning Shield or Water Shield. Bloodlust-ready alert (off by default). Snapshot recording and export for bug reports.
 
 ## Status
 
