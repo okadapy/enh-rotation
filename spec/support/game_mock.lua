@@ -26,6 +26,7 @@ end
 local function region(kind)
   local r = { kind = kind, shown = true, points = {}, w = 0, h = 0, alpha = 1 }
   function r:SetPoint(...) self.point = { ... }; self.points[#self.points + 1] = self.point end
+  function r:GetPoint() local p = self.point or {}; return p[1], p[2], p[3], p[4], p[5] end
   function r:ClearAllPoints() self.points = {}; self.point = nil end
   function r:SetWidth(w) self.w = w end
   function r:SetHeight(h) self.h = h end
@@ -91,6 +92,7 @@ function G.frame(kind, name)
   function f:SetFrameStrata(s) self.strata = s end
   function f:SetMovable(m) self.movable = m end
   function f:EnableMouse(m) self.mouse = m end
+  function f:IsMouseEnabled() return self.mouse and true or false end
   function f:RegisterForDrag(...) self.drag = { ... } end
   function f:StartMoving() self.moving = true end
   function f:StopMovingOrSizing() self.moving = false end
@@ -222,6 +224,7 @@ function G.install(cfg)
     local t = tgt()
     return t and t.classification or "normal"
   end
+  _G.UnitClass = function() return "Shaman", cfg.class or "SHAMAN" end
   _G.UnitAttackPower = function() return cfg.ap or 4000, 0, 0 end
   _G.GetSpellBonusDamage = function(school) return ((cfg.sp or {})[school]) or 1000 end
   _G.GetCritChance = function() return cfg.crit or 30 end
@@ -283,7 +286,17 @@ function G.install(cfg)
   _G.EnhRotExportFrame = nil
   -- the libraries WeakAuras brings (its import strings use them)
   local libs = { LibSerialize = require("LibSerialize"), LibDeflate = require("LibDeflate") }
-  _G.LibStub = cfg.noLibs and nil or function(name) return libs[name] end
+  if cfg.noLibs then _G.LibStub = nil else _G.LibStub = function(name) return libs[name] end end
+  -- the addon (addon/core.lua): slash commands, its options page, addon messages, its globals
+  _G.SlashCmdList = {}
+  _G.SLASH_DOUBTMYROTATION1 = nil
+  G.opened, G.opens = nil, 0
+  _G.InterfaceOptionsFrame_OpenToCategory = function(panel) G.opened = panel; G.opens = G.opens + 1 end
+  G.addonSent = {}
+  _G.SendAddonMessage = function(...) G.addonSent[#G.addonSent + 1] = { ... } end
+  for _, k in ipairs({ "Addon", "DB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat", "PanelAdvanced" }) do
+    _G["DoubtMyRotation" .. k] = nil
+  end
   return cfg
 end
 
