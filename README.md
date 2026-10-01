@@ -78,13 +78,13 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт) — и�
 
 Аура: `/wa` → `DoubtMyRotation Timeline` → вкладка **Custom Options**. Аддон: `/dmr` (или **Interface** → **AddOns** → `DoubtMyRotation`). Не уверен — оставь как есть.
 
-Настройки одни и те же (кроме **Export snapshots**: в аддоне это кнопка и команда). В аддоне они разложены по трём страницам:
+Настройки одни и те же, кроме двух: **Export snapshots** в аддоне — кнопка и команда, а **Tell me when a newer version is out** есть только у аддона. В аддоне они разложены по трём страницам:
 
 - **General** (`DoubtMyRotation`) — Scale, Timeline length, Icons on timeline, Show reason under icon, Show Bloodlust ready in group и кнопки **Unlock timeline** / **Lock timeline**, **Export snapshots**, **Hide timeline** / **Show timeline**;
 - **Combat** — Mode, Feral Spirit, Fire Elemental, Shamanistic Rage, Shield;
-- **Advanced** — Weaving, Mana policy (solo), Record snapshots, Print debug.
+- **Advanced** — Weaving, Mana policy (solo), Record snapshots, Print debug, Tell me when a newer version is out.
 
-Изменения применяются сразу, лента перестраивается через долю секунды. **Cancel** возвращает всё, как было при открытии окна, **Defaults** — значения по умолчанию.
+Изменения применяются сразу, лента перестраивается через долю секунды. **Cancel** возвращает всё, как было при открытии окна. **Defaults** спросит: сбросить только открытую страницу (These settings) или все (All settings).
 
 Что значит каждая настройка:
 
@@ -106,6 +106,7 @@ WeakAura для клиента 3.3.5a с WeakAuras 5.22 (бэкпорт) — и�
 - **Record snapshots for bug reports** — записывать ситуации для отчёта об ошибке (до 30 штук) и журнал нажатий (последние 200).
 - **Export snapshots (copy window)** — открыть окно со строкой записанных данных для копирования в issue.
 - **Print debug to chat** — печатать план в чат при каждой смене первого действия.
+- **Tell me when a newer version is out** (только аддон) — сообщить, что вышла новая версия. Интернета у игры нет, поэтому аддон узнаёт об этом от других игроков с аддоном в группе, рейде или гильдии: у кого-то версия новее — в чате одна строка со ссылкой на релизы, не чаще раза за вход в игру. Если обновились не все, напоминание повторится при следующем входе.
 
 ### Команды аддона
 

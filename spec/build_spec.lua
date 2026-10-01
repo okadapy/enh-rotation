@@ -501,4 +501,41 @@ describe("addon build", function()
     build.readFile = readFile
     for _, m in ipairs(build.ADDON_MODULES) do assert.is_true(seen[m[2]] == true, m[2]) end
   end)
+
+  -- the whole addon file as the client loads it: no WeakAuras, no LibStub, its own frame and window
+  it("runs as an addon without WeakAuras and draws a plan #integration", function()
+    local G = require("game_mock")
+    local spells = require("spells")
+    local runtime = require("runtime")
+    local known = {}
+    for _, meta in ipairs(spells.CATALOG) do known[meta.ranks[#meta.ranks]] = true end
+    G.install({ now = 100, known = known, noLibs = true, castMs = { ["Lightning Bolt"] = 2500 },
+                target = { level = 83, hp = 1e6, hpMax = 1e6, guid = "Creature-9" }, inRange = { Stormstrike = 1 },
+                enchants = { mh = true, oh = true }, tooltip = { [16] = { "Windfury 8" }, [17] = { "Flametongue 10" } },
+                auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } } })
+    require("panel_mock").install()
+    _G.WeakAuras = nil
+    local chunk = assert(loadstring(build.addonCode("src")))
+    -- the addon's own globals (DoubtMyRotationAddon, DoubtMyRotationDB) land in this table;
+    -- named frames go to _G through the mock's CreateFrame
+    local genv = clientEnv({})
+    setfenv(chunk, genv)
+    chunk()
+    DoubtMyRotationLoader.scripts.OnEvent(DoubtMyRotationLoader, "ADDON_LOADED", "DoubtMyRotation")
+    DoubtMyRotationLoader.scripts.OnEvent(DoubtMyRotationLoader, "PLAYER_LOGIN")
+    local core = genv.DoubtMyRotationAddon
+    local rt = core.rt
+    assert.are.equal(DoubtMyRotationFrame, rt.env.region)
+    assert.are.equal(3, #G.categories)
+    assert.is_not_nil(core.panel.controls.updateCheck)
+    EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.3)
+    for _ = 1, 20 do
+      if #rt.plan.steps > 0 then break end
+      EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.016)
+    end
+    assert.is_true(runtime.validPlan(rt.plan))
+    assert.is_true(#rt.plan.steps >= 1)
+    genv.SlashCmdList.DOUBTMYROTATION("")
+    assert.are.equal(DoubtMyRotationPanel, G.opened)
+  end)
 end)
