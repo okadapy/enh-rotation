@@ -7,6 +7,46 @@ local model = require("model")
 
 local M = {}
 
+--@addon
+local raid = require("raid")
+local gear = require("gear")
+
+-- the slots of the items the model knows: tier (head, shoulders, chest, legs, hands), trinkets, relic
+M.GEAR_SLOTS = { 1, 3, 5, 7, 10, 13, 14, 18 }
+M.GLYPH_SOCKETS = 6
+
+-- equipped items and active glyphs -> c.gearMods (gear.effects): at scan and when the equipment,
+-- glyphs or spec change (runtime.REGEAR), never per snapshot
+function M.scanGear(c)
+  local items, glyphs = {}, {}
+  if GetInventoryItemID then
+    for _, slot in ipairs(M.GEAR_SLOTS) do
+      local id = GetInventoryItemID("player", slot)
+      if id then items[#items + 1] = id end
+    end
+  end
+  if GetGlyphSocketInfo then
+    for i = 1, M.GLYPH_SOCKETS do
+      local enabled, _, spell = GetGlyphSocketInfo(i)
+      if enabled and spell then glyphs[#glyphs + 1] = spell end
+    end
+  end
+  c.gearItems, c.gearGlyphs = items, glyphs
+  c.gearMods = gear.effects(items, glyphs)
+end
+
+-- S.mods (raid.effects): raid debuffs on the target from every caster, the player's buffs the
+-- group gives, which earth and air totems are our own, the equipment. One more pass over the
+-- target's auras per snapshot (the search reads the result, never the client).
+function M.mods(c, S, now)
+  local deb = S.target.exists and M.auras("target", "HARMFUL", c.raidDebuffs, false, now) or nil
+  local buffs = M.auras("player", "HELPFUL", c.raidBuffs, false, now)
+  local earth = M.totem(M.SLOT.earth, c.raidTotems, now)
+  local air = M.totem(M.SLOT.air, c.raidTotems, now)
+  return raid.effects(deb, buffs, { earth = earth, air = air }, c.gearMods)
+end
+--@end
+
 M.BUFFS = { [53817] = "mw", [49281] = "ls", [16280] = "flurry", [30823] = "rage", [2825] = "lust", [32182] = "lust", [16166] = "em",
   -- Water Shield: matched by name, so rank 1 stands for all ranks (not a castable action here)
   [52127] = "ws" }
@@ -78,6 +118,10 @@ function M.scan(talentNames)
       end
     end
   end
+  --@addon
+  c.raidDebuffs, c.raidBuffs, c.raidTotems = namesOf(raid.DEBUFFS), namesOf(raid.BUFFS), namesOf(raid.OWN_TOTEMS)
+  M.scanGear(c)
+  --@end
   c.talents = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo, talentNames)
   return c
 end
@@ -501,6 +545,9 @@ function M.build(ctx)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }
+  --@addon
+  S.mods = M.mods(c, S, now)
+  --@end
   S.swing = M.swingInfo(ctx, now, S.weapons)
   local melee, nearby = 0, 0
   if ctx.enemies then melee, nearby = ctx.enemies:counts(now) end

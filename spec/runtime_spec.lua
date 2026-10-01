@@ -396,6 +396,22 @@ describe("runtime", function()
     assert.are.equal(n, #rt2.tl.frame.children)
   end)
 
+  it("recounts the gear when the equipment, glyphs or spec change, not on another unit's inventory", function()
+    local snapshot = require("snapshot")
+    local real, calls = snapshot.scanGear, 0
+    snapshot.scanGear = function() calls = calls + 1 end
+    local rt = start()
+    calls = 0 -- start scans once (snapshot.scan); only the events count here
+    runtime.onEvent(rt, "UNIT_INVENTORY_CHANGED", "party1")
+    assert.are.equal(0, calls)
+    runtime.onEvent(rt, "UNIT_INVENTORY_CHANGED", "player")
+    runtime.onEvent(rt, "GLYPH_UPDATED")
+    runtime.onEvent(rt, "ACTIVE_TALENT_GROUP_CHANGED")
+    snapshot.scanGear = real
+    assert.are.equal(3, calls)
+    for e in pairs(runtime.REGEAR) do assert.is_true(rt.frame.events[e], e) end
+  end)
+
   it("goes to sleep when the host aura hides and wakes up when it shows again", function()
     local rt, env = start()
     runtime.update(rt, 0.3)
