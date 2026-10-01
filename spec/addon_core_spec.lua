@@ -126,6 +126,37 @@ describe("addon core", function()
     assert.is_false(core.frame.mouse)
   end)
 
+  -- dragged off the screen or a smaller resolution: the timeline must stay reachable
+  it("the frame stays on screen, shows a backdrop only while unlocked", function()
+    shaman()
+    login(opts())
+    assert.is_true(core.frame.clamped)
+    assert.is_false(core.frame.bg.shown)
+    SlashCmdList.DOUBTMYROTATION("unlock")
+    assert.is_true(core.frame.bg.shown)
+    SlashCmdList.DOUBTMYROTATION("lock")
+    assert.is_false(core.frame.bg.shown)
+  end)
+
+  it("/dmr reset also puts the timeline back in its place", function()
+    shaman()
+    login(opts(), { point = { "TOPLEFT", nil, "TOPLEFT", 10, -20 } })
+    SlashCmdList.DOUBTMYROTATION("reset")
+    assert.is_nil(DoubtMyRotationDB.point)
+    assert.are.same({ "CENTER", UIParent, "CENTER", 0, -200 }, core.frame.point)
+  end)
+
+  -- Alt+Z hides UIParent: the timeline is not visible though its own frame is shown
+  it("a restart behind a hidden interface sleeps", function()
+    shaman()
+    login(opts())
+    UIParent.shown = false
+    core.frame.IsVisible = function(self) return self.shown and UIParent.shown end
+    SlashCmdList.DOUBTMYROTATION("set icons 2")
+    assert.is_true(core.rt.sleeping)
+    UIParent.shown = true
+  end)
+
   it("hide and show put the engine to sleep and wake it", function()
     shaman()
     login(opts())

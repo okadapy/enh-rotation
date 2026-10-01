@@ -2,7 +2,7 @@ local update = require("update")
 
 -- a checker over fake deps: a clock, the guild and group state, and what it sent and said
 local function rig(version, over)
-  local w = { t = 100, guild = true, partyN = 0, raidN = 0, on = true, sent = {}, said = {}, db = {} }
+  local w = { t = 100, guild = true, partyN = 0, raidN = 0, where = "none", on = true, sent = {}, said = {}, db = {} }
   local deps = {
     db = w.db,
     send = function(prefix, text, distribution) w.sent[#w.sent + 1] = { prefix, text, distribution } end,
@@ -12,6 +12,7 @@ local function rig(version, over)
     inGuild = function() return w.guild end,
     party = function() return w.partyN end,
     raid = function() return w.raidN end,
+    instance = function() return w.where end,
     me = function() return "Thrall" end,
   }
   for k, v in pairs(over or {}) do deps[k] = v end
@@ -88,6 +89,16 @@ describe("addon update check", function()
     w.guild = false
     w.c:onEvent("PLAYER_ENTERING_WORLD")
     assert.are.same({}, w.sent)
+  end)
+
+  -- a battleground's group counts as a raid (GetNumRaidMembers), but "RAID" is no channel there
+  it("in a battleground or an arena the group hears it on BATTLEGROUND", function()
+    for _, where in ipairs({ "pvp", "arena" }) do
+      local w = rig("v1.0.6")
+      w.where, w.raidN, w.partyN = where, 15, 4
+      w.c:onEvent("RAID_ROSTER_UPDATE")
+      assert.are.same({ { "DoubtMyRotation", "V:v1.0.6", "BATTLEGROUND" } }, w.sent)
+    end
   end)
 
   it("a party tells the party, a raid tells the raid and not the party", function()

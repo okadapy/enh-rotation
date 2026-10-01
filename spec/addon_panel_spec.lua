@@ -151,6 +151,33 @@ describe("settings window", function()
     assert.are.equal(1, h.replaced)
   end)
 
+  -- InterfaceOptionsFrame is a UIPanelWindow: another center window hides it without Okay or Cancel
+  it("a window closed without Okay or Cancel starts afresh on the next open", function()
+    local h = host()
+    local f = panel.new({ options = OPTIONS }, h)
+    InterfaceOptionsFrame:Show()
+    f.refresh(f)
+    f.controls.scale:SetValue(2)
+    InterfaceOptionsFrame:Hide()
+    InterfaceOptionsFrame:Show()
+    f.refresh(f)
+    f.controls.scale:SetValue(1.5)
+    f.cancel(f)
+    assert.are.equal(2, h.cfg.scale)
+  end)
+
+  it("a drop-down shows its description on hover, on the list and on its arrow", function()
+    local f = panel.new({ options = OPTIONS }, host())
+    local d = f.controls.mode
+    for _, target in ipairs({ d, _G[d:GetName() .. "Button"] }) do
+      target.scripts.OnEnter(target)
+      assert.are.equal("auto picks solo/group/raid by your group", G.tooltip.text)
+      assert.is_true(G.tooltip.shown)
+      target.scripts.OnLeave(target)
+      assert.is_false(G.tooltip.shown)
+    end
+  end)
+
   it("okay keeps the changes, a later cancel does not undo them", function()
     local h = host()
     local f = panel.new({ options = OPTIONS }, h)

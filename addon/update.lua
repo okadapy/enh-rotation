@@ -39,6 +39,11 @@ local function call(f, fallback, ...)
   return fallback(...)
 end
 
+local function instanceType()
+  local _, kind = IsInInstance()
+  return kind
+end
+
 function M.new(version, deps)
   deps = deps or {}
   return setmetatable({ version = version, deps = deps, db = deps.db or {}, last = {}, told = false }, Checker)
@@ -91,7 +96,11 @@ function Checker:onEvent(event, ...)
     end
     if call(self.deps.inGuild, IsInGuild) then self:send("GUILD") end
   elseif event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
-    if (call(self.deps.raid, GetNumRaidMembers) or 0) > 0 then
+    -- a battleground's or an arena's group counts as a raid, but its channel is BATTLEGROUND
+    local where = call(self.deps.instance, instanceType)
+    if where == "pvp" or where == "arena" then
+      self:send("BATTLEGROUND")
+    elseif (call(self.deps.raid, GetNumRaidMembers) or 0) > 0 then
       self:send("RAID")
     elseif (call(self.deps.party, GetNumPartyMembers) or 0) > 0 then
       self:send("PARTY")

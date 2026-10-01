@@ -36,6 +36,8 @@ local function region(kind)
   function r:Hide() self.shown = false end
   function r:IsShown() return self.shown end
   function r:SetAlpha(a) self.alpha = a end
+  function r:SetAllPoints(other) self.allPoints = other or true end
+  function r:SetClampedToScreen(c) self.clamped = c end
   function r:GetObjectType() return kind end
   return r
 end

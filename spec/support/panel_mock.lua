@@ -29,6 +29,8 @@ function P.install()
     -- FrameXML templates make named font strings: $parentText, and on a slider $parentLow / $parentHigh
     if name and template then
       for _, suffix in ipairs({ "Text", "Low", "High" }) do _G[name .. suffix] = G.fontString() end
+      -- a drop-down's arrow button covers its right part: $parentButton
+      if template == "UIDropDownMenuTemplate" then _G[name .. "Button"] = create("Button", name .. "Button", f) end
     end
     return f
   end
@@ -42,6 +44,14 @@ function P.install()
   _G.UIDropDownMenu_SetWidth = function(frame, w) frame.ddWidth = w end
   _G.UIDropDownMenu_SetText = function(frame, t) frame.ddText = t end
   _G.DoubtMyRotationPanel, _G.DoubtMyRotationPanelCombat, _G.DoubtMyRotationPanelAdvanced = nil, nil, nil
+  -- the Interface Options window itself: shown on /dmr, hidden by Okay, Cancel, Escape or another window
+  _G.InterfaceOptionsFrame = create("Frame", "InterfaceOptionsFrame", UIParent)
+  G.tooltip = { shown = false }
+  _G.GameTooltip = {
+    SetOwner = function(self, owner) G.tooltip.owner = owner end,
+    SetText = function(self, text) G.tooltip.text = text; G.tooltip.shown = true end,
+    Hide = function(self) G.tooltip.shown = false end,
+  }
 end
 
 -- "opens" a drop-down the way the client does: runs its initializer, returns the menu items

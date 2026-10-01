@@ -70,6 +70,19 @@ local function dropdown(f, o, host)
       UIDropDownMenu_AddButton(info)
     end
   end)
+  -- the template reads no tooltipText: the description on the list and on its arrow button
+  if o.desc then
+    local function enter(self)
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:SetText(o.desc, nil, nil, nil, nil, true)
+    end
+    local function leave() GameTooltip:Hide() end
+    for _, target in ipairs({ d, _G[d:GetName() .. "Button"] }) do
+      target:EnableMouse(true)
+      target:SetScript("OnEnter", enter)
+      target:SetScript("OnLeave", leave)
+    end
+  end
   -- the text after the value: SetSelectedValue may copy a stale label from another open menu
   d.show = function(self, v)
     UIDropDownMenu_SetSelectedValue(self, v)
@@ -158,6 +171,11 @@ function M.new(o, host)
     local f = pages[sec.key]
     f.refresh, f.okay, f.cancel, f.default = refresh, okay, cancel, default
     InterfaceOptions_AddCategory(f)
+  end
+  -- Okay and Cancel run before the window hides; another center window hides it with neither:
+  -- the snapshot goes with the window either way, the next open takes a fresh one
+  if InterfaceOptionsFrame and InterfaceOptionsFrame.HookScript then
+    InterfaceOptionsFrame:HookScript("OnHide", function() main.opened = nil end)
   end
   return main
 end

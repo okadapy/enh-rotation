@@ -25,13 +25,25 @@ local function withUpdate(options)
   return list
 end
 
+-- the saved place, or the default one under the screen's center
+local function place(f, p)
+  f:ClearAllPoints()
+  -- the anchor's frame is saved as nil: a frame reference does not survive SavedVariables
+  if p then f:SetPoint(p[1], UIParent, p[3], p[4], p[5]) else f:SetPoint("CENTER", UIParent, "CENTER", 0, -200) end
+end
+
 function M.newFrame(o, db)
   local f = CreateFrame("Frame", "DoubtMyRotationFrame", UIParent)
   f:SetWidth(o.width)
   f:SetHeight(o.height)
-  local p = db.point
-  -- the anchor's frame is saved as nil: a frame reference does not survive SavedVariables
-  if p then f:SetPoint(p[1], UIParent, p[3], p[4], p[5]) else f:SetPoint("CENTER", UIParent, "CENTER", 0, -200) end
+  place(f, db.point)
+  -- dragged past the edge or a smaller resolution: it stays where it can be reached
+  f:SetClampedToScreen(true)
+  -- what there is to grab while unlocked
+  f.bg = f:CreateTexture(nil, "BACKGROUND")
+  f.bg:SetAllPoints(f)
+  f.bg:SetTexture(0, 0, 0, 0.4)
+  f.bg:Hide()
   f:SetMovable(true)
   f:EnableMouse(false)
   f:RegisterForDrag("LeftButton")
@@ -55,7 +67,8 @@ end
 local function start()
   M.rt = runtime.start(M.db.config, M.env)
   -- a fresh engine runs; behind a hidden frame it must sleep (OnHide will not fire again)
-  if M.rt and not M.frame:IsShown() then runtime.sleep(M.rt) end
+  -- (IsVisible, not IsShown: Alt+Z hides the whole interface, the frame stays "shown")
+  if M.rt and not M.frame:IsVisible() then runtime.sleep(M.rt) end
 end
 
 function M.login(o)
@@ -103,9 +116,16 @@ function M.handle(o, msg)
   local a = r.action
   if a == "open" then M.open()
   elseif a == "export" then runtime.showExport(M.env)
-  elseif a == "unlock" or a == "lock" then M.frame:EnableMouse(a == "unlock")
+  elseif a == "unlock" or a == "lock" then
+    M.frame:EnableMouse(a == "unlock")
+    if a == "unlock" then M.frame.bg:Show() else M.frame.bg:Hide() end
   elseif a == "hide" then M.db.hidden = true; M.frame:Hide()
   elseif a == "show" then M.db.hidden = false; M.frame:Show() end
+  -- reset: the place too, the one way back for a timeline lost off screen
+  if (msg or ""):match("^%s*(%S*)"):lower() == "reset" then
+    M.db.point = nil
+    place(M.frame, nil)
+  end
   if r.changed then M.apply() end
 end
 
