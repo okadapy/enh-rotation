@@ -113,9 +113,18 @@ describe("value.manaPrice", function()
     assert.are.near(151 / 18, value.drinkRate(1), 1e-9) -- Refreshing Spring Water
   end)
 
-  it("group: nearly free unless the fight outlasts the mana", function()
+  -- a party drinks between pulls too, half of it while the healer drinks anyway (issue #22)
+  it("group: half the solo drinking price, however full the bar is", function()
     local fine = fixtures.state({ mode = "group", player = { mana = 9000, manaMax = 10000 }, target = { ttd = 60 } })
     local oom = fixtures.state({ mode = "group", player = { mana = 1000, manaMax = 10000 }, target = { ttd = 60 } })
+    local solo = fixtures.state({ mode = "solo", player = { mana = 9000, manaMax = 10000 } })
+    assert.are.near(0.5 * value.manaPrice(solo), value.manaPrice(fine), 1e-9)
+    assert.are.near(value.manaPrice(fine), value.manaPrice(oom), 1e-9)
+  end)
+
+  it("raid: nearly free unless the fight outlasts the mana", function()
+    local fine = fixtures.state({ mode = "raid", player = { mana = 9000, manaMax = 10000 }, target = { ttd = 60 } })
+    local oom = fixtures.state({ mode = "raid", player = { mana = 1000, manaMax = 10000 }, target = { ttd = 60 } })
     local solo = fixtures.state({ mode = "solo", player = { mana = 9000, manaMax = 10000 } })
     assert.is_true(value.manaPrice(fine) < value.manaPrice(solo) * 0.1)
     assert.is_true(value.manaPrice(oom) > value.manaPrice(fine) * 5)
@@ -369,9 +378,14 @@ describe("value.terminal", function()
     it("ready, it is a whole window for a later fight; on cooldown the recovered share", function()
       local S = rage(0, 0)
       assert.are.near(worth(S, value.RAGE_DURATION), value.rageValue(S, damage, true), 1e-6)
-      local G = rage(0, 0); G.mode = "group"
-      local none = rage(0, 0); none.mode = "group"; none.spells.shamanisticRage = nil
-      assert.are.near(value.terminal(none), value.terminal(G), 1e-6) -- solo only
+      for _, mode in ipairs({ "group", "pvp" }) do -- pvp has the group weights
+        local G = rage(0, 0); G.mode = mode
+        local none = rage(0, 0); none.mode = mode; none.spells.shamanisticRage = nil
+        assert.are.near(value.terminal(none) + worth(G, value.RAGE_DURATION), value.terminal(G), 1e-6)
+      end
+      local R = rage(0, 0); R.mode = "raid"
+      none = rage(0, 0); none.mode = "raid"; none.spells.shamanisticRage = nil
+      assert.are.near(value.terminal(none), value.terminal(R), 1e-6) -- not in a raid
       S = rage(value.RAGE_CD / 2, 0)
       assert.are.near(worth(S, value.RAGE_DURATION / 2), value.rageValue(S, damage, true), 1e-6)
     end)
@@ -427,15 +441,19 @@ describe("value.terminal", function()
   end)
 
   -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing
-  it("solo: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
-    local S = base({ mode = "solo", spells = { fireNova = { cd = 10 }, lightningShield = { id = 49281, rank = 11, cd = 0, cost = 0 } } })
+  it("solo and group: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
+    for _, mode in ipairs({ "solo", "group" }) do
+      local S = base({ mode = mode, spells = { fireNova = { cd = 10 }, lightningShield = { id = 49281, rank = 11, cd = 0, cost = 0 } } })
+      local up = value.terminal(S)
+      S.buffs.ls.charges = 0
+      assert.are.near(up - (S.gcd or 1.5) * value.dpsEstimate(S) * value.DISCOUNT, value.terminal(S), 1e-6)
+      S.shieldPref = "water"
+      assert.are.near(up, value.terminal(S), 1e-6)
+    end
+    local S = base({ mode = "raid", spells = { fireNova = { cd = 10 }, lightningShield = { id = 49281, rank = 11, cd = 0, cost = 0 } } })
     local up = value.terminal(S)
     S.buffs.ls.charges = 0
-    assert.are.near(up - (S.gcd or 1.5) * value.dpsEstimate(S) * value.DISCOUNT, value.terminal(S), 1e-6)
-    S.shieldPref = "water"
-    assert.are.near(up, value.terminal(S), 1e-6)
-    S.shieldPref, S.mode = nil, "group"
-    assert.are.near(value.terminal(base({ mode = "group", spells = S.spells })), value.terminal(S), 1e-6)
+    assert.are.near(up, value.terminal(S), 1e-6) -- not in a raid
   end)
 
   it("survives a state without pets, spells, totems or auto-attack", function()
