@@ -3986,7 +3986,6 @@ return {
     -- против 132 и уходит на 6-секундный откат. Прокачке без Maelstrom мана важнее 0.5 с каста:
     -- игрок почти на каждом пуле уходит ниже 20%.
     ["expect"] = "lightningBolt",
-    ["pending"] = "CL on a single target costs 2.6x the mana of LB for the same damage; the search picks CL",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -5735,7 +5734,6 @@ return {
     -- Моб в бою бежит с 30 ярдов, мана 38%: второй Bolt, а не Chain Lightning — урон тот же
     -- (~525), а CL втрое дороже (343 против 132 маны) при одной цели.
     ["expect"] = "lightningBolt",
-    ["pending"] = "CL on a single target at 38% mana; LB does the same damage for 132 instead of 343 mana",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -7948,7 +7946,6 @@ return {
     -- ждать 3.4 с, ничего не нажимая, нельзя. Lava Lash (49 маны) или Earth Shock сейчас, Rage
     -- попадёт на следующий свободный GCD (сдвиг ~0.3 с).
     ["expect"] = { "lavaLash", "earthShock" },
-    ["pending"] = "the plan idles 3.4 s for Shamanistic Rage although Lava Lash is ready and mana is 26%",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -12164,7 +12161,6 @@ return {
     -- ударит за 0.5 с до смерти — это в основном перебор урона и 8 с отката на следующего
     -- моба. Бесплатный Lightning Shield всё равно нужен — ставить его.
     ["expect"] = "lightningShield",
-    ["pending"] = "spends Stormstrike on a mob dying 0.5 s later instead of the free, missing Lightning Shield",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -14643,7 +14639,6 @@ return {
     -- Ближний бой без автоатаки, мана 94, Rage через 1.4 с: Lava Lash (51 маны) доступен сейчас
     -- и включает автоатаку, а Rage после GCD сдвинется всего на 0.1 с. Стоять 1.4 с — потеря.
     ["expect"] = "lavaLash",
-    ["pending"] = "the plan idles 1.4 s for Shamanistic Rage although Lava Lash (51 mana) is ready",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -16141,7 +16136,6 @@ return {
     -- Моб умрёт через 0.3 с, Flame Shock висит ещё 11.2 с, мана 12%: «обновить Flame Shock»
     -- здесь — 114 маны в пустоту. Ничего.
     ["expect"] = "-",
-    ["pending"] = "refreshes Flame Shock (11.2 s left) on a mob dying in 0.3 s at 12% mana",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -16892,8 +16886,10 @@ return {
   },
   [69] = {
     -- Ближний бой, мана 106 (3.5%), Rage готов: Stormstrike (103) опустошит ману до нуля.
-    -- Сначала Rage, потом удары.
-    ["expect"] = "shamanisticRage",
+    -- Сначала Rage, потом удары. Или Lava Lash (51 маны) сейчас: он включает автоатаку на 1.5 с
+    -- раньше, а Rage после GCD на мобе, живущем ещё ~200 с, не теряет ни секунды своих 15 с
+    -- (тот же размен, что в #60).
+    ["expect"] = { "shamanisticRage", "lavaLash" },
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -18130,8 +18126,9 @@ return {
   [74] = {
     -- Моб умрёт через 2.5 с, Flame Shock не висит, мана 19%, щит слетел: DoT на умирающего —
     -- 114 маны за один тик. Бесплатный Lightning Shield всё равно нужен — ставить его.
-    ["expect"] = "lightningShield",
-    ["pending"] = "casts Flame Shock on a mob dying in 2.5 s at 19% mana instead of the free, missing Lightning Shield",
+    -- Или мгновенный Earth Shock (467 из 605 hp) и щит следующим GCD: моб умрёт на ~3 с раньше
+    -- (после этого снимка он прожил ещё 6+ с), это стоит 121 маны; против Flame Shock на один тик.
+    ["expect"] = { "lightningShield", "earthShock" },
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -20115,7 +20112,6 @@ return {
     -- с ударов по живой цели, а 15 с баффа и минута отката уйдут в основном на бег к следующему
     -- мобу. Добить Stormstrike или Lava Lash, Rage оставить на следующий бой.
     ["expect"] = { "stormstrike", "lavaLash" },
-    ["pending"] = "uses Shamanistic Rage (60 s cooldown) on a mob dying in 5.8 s at 34% mana",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,

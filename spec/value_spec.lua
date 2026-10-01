@@ -76,11 +76,22 @@ describe("value.manaPrice", function()
     assert.are.near(value.manaPrice(full), value.manaPrice(low), 1e-9)
   end)
 
-  -- solo, mana that runs out costs drinking time: a full bar is worth SOLO_REGEN seconds of damage
-  it("solo: a full bar of mana is worth SOLO_REGEN seconds of the character's damage", function()
+  -- solo, mana that runs out costs drinking time: a point is 1 / drinkRate seconds of damage
+  it("solo: a mana point is worth the character's damage over the seconds it takes to drink", function()
     local S = fixtures.state({ mode = "solo", player = { mana = 10000, manaMax = 10000 }, spells = { shamanisticRage = { cd = 0 } } })
     local dps = (damage.auto(S, "mh") / S.swing.mh.speed + damage.auto(S, "oh") / S.swing.oh.speed) * value.MELEE_SHARE
-    assert.are.near(value.SOLO_REGEN * dps, value.manaPrice(S) * 10000, 1e-6)
+    assert.are.near(dps / value.drinkRate(S.player.level), value.manaPrice(S), 1e-9)
+    local low = fixtures.state({ mode = "solo", player = { level = 52, mana = 1000, manaMax = 2800 } })
+    assert.are.near(dps / (2934 / 30), value.manaPrice(low), 1e-9)
+  end)
+
+  -- 3.3.5a water (wotlkdb.com): the best drink of the character's level
+  it("drinkRate: the best water the level can drink", function()
+    assert.are.near(2934 / 30, value.drinkRate(52), 1e-9) -- Morning Glory Dew (45)
+    assert.are.near(2934 / 30, value.drinkRate(54), 1e-9)
+    assert.are.near(4200 / 30, value.drinkRate(55), 1e-9) -- Conjured Crystal Water (55)
+    assert.are.near(19200 / 30, value.drinkRate(80), 1e-9) -- Honeymint Tea (75)
+    assert.are.near(151 / 18, value.drinkRate(1), 1e-9) -- Refreshing Spring Water
   end)
 
   it("group: nearly free unless the fight outlasts the mana", function()
@@ -320,6 +331,76 @@ describe("value.terminal", function()
       local group = function(m) return at(m, { mode = "group" }) end
       assert.are.near(value.terminal(group(2000)), value.terminal(group(100)), 1e-6)
     end)
+  end)
+
+  -- Shamanistic Rage: 15 s of mana from melee hits (10 PPM), 1 min cooldown
+  describe("Shamanistic Rage", function()
+    local RATE = 20 -- mana a second from auto attacks under Rage (stub)
+    before_each(function() damage.rageManaRate = function() return RATE end end)
+    local function rage(cd, left, over)
+      local S = base(over)
+      S.mode = "solo"
+      S.player.mana, S.player.manaMax = 1000, 10000
+      S.spells.shamanisticRage = { id = 30823, rank = 1, cd = cd, cost = 0 }
+      S.buffs.rage = left
+      return S
+    end
+    local function worth(S, secs) return RATE * secs * value.manaPrice(S) * value.DISCOUNT end
+
+    it("ready, it is a whole window for a later fight; on cooldown the recovered share", function()
+      local S = rage(0, 0)
+      assert.are.near(worth(S, value.RAGE_DURATION), value.rageValue(S, damage, true), 1e-6)
+      local G = rage(0, 0); G.mode = "group"
+      local none = rage(0, 0); none.mode = "group"; none.spells.shamanisticRage = nil
+      assert.are.near(value.terminal(none), value.terminal(G), 1e-6) -- solo only
+      S = rage(value.RAGE_CD / 2, 0)
+      assert.are.near(worth(S, value.RAGE_DURATION / 2), value.rageValue(S, damage, true), 1e-6)
+    end)
+
+    it("a running window counts its seconds left on a live target in melee, not past its death", function()
+      local S = rage(55, 10, { target = { ttd = 60 } })
+      local share = value.RAGE_DURATION * (1 - 55 / value.RAGE_CD)
+      assert.are.near(worth(S, share + 10), value.rageValue(S, damage, true), 1e-6)
+      S = rage(55, 10, { target = { ttd = 3 } })
+      assert.are.near(worth(S, share + 3), value.rageValue(S, damage, true), 1e-6)
+      assert.are.near(worth(S, share), value.rageValue(S, damage, false), 1e-6) -- dead target
+      S = rage(55, 10, { target = { ttd = 60 } })
+      S.swing.attacking = false
+      assert.are.near(worth(S, share), value.rageValue(S, damage, true), 1e-6)
+    end)
+
+    it("pressing it on a mob dying in 3 s loses more than it returns there", function()
+      local ready = rage(0, 0, { target = { ttd = 3 } })
+      local used = rage(value.RAGE_CD, value.RAGE_DURATION, { target = { ttd = 3 } })
+      local gained = RATE * 3 * value.manaPrice(ready) -- mana returned before the mob dies
+      assert.is_true(value.terminal(used) + gained < value.terminal(ready))
+    end)
+  end)
+
+  -- solo, the seconds after a kill go to the next mob: a second is worth the character's dps
+  it("solo: a kill inside the horizon is worth the seconds after it at the discount", function()
+    local S = base({ mode = "solo", target = { hp = 0, dead = true } })
+    local none = value.terminal(S)
+    S.target.diedAt = S.now - 2.5
+    assert.are.near(none + 2.5 * value.dpsEstimate(S) * value.DISCOUNT, value.terminal(S), 1e-6)
+    S.target.diedAt = false
+    assert.are.near(none, value.terminal(S), 1e-9)
+    local G = base({ mode = "group", target = { hp = 0, dead = true } })
+    local g0 = value.terminal(G)
+    G.target.diedAt = G.now - 2.5
+    assert.are.near(g0, value.terminal(G), 1e-9)
+  end)
+
+  -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing
+  it("solo: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
+    local S = base({ mode = "solo", spells = { fireNova = { cd = 10 }, lightningShield = { id = 49281, rank = 11, cd = 0, cost = 0 } } })
+    local up = value.terminal(S)
+    S.buffs.ls.charges = 0
+    assert.are.near(up - (S.gcd or 1.5) * value.dpsEstimate(S) * value.DISCOUNT, value.terminal(S), 1e-6)
+    S.shieldPref = "water"
+    assert.are.near(up, value.terminal(S), 1e-6)
+    S.shieldPref, S.mode = nil, "group"
+    assert.are.near(value.terminal(base({ mode = "group", spells = S.spells })), value.terminal(S), 1e-6)
   end)
 
   it("survives a state without pets, spells, totems or auto-attack", function()

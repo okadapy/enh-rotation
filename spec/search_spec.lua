@@ -452,7 +452,7 @@ describe("search on the real model (wowsims rules) #integration", function()
     for i, st in ipairs(full.steps) do assert.are.equal(st.key, plan.steps[i].key, "step " .. i) end
   end)
 
-  -- Shamanistic Rage returns mana with every swing: a Bolt the mana cannot pay for now is
+  -- Shamanistic Rage returns mana with swings (10 PPM): a Bolt the mana cannot pay for now is
   -- possible right after the swing ("swing, then Bolt"); the replay used to check the button
   -- before the swing, so the search's own plan did not replay (the planner then searched anew
   -- on a pulse and the first button changed without an event)
