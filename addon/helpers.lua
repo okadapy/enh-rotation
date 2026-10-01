@@ -20,8 +20,9 @@ local function frame(name) return _G[name] or CreateFrame("Frame", name) end
 
 function M.start(core, say)
   local h = {}
-  -- read anew each call: /dmr reset and the settings window replace the config table
-  local function config() return core.db.config end
+  -- read anew each call: /dmr reset, the settings window and a profile switch replace the config
+  -- table (core.config: the active profile's values; db.config is the one before profiles)
+  local function config() return core.config or core.db.config end
   h.highlight = highlight.new({ view = core.view, config = config, now = GetTime })
   h.highlight:start(frame("DoubtMyRotationHighlight"))
   h.explain = explain.new({

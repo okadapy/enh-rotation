@@ -16,10 +16,14 @@ B.ADDON = "DoubtMyRotation"
 B.ADDON_DIR = "dist/" .. B.ADDON
 -- the addon's own modules and the libraries the aura borrows from WeakAuras (export window)
 B.ADDON_MODULES = { { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
-                    { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
+                    { "settings", "addon/settings.lua" }, { "profiles", "addon/profiles.lua" },
+                    { "panel", "addon/panel.lua" }, { "profilepage", "addon/profilepage.lua" },
                     { "update", "addon/update.lua" }, { "actionbars", "addon/actionbars.lua" },
                     { "highlight", "addon/highlight.lua" }, { "explain", "addon/explain.lua" },
                     { "ready", "addon/ready.lua" }, { "helpers", "addon/helpers.lua" },
+                    { "guide", "addon/guide.lua" }, { "cards", "addon/cards.lua" },
+                    { "wizard", "addon/wizard.lua" }, { "coach", "addon/coach.lua" },
+                    { "minimap", "addon/minimap.lua" }, { "skin", "addon/skin.lua" },
                     { "core", "addon/core.lua" } }
 -- Потолок длины строки импорта: клиент 3.3.5a обрезает длинную вставку (issue #20). Строка v0.1.9
 -- (63 336 байт) импортировалась, v1.0.0 (99 154) — уже нет; выше потолка — ужимать сборку.

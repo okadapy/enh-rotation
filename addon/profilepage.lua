@@ -95,8 +95,9 @@ function M.new(host)
   local hint = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
   hint:SetPoint("BOTTOMLEFT", edit, "TOPLEFT", -6, 3)
   hint:SetText("New profile name")
-  add("new", button(f, "new", "New", M.LEFT + 200, y, 100, function() create(false) end))
-  add("copy", button(f, "copy", "Copy current", M.LEFT + 310, y, 120, function() create(true) end))
+  -- the page is about 413 px wide (Interface Options in 3.3.5a): the row ends by x = 402
+  add("new", button(f, "new", "New", M.LEFT + 200, y, 80, function() create(false) end))
+  add("copy", button(f, "copy", "Copy current", M.LEFT + 286, y, 100, function() create(true) end))
   y = y - 32
   add("delete", button(f, "delete", "Delete", M.LEFT + 22, y, 170, function()
     local cur = host.current()
