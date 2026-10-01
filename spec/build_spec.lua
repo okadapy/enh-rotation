@@ -415,4 +415,161 @@ describe("build #integration", function()
     assert.is_true(w.shown)
     assert.are.same(saved.enhrotSnapshots, build.decodeExport(w.box.text))
   end)
+
+  it("the aura stays idle when the addon is installed", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    _G.DoubtMyRotationAddon = {} -- the addon's global, seen by the chunk through the client env
+    local env = { config = aura.defaultConfig(), region = CreateFrame("Frame"), saved = {} }
+    local chunk = assert(loadstring(build.initCode("src")))
+    setfenv(chunk, clientEnv({ aura_env = env }))
+    chunk()
+    _G.DoubtMyRotationAddon = nil
+    assert.is_nil(env.rt)
+    assert.is_nil(EnhRotEngineFrame)
+    assert.are.equal("DoubtMyRotation: the addon is installed, this aura stays idle", G.printed[#G.printed])
+  end)
+end)
+
+describe("addon build", function()
+  local LIBS = { { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" } }
+  local CORE = { "core", "spec/fixtures/addon_core_stub.lua" }
+
+  it("names its folder and its modules", function()
+    assert.are.equal("DoubtMyRotation", build.ADDON)
+    assert.are.equal("dist/DoubtMyRotation", build.ADDON_DIR)
+    assert.are.same({ { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
+                      { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
+                      { "update", "addon/update.lua" }, { "core", "addon/core.lua" } }, build.ADDON_MODULES)
+  end)
+
+  it("the addon's toc: 3.3.5a, its SavedVariables, its one file", function()
+    local toc = build.addonToc("v9.9.9")
+    assert.truthy(toc:find("## Interface: 30300\n", 1, true))
+    assert.truthy(toc:find("## Version: v9.9.9\n", 1, true))
+    assert.truthy(toc:find("## SavedVariables: DoubtMyRotationDB\n", 1, true))
+    assert.truthy(toc:find("\nDoubtMyRotation.lua\n", 1, true))
+  end)
+
+  it("the addon's options are the aura's without export", function()
+    local o = build.addonOptions()
+    assert.are.equal(#aura.OPTIONS - 1, #o.list)
+    for _, opt in ipairs(o.list) do assert.are_not.equal("export", opt.key) end
+    assert.are.equal(aura.WIDTH, o.width)
+    assert.are.equal(aura.HEIGHT, o.height)
+  end)
+
+  -- each library is wrapped in a function: Lua 5.1 caps a function at 200 locals and 60 upvalues
+  it("wraps the libraries so they compile and work without LibStub", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    _G.LibStub = nil -- a client without WeakAuras or any other library addon
+    local chunk = assert(loadstring(build.addonCode("src", "v0", { LIBS[1], LIBS[2], CORE })))
+    local genv = clientEnv({})
+    assert.is_nil(genv.LibStub)
+    setfenv(chunk, genv)
+    chunk()
+    local o = assert(genv.BOOTED)
+    assert.are.same(build.addonOptions().list, o.options)
+    assert.are.equal(aura.WIDTH, o.width)
+    assert.are.equal(aura.HEIGHT, o.height)
+    local ser, def = o.libs.serialize, o.libs.deflate
+    assert.is_function(ser.Serialize)
+    assert.is_function(def.CompressDeflate)
+    local t = { a = 1, list = { 1, 2.5, "x" }, flag = true }
+    local packed = def:EncodeForPrint(def:CompressDeflate(ser:Serialize(t)))
+    local ok, back = ser:Deserialize(def:DecompressDeflate(def:DecodeForPrint(packed)))
+    assert.is_true(ok)
+    assert.are.same(t, back)
+  end)
+
+  -- the player's client: WeakAuras (or TSM...) brought LibStub and registered the same libraries
+  -- first; our copies then return nothing (LibSerialize) or the registered one (LibDeflate)
+  it("uses the libraries another addon registered in LibStub before it", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    local libs, minors = {}, {}
+    local stub = {}
+    function stub:NewLibrary(major, minor)
+      if minors[major] and minors[major] >= minor then return nil end
+      libs[major] = libs[major] or {}
+      minors[major] = minor
+      return libs[major]
+    end
+    function stub:GetLibrary(major, silent)
+      if not libs[major] and not silent then error("no " .. major) end
+      return libs[major], minors[major]
+    end
+    setmetatable(stub, { __call = stub.GetLibrary })
+    local genv = clientEnv({ LibStub = stub })
+    for _, path in ipairs({ "vendor/LibSerialize.lua", "vendor/LibDeflate.lua" }) do
+      local lib = assert(loadstring(build.readFile(path)))
+      setfenv(lib, genv)
+      lib()
+    end
+    local before = { serialize = libs.LibSerialize, deflate = libs.LibDeflate }
+    assert.is_function(before.serialize.Serialize)
+    local chunk = assert(loadstring(build.addonCode("src", "v0", { LIBS[1], LIBS[2], CORE })))
+    setfenv(chunk, genv)
+    chunk()
+    local o = assert(genv.BOOTED)
+    assert.are.equal(before.serialize, o.libs.serialize)
+    assert.are.equal(before.deflate, o.libs.deflate)
+  end)
+
+  it("starts with the aura's bundle: the engine's line numbers and version stay", function()
+    local code = build.addonCode("src", "v7.7.7", { CORE })
+    assert.are.equal(1, code:find(build.bundle("src", "v7.7.7"), 1, true))
+    assert.truthy(code:find('__mods["core"]', 1, true))
+  end)
+
+  it("takes the addon's modules by default", function()
+    local seen = {}
+    local readFile = build.readFile
+    build.readFile = function(path)
+      seen[path] = true
+      if path:match("^addon/") then return "return {}" end
+      return readFile(path)
+    end
+    build.addonCode("src", "v0")
+    build.readFile = readFile
+    for _, m in ipairs(build.ADDON_MODULES) do assert.is_true(seen[m[2]] == true, m[2]) end
+  end)
+
+  -- the whole addon file as the client loads it: no WeakAuras, no LibStub, its own frame and window
+  it("runs as an addon without WeakAuras and draws a plan #integration", function()
+    local G = require("game_mock")
+    local spells = require("spells")
+    local runtime = require("runtime")
+    local known = {}
+    for _, meta in ipairs(spells.CATALOG) do known[meta.ranks[#meta.ranks]] = true end
+    G.install({ now = 100, known = known, noLibs = true, castMs = { ["Lightning Bolt"] = 2500 },
+                target = { level = 83, hp = 1e6, hpMax = 1e6, guid = "Creature-9" }, inRange = { Stormstrike = 1 },
+                enchants = { mh = true, oh = true }, tooltip = { [16] = { "Windfury 8" }, [17] = { "Flametongue 10" } },
+                auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } } })
+    require("panel_mock").install()
+    _G.WeakAuras = nil
+    local chunk = assert(loadstring(build.addonCode("src")))
+    -- the addon's own globals (DoubtMyRotationAddon, DoubtMyRotationDB) land in this table;
+    -- named frames go to _G through the mock's CreateFrame
+    local genv = clientEnv({})
+    setfenv(chunk, genv)
+    chunk()
+    DoubtMyRotationLoader.scripts.OnEvent(DoubtMyRotationLoader, "ADDON_LOADED", "DoubtMyRotation")
+    DoubtMyRotationLoader.scripts.OnEvent(DoubtMyRotationLoader, "PLAYER_LOGIN")
+    local core = genv.DoubtMyRotationAddon
+    local rt = core.rt
+    assert.are.equal(DoubtMyRotationFrame, rt.env.region)
+    assert.are.equal(3, #G.categories)
+    assert.is_not_nil(core.panel.controls.updateCheck)
+    EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.3)
+    for _ = 1, 20 do
+      if #rt.plan.steps > 0 then break end
+      EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.016)
+    end
+    assert.is_true(runtime.validPlan(rt.plan))
+    assert.is_true(#rt.plan.steps >= 1)
+    genv.SlashCmdList.DOUBTMYROTATION("")
+    assert.are.equal(DoubtMyRotationPanel, G.opened)
+  end)
 end)

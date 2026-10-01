@@ -1,16 +1,17 @@
 # ARCHITECTURE — DoubtMyRotation (EnhRot)
 
-WeakAura-подсказчик ротации энх-шамана для WotLK 3.3.5a (WeakAuras 5.22 backport). Код ауры —
-`src/`, собирается в одну строку импорта WeakAuras (`tools/build.lua`).
+Подсказчик ротации энх-шамана для WotLK 3.3.5a: WeakAura (WeakAuras 5.22 backport) и аддон.
+Движок — `src/`; `tools/build.lua` собирает из него строку импорта WeakAuras и папку аддона
+(`src/` + `addon/` + `vendor/` в один `DoubtMyRotation.lua`).
 
 ## Стек
 
-- Lua 5.1 — код ауры (песочница WeakAuras, клиент 3.3.5a); ограничения — в `AGENTS.md`.
-- Тесты: busted 2.2.0-1 (`Dockerfile`), конфиг `.busted` (`ROOT = spec`, `lpath` — `src`, `spec/support`, `tools`, `vendor`).
+- Lua 5.1 — движок (песочница WeakAuras, клиент 3.3.5a) и аддон (`addon/`, Interface 30300); ограничения — в `AGENTS.md`.
+- Тесты: busted 2.2.0-1 (`Dockerfile`), конфиг `.busted` (`ROOT = spec`, `lpath` — `src`, `addon`, `spec/support`, `tools`, `vendor`).
 - Образ тестов: `nickblah/lua:5.1-luarocks-alpine` + `build-base unzip curl git python3` (`Dockerfile`).
-- Сжатие и сериализация строки импорта: `vendor/LibDeflate.lua`, `vendor/LibSerialize.lua`.
+- Сжатие и сериализация: `vendor/LibDeflate.lua`, `vendor/LibSerialize.lua` — строка импорта (инструменты) и экспорт снимков в аддоне (входят в его сборку).
 - Python 3 — только генератор данных рангов `tools/spelldata.py`.
-- CI: GitHub Actions — `release.yml` (релиз на каждый мерж в `main`), `perf.yml` (скорость поиска), `claude.yml` (Claude по `@claude`).
+- CI: GitHub Actions — `release.yml` (релиз на каждый мерж в `main`: `DoubtMyRotation.txt` + `DoubtMyRotation-addon.zip`), `perf.yml` (скорость поиска), `claude.yml` (Claude по `@claude`).
 
 ## Команды
 
@@ -19,7 +20,7 @@ WeakAura-подсказчик ротации энх-шамана для WotLK 3.
 - Все тесты: `docker compose run --rm test busted`
 - Один файл: `docker compose run --rm test busted spec/<name>_spec.lua`
 - Без скорости поиска: `docker compose run --rm test busted --exclude-tags=perf`
-- Сборка: `docker compose run --rm test lua tools/build.lua` → `dist/DoubtMyRotation.txt`
+- Сборка: `docker compose run --rm test lua tools/build.lua` → `dist/DoubtMyRotation.txt` (аура), `dist/DoubtMyRotation/` (аддон)
 - Разбор отчёта игрока: `docker compose run --rm test lua tools/report.lua <строка экспорта | WeakAuras.lua> [--baseline <git-ref>]`
 
 Остальные команды (decode, import-snapshots, presses, spelldata) — в `AGENTS.md`.
@@ -27,18 +28,19 @@ WeakAura-подсказчик ротации энх-шамана для WotLK 3.
 ## Дерево
 
 ```
-src/            код ауры, модули из tools/build.lua B.MODULES
+src/            движок (общий для ауры и аддона), модули из tools/build.lua B.MODULES
+addon/          вход аддона, настройки, окно (tools/build.lua B.ADDON_MODULES)
 spec/           тесты busted (*_spec.lua)
   support/      моки клиента, заглушки модулей, сценарии, фикстуры состояний
   fixtures/     recorded.lua — снимки из игры
-tools/          build.lua (сборка), report.lua (разбор отчётов), aura.lua (описание ауры),
-                encode.lua, spelldata.py
-vendor/         LibDeflate, LibSerialize
-docs/           wago.md (описание для wago), superpowers/{specs,plans} (дизайн и план)
+tools/          build.lua (сборка ауры и аддона), report.lua (разбор отчётов),
+                aura.lua (описание ауры, опции), encode.lua, spelldata.py
+vendor/         LibDeflate, LibSerialize (входят в аддон)
+docs/           development.md, wago.md, superpowers/{specs,plans} (дизайн и планы)
 data/           Spell.dbc клиента (*.dbc не в git)
-dist/           результат сборки (не в git)
+dist/           результат сборки: DoubtMyRotation.txt, DoubtMyRotation/ (не в git)
 .github/workflows/  release.yml, perf.yml, claude.yml
-README.md       инструкция игроку
+README.md       инструкция игроку (аура и аддон)
 AGENTS.md       вход для агентов (.claude/CLAUDE.md — симлинк)
 ```
 
@@ -67,6 +69,16 @@ AGENTS.md       вход для агентов (.claude/CLAUDE.md — симли
 | `runtime` | события, алерты, связка модулей в игре | — |
 
 API игры читают только `snapshot`, `runtime`, `timeline`.
+
+## Аддон (`addon/`)
+
+Хозяин движка вместо WeakAuras: рамка (`env.region`), SavedVariables `DoubtMyRotationDB`, `env.show`, `env.libs`.
+
+| Модуль | Роль | Док |
+|---|---|---|
+| `settings` | чистые функции: значения по умолчанию, слияние с сохранёнными, разбор `/dmr` | — |
+| `panel` | окно настроек в Interface → AddOns: страницы General / Combat / Advanced | — |
+| `core` | вход: события загрузки, рамка, SavedVariables, `/dmr`, запуск `runtime.start` | — |
 
 ### Базовый образ
 

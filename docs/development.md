@@ -4,7 +4,7 @@
 
 ## Сборка
 
-Собрать строку самому (нужен Docker): `docker compose run --rm test lua tools/build.lua` → файл `dist/DoubtMyRotation.txt`.
+Собрать самому (нужен Docker): `docker compose run --rm test lua tools/build.lua` → строка ауры `dist/DoubtMyRotation.txt` и папка аддона `dist/DoubtMyRotation/` (`DoubtMyRotation.toc`, `DoubtMyRotation.lua` — движок, библиотеки и `addon/` одним файлом). Папку аддона скопировать в `Interface/AddOns` клиента и перезапустить игру: новый аддон `/reload` не подхватывает.
 
 ## Как считается подсказка
 

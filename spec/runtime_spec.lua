@@ -88,7 +88,8 @@ describe("runtime", function()
 
   local function start(config, extra)
     install(extra)
-    local env = { config = config or {}, region = CreateFrame("Frame"), saved = {} }
+    local env = { config = config or {}, region = CreateFrame("Frame"), saved = {},
+                  show = function() WeakAuras.ScanEvents("ENHROT_SHOW") end }
     local rt = runtime.start(env.config, env)
     rt.ctx.swing = spy()
     rt.ctx.enemies = enemiesSpy()
@@ -837,6 +838,26 @@ describe("runtime", function()
     local rt = start()
     runtime.update(rt, 0.01)
     assert.are.equal("ENHROT_SHOW", G.sent[1][1])
+  end)
+
+  it("without env.show (the addon) it never calls WeakAuras", function()
+    install()
+    local env = { config = {}, region = CreateFrame("Frame"), saved = {} }
+    _G.WeakAuras = nil
+    local rt = runtime.start(env.config, env)
+    runtime.update(rt, 0.01)
+    env.region:Show()
+    env.region:Hide()
+    rt.frame.scripts.OnUpdate(rt.frame, 1.1) -- a sleeping engine polls the host
+    assert.is_true(rt.sleeping)
+  end)
+
+  it("export uses env.libs when the host gives them, LibStub otherwise", function()
+    install()
+    _G.LibStub = nil -- no WeakAuras: no LibStub either
+    local libs = { serialize = require("LibSerialize"), deflate = require("LibDeflate") }
+    assert.are.equal(libs, runtime.exportLibs({ libs = libs }))
+    assert.is_nil(runtime.exportLibs({}))
   end)
 
   for _, case in ipairs({ { "dead or a ghost", { playerDead = true } }, { "on a flight path", { taxi = true } },

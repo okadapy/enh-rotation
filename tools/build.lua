@@ -6,6 +6,12 @@ B.MODULES = { "util", "spells_data", "spells", "talents", "swing", "enemies", "t
               "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }
 B.OUT = "dist/DoubtMyRotation.txt"
 B.FIXTURE = "spec/fixtures/recorded.lua"
+B.ADDON = "DoubtMyRotation"
+B.ADDON_DIR = "dist/" .. B.ADDON
+-- the addon's own modules and the libraries the aura borrows from WeakAuras (export window)
+B.ADDON_MODULES = { { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
+                    { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
+                    { "update", "addon/update.lua" }, { "core", "addon/core.lua" } }
 -- Потолок длины строки импорта: клиент 3.3.5a обрезает длинную вставку (issue #20). Строка v0.1.9
 -- (63 336 байт) импортировалась, v1.0.0 (99 154) — уже нет; выше потолка — ужимать сборку.
 B.MAX_IMPORT = 63000
@@ -135,8 +141,61 @@ function B.bundle(srcDir, version)
   return table.concat(parts)
 end
 
+-- the addon and the aura installed together: the addon runs the engine, the aura stays idle
 function B.initCode(srcDir, version)
-  return B.bundle(srcDir, version) .. "__require('runtime').start(aura_env.config or {}, aura_env)\n"
+  return "if DoubtMyRotationAddon then print('DoubtMyRotation: the addon is installed, this aura stays idle') return end\n"
+    .. B.bundle(srcDir, version)
+    .. "aura_env.show = function() WeakAuras.ScanEvents('ENHROT_SHOW') end\n"
+    .. "__require('runtime').start(aura_env.config or {}, aura_env)\n"
+end
+
+function B.addonOptions()
+  local aura = require("aura")
+  local list = {}
+  for _, o in ipairs(aura.OPTIONS) do
+    if o.key ~= "export" then list[#list + 1] = o end -- the addon has /dmr export
+  end
+  return { list = list, width = aura.WIDTH, height = aura.HEIGHT }
+end
+
+-- One file: src as in the aura (minified, line numbers kept), then the libraries and addon/ as they
+-- are, each in its own function (its locals and upvalues stay within that function's Lua 5.1 limits).
+-- Without LibStub the libraries return plain tables, which boot hands to the engine as env.libs.
+-- With LibStub and the same version already registered by another addon (WeakAuras, TSM...),
+-- LibSerialize returns nothing: the registered one is taken instead.
+function B.addonCode(srcDir, version, modules)
+  local parts = { B.bundle(srcDir, version) }
+  for _, m in ipairs(modules or B.ADDON_MODULES) do
+    local fallback = m[1]:match("^Lib") and (' or (LibStub and LibStub("%s", true))'):format(m[1]) or ""
+    parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)%s\n'):format(m[1], B.readFile(m[2]), fallback)
+  end
+  parts[#parts + 1] = "local __o = " .. B.dump(B.addonOptions()) .. "\n"
+  parts[#parts + 1] = "__require('core').boot({ options = __o.list, width = __o.width, height = __o.height,\n"
+    .. "  libs = { serialize = __require('LibSerialize'), deflate = __require('LibDeflate') } })\n"
+  return table.concat(parts)
+end
+
+function B.addonToc(version)
+  return table.concat({
+    "## Interface: 30300",
+    "## Title: DoubtMyRotation - Enh Shaman",
+    "## Notes: Enhancement shaman rotation helper: a 6 s fight simulation, timeline and swing clock",
+    "## Version: " .. (version or B.version()),
+    "## SavedVariables: DoubtMyRotationDB",
+    "",
+    "DoubtMyRotation.lua",
+    "",
+  }, "\n")
+end
+
+-- the addon/ files not written yet (the addon is built only when there are none)
+local function missingAddonFiles()
+  local missing = {}
+  for _, m in ipairs(B.ADDON_MODULES) do
+    local f = io.open(m[2], "rb")
+    if f then f:close() else missing[#missing + 1] = m[2] end
+  end
+  return missing
 end
 
 local function number(n)
@@ -335,6 +394,18 @@ function B.main(cmd, a, b)
   f:write(str)
   f:close()
   print(("%s: %d bytes, version %s"):format(B.OUT, #str, version))
+  local missing = missingAddonFiles()
+  if #missing > 0 then
+    print(("%s/: skipped, no %s"):format(B.ADDON_DIR, table.concat(missing, ", ")))
+    return
+  end
+  os.execute("mkdir -p " .. B.ADDON_DIR)
+  for name, text in pairs({ [B.ADDON .. ".toc"] = B.addonToc(version), [B.ADDON .. ".lua"] = B.addonCode("src", version) }) do
+    local out = assert(io.open(B.ADDON_DIR .. "/" .. name, "wb"))
+    out:write(text)
+    out:close()
+  end
+  print(("%s/: addon, version %s"):format(B.ADDON_DIR, version))
 end
 
 if arg and arg[0] and arg[0]:match("build%.lua$") then B.main(arg[1], arg[2], arg[3]) end
