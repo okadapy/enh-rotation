@@ -430,3 +430,75 @@ describe("build #integration", function()
     assert.are.equal("DoubtMyRotation: the addon is installed, this aura stays idle", G.printed[#G.printed])
   end)
 end)
+
+describe("addon build", function()
+  local LIBS = { { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" } }
+  local CORE = { "core", "spec/fixtures/addon_core_stub.lua" }
+
+  it("names its folder and its modules", function()
+    assert.are.equal("DoubtMyRotation", build.ADDON)
+    assert.are.equal("dist/DoubtMyRotation", build.ADDON_DIR)
+    assert.are.same({ { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
+                      { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
+                      { "core", "addon/core.lua" } }, build.ADDON_MODULES)
+  end)
+
+  it("the addon's toc: 3.3.5a, its SavedVariables, its one file", function()
+    local toc = build.addonToc("v9.9.9")
+    assert.truthy(toc:find("## Interface: 30300\n", 1, true))
+    assert.truthy(toc:find("## Version: v9.9.9\n", 1, true))
+    assert.truthy(toc:find("## SavedVariables: DoubtMyRotationDB\n", 1, true))
+    assert.truthy(toc:find("\nDoubtMyRotation.lua\n", 1, true))
+  end)
+
+  it("the addon's options are the aura's without export", function()
+    local o = build.addonOptions()
+    assert.are.equal(#aura.OPTIONS - 1, #o.list)
+    for _, opt in ipairs(o.list) do assert.are_not.equal("export", opt.key) end
+    assert.are.equal(aura.WIDTH, o.width)
+    assert.are.equal(aura.HEIGHT, o.height)
+  end)
+
+  -- each library is wrapped in a function: Lua 5.1 caps a function at 200 locals and 60 upvalues
+  it("wraps the libraries so they compile and work without LibStub", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    _G.LibStub = nil -- a client without WeakAuras or any other library addon
+    local chunk = assert(loadstring(build.addonCode("src", "v0", { LIBS[1], LIBS[2], CORE })))
+    local genv = clientEnv({})
+    assert.is_nil(genv.LibStub)
+    setfenv(chunk, genv)
+    chunk()
+    local o = assert(genv.BOOTED)
+    assert.are.same(build.addonOptions().list, o.options)
+    assert.are.equal(aura.WIDTH, o.width)
+    assert.are.equal(aura.HEIGHT, o.height)
+    local ser, def = o.libs.serialize, o.libs.deflate
+    assert.is_function(ser.Serialize)
+    assert.is_function(def.CompressDeflate)
+    local t = { a = 1, list = { 1, 2.5, "x" }, flag = true }
+    local packed = def:EncodeForPrint(def:CompressDeflate(ser:Serialize(t)))
+    local ok, back = ser:Deserialize(def:DecompressDeflate(def:DecodeForPrint(packed)))
+    assert.is_true(ok)
+    assert.are.same(t, back)
+  end)
+
+  it("starts with the aura's bundle: the engine's line numbers and version stay", function()
+    local code = build.addonCode("src", "v7.7.7", { CORE })
+    assert.are.equal(1, code:find(build.bundle("src", "v7.7.7"), 1, true))
+    assert.truthy(code:find('__mods["core"]', 1, true))
+  end)
+
+  it("takes the addon's modules by default", function()
+    local seen = {}
+    local readFile = build.readFile
+    build.readFile = function(path)
+      seen[path] = true
+      if path:match("^addon/") then return "return {}" end
+      return readFile(path)
+    end
+    build.addonCode("src", "v0")
+    build.readFile = readFile
+    for _, m in ipairs(build.ADDON_MODULES) do assert.is_true(seen[m[2]] == true, m[2]) end
+  end)
+end)
