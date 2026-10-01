@@ -85,32 +85,32 @@ function M.alert(S)
   -- in melee reach without auto-attack: no swings, no Maelstrom, no mana from Shamanistic Rage;
   -- first, it costs more than any missing buff (recorded in game: whole fights like that)
   if melee and S.swing and not S.swing.attacking then
-    return withIcon({ key = "autoAttack", reason = "Auto-attack is off" })
+    return withIcon({ key = "autoAttack", reason = "Start auto-attack (right-click target)" })
   end
   -- not while the cast is on its way (the aura comes a moment after the cast)
   if util.wantsLightningShield(S) then
     if sp.lightningShield and b.ls.charges <= 0 and not (S.inflight and S.inflight.lightningShield) then
-      return withIcon({ key = "lightningShield", reason = "Lightning Shield missing" })
+      return withIcon({ key = "lightningShield", reason = "Cast Lightning Shield" })
     end
   elseif S.shieldPref == "water" and not (S.player and S.player.shield == "water") then
-    return withIcon({ key = "waterShield", reason = "Water Shield missing" })
+    return withIcon({ key = "waterShield", reason = "Cast Water Shield" })
   end
   if w.mh and not w.mh.enchant then
     local lvl = S.player.level or 80
     local imbue = lvl >= 30 and "windfury" or lvl >= 10 and "flametongue" or "rockbiter"
-    return { key = "noEnchant", icon = M.IMBUE_ICONS[imbue], reason = "Main-hand imbue missing" }
+    return { key = "noEnchant", icon = M.IMBUE_ICONS[imbue], reason = "No imbue on main hand" }
   end
   if w.oh and not w.oh.enchant then
-    return { key = "noEnchant", icon = M.IMBUE_ICONS.flametongue, reason = "Off-hand imbue missing" }
+    return { key = "noEnchant", icon = M.IMBUE_ICONS.flametongue, reason = "No imbue on off hand" }
   end
   -- Shamanistic Rage returns mana only through melee hits: not at range, not without auto-attack
   local rage = sp.shamanisticRage
   if rage and melee and not (S.cooldowns and S.cooldowns.shamanisticRage == "never") and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2
     and rage.cd <= (S.gcdRemains or 0) + 0.1 then
-    return withIcon({ key = "shamanisticRage", reason = "Low mana: Shamanistic Rage" })
+    return withIcon({ key = "shamanisticRage", reason = "Low mana: press Shamanistic Rage" })
   end
   if t.exists and t.enemy and t.range == "far" then
-    return withIcon({ key = "outOfRange", reason = "Target out of range" })
+    return withIcon({ key = "outOfRange", reason = "Target too far: move closer" })
   end
   return nil
 end
@@ -594,12 +594,12 @@ function M.idleHint(plan, S, searching, isDrinking)
     if h ~= nil then return h or nil end
   end
   if t.range == "20" or t.range == "30" then return withIcon({ key = "moveIn", reason = "Move into melee" }) end
-  if t.range == "melee" and M.outOfMana(S) then return withIcon({ key = "outOfMana", reason = "Out of mana" }) end
+  if t.range == "melee" and M.outOfMana(S) then return withIcon({ key = "outOfMana", reason = "Out of mana: just auto-attack" }) end
   -- solo, in melee, swinging, mana left, and still nothing for 6 s: no spell pays for its mana
   -- (the drink it costs) - say so, the bar is not broken (Mana policy "spend" spends more)
   if S.mode == "solo" and t.range == "melee" and not t.dead and (t.hp or 1) > 0
     and S.swing and S.swing.attacking then
-    return withIcon({ key = "saveMana", reason = "Auto-attack: save mana" })
+    return withIcon({ key = "saveMana", reason = "Save mana: just auto-attack" })
   end
   return nil
 end
