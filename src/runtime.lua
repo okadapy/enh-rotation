@@ -152,14 +152,14 @@ end
 function M.signature(plan, c)
   local parts = {}
   for _, st in ipairs(plan.steps) do parts[#parts + 1] = ("%s@%.1f"):format(st.key, st.at) end
-  return ("EnhRot: %s | replans=%d capped=%d errors=%d"):format(table.concat(parts, " "), c.replans, c.capped, c.errors)
+  return ("DoubtMyRotation: %s | replans=%d capped=%d errors=%d"):format(table.concat(parts, " "), c.replans, c.capped, c.errors)
 end
 
 function M.report(rt, msg)
   rt.counters.errors = rt.counters.errors + 1
   if rt.reported then return end
   rt.reported = true
-  print("|cffff5555EnhRot|r " .. msg)
+  print("|cffff5555DoubtMyRotation|r " .. msg)
 end
 
 -- done: the end (or pushback) of a cast whose START was already reported - no new press
@@ -396,7 +396,7 @@ function M.onError(rt, msg)
   rt.errorsSeen = rt.errorsSeen or {}
   if not rt.errorsSeen[msg] then
     rt.errorsSeen[msg] = true
-    print("|cffff5555EnhRot|r error: " .. msg)
+    print("|cffff5555DoubtMyRotation|r error: " .. msg)
   end
   local now = GetTime()
   local times = rt.errorTimes or {}
@@ -434,13 +434,13 @@ function M.fail(rt)
       waited = waited + (dt or 0)
       if waited >= M.RETRY_AFTER then M.restart(rt) end
     end)
-    print(("|cffff5555EnhRot|r stopped after errors - retrying in %d s or on a new target"):format(M.RETRY_AFTER))
+    print(("|cffff5555DoubtMyRotation|r stopped after errors - retrying in %d s or on a new target"):format(M.RETRY_AFTER))
     return
   end
   frame:SetScript("OnUpdate", nil)
   if not rt.failed then
     rt.failed = true
-    print("|cffff5555EnhRot|r stopped after an error - /reload to retry")
+    print("|cffff5555DoubtMyRotation|r stopped after an error - /reload to retry")
   end
 end
 
@@ -624,7 +624,7 @@ function M.checkTalents(rt)
     if rank > 0 then return end
   end
   rt.talentsWarned = true
-  print("|cffff5555EnhRot|r: talents not recognized (unsupported client language?)")
+  print("|cffff5555DoubtMyRotation|r: talents not recognized (unsupported client language?)")
 end
 
 -- nothing to suggest: dead or a ghost, on a flight path, in a vehicle, mounted out of combat
@@ -695,8 +695,8 @@ function M.showExport(env)
     local saved = env.saved or {}
     local list, presses = saved[recorder.KEY] or {}, saved[recorder.PRESS_KEY] or {}
     local s = recorder.export({ version = M.VERSION, snapshots = list, presses = presses }, M.exportLibs())
-    if not s then return "EnhRot: this client has no LibSerialize/LibDeflate, send WeakAuras.lua instead" end
-    if #list == 0 and #presses == 0 then return "EnhRot: no snapshots yet - turn on Record snapshots and play a while" end
+    if not s then return "DoubtMyRotation: this client has no LibSerialize/LibDeflate, send WeakAuras.lua instead" end
+    if #list == 0 and #presses == 0 then return "DoubtMyRotation: no snapshots yet - turn on Record snapshots and play a while" end
     return s
   end
   return timeline.exportWindow(text(), text)
@@ -713,7 +713,7 @@ function M.supported()
   if not GetBuildInfo then return true end
   local version, _, _, toc = GetBuildInfo()
   if toc == nil or tonumber(toc) == M.BUILD then return true end
-  return false, ("EnhRot supports only WotLK 3.3.5a (build %d); this client is %s (%s)"):format(M.BUILD, tostring(version), tostring(toc))
+  return false, ("DoubtMyRotation supports only WotLK 3.3.5a (build %d); this client is %s (%s)"):format(M.BUILD, tostring(version), tostring(toc))
 end
 
 -- the options for the long cooldowns (tools/aura.lua: select index) -> S.cooldowns
@@ -744,7 +744,7 @@ function M.start(config, env)
   if not ok then
     if not M.buildWarned then
       M.buildWarned = true
-      print("|cffff5555EnhRot|r" .. msg:sub(7))
+      print("|cffff5555DoubtMyRotation|r" .. msg:sub(16))
     end
     return nil
   end

@@ -1,5 +1,5 @@
 # Каждый мердж в main — новый релиз: тесты, сборка строки импорта, тег vX.Y.Z (patch + 1),
-# релиз с EnhRot.txt. Старые релизы удаляются — остаётся только последний (теги остаются:
+# релиз с DoubtMyRotation.txt. Старые релизы удаляются — остаётся только последний (теги остаются:
 # по ним считается версия). Вручную (Actions → Release → Run workflow) можно поднять minor или major;
 # при мердже — словом «[major]» или «[minor]» в сообщении мердж-коммита.
 name: Release
@@ -75,7 +75,7 @@ jobs:
         run: |
           docker compose run --rm -e RELEASE_TAG="$RELEASE_TAG" test lua tools/build.lua | tee build.log
           grep -q "version $RELEASE_TAG\$" build.log
-          head -c 6 dist/EnhRot.txt | grep -qx '!WA:2!'
+          head -c 6 dist/DoubtMyRotation.txt | grep -qx '!WA:2!'
 
       - name: Релиз
         if: steps.version.outputs.skip != 'true'
@@ -87,25 +87,25 @@ jobs:
           {
             echo "## Установка"
             echo
-            echo '1. Скачать `EnhRot.txt` ниже (Assets) или скопировать строку из блока в конце.'
+            echo '1. Скачать `DoubtMyRotation.txt` ниже (Assets) или скопировать строку из блока в конце.'
             echo '2. В игре: `/wa` → **Import** → вставить строку → **Import**.'
-            echo '3. Появится группа `EnhRot` с аурой `EnhRot Timeline`. Настройки прежней версии WeakAuras предложит сохранить.'
+            echo '3. Появится группа `DoubtMyRotation` с аурой `DoubtMyRotation Timeline`. Настройки прежней версии WeakAuras предложит сохранить.'
             echo
             echo "Подробнее — [README](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/README.md)."
             echo
             echo "## Строка импорта"
             echo
             echo '```'
-            cat dist/EnhRot.txt
+            cat dist/DoubtMyRotation.txt
             echo
             echo '```'
             echo
           } > notes.md
           args=()
           if [ -n "$PREV" ]; then args+=(--notes-start-tag "$PREV"); fi
-          gh release create "$TAG" dist/EnhRot.txt \
+          gh release create "$TAG" dist/DoubtMyRotation.txt \
             --target "$GITHUB_SHA" \
-            --title "EnhRot $TAG" \
+            --title "DoubtMyRotation $TAG" \
             --notes-file notes.md \
             --generate-notes \
             "${args[@]}"

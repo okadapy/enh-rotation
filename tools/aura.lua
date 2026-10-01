@@ -1,6 +1,6 @@
 local M = {}
-M.GROUP_ID = "EnhRot"
-M.HOST_ID = "EnhRot Timeline"
+M.GROUP_ID = "DoubtMyRotation"
+M.HOST_ID = "DoubtMyRotation Timeline"
 M.TOC = 30300
 M.INTERNAL_VERSION = 90
 M.WIDTH, M.HEIGHT = 340, 120

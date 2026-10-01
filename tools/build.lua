@@ -4,7 +4,7 @@ local B = {}
 
 B.MODULES = { "util", "spells_data", "spells", "talents", "swing", "enemies", "ttd", "damage", "model", "value",
               "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }
-B.OUT = "dist/EnhRot.txt"
+B.OUT = "dist/DoubtMyRotation.txt"
 B.FIXTURE = "spec/fixtures/recorded.lua"
 -- Слова, которые песочница WeakAuras блокирует или которые запрещены в src/ (Global Constraints),
 -- и библиотеки Lua, которых нет в клиенте 3.3.5a (package, io, debug): обращение к ним падает в игре.
@@ -51,7 +51,7 @@ function B.bundle(srcDir, version)
   version = version or B.version()
   local parts = {
     "local __mods = {}\n",
-    "local function __require(name)\n  local m = __mods[name]\n  if m == nil then error('EnhRot: module not loaded: ' .. name) end\n  return m\nend\n",
+    "local function __require(name)\n  local m = __mods[name]\n  if m == nil then error('DoubtMyRotation: module not loaded: ' .. name) end\n  return m\nend\n",
   }
   for _, name in ipairs(B.MODULES) do
     local code = name == "version" and ("return %q"):format(version) or B.readFile(srcDir .. "/" .. name .. ".lua")
