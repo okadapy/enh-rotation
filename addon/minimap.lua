@@ -6,6 +6,12 @@ local M = {}
 M.NAME = "DoubtMyRotationMinimapButton"
 M.ICON = "Interface\\Icons\\Ability_Shaman_Stormstrike"
 M.RADIUS = 80
+-- the rim: half the minimap out plus a little (ElvUI's square one is 176 px and resizable)
+function M.radius()
+  local w = Minimap and Minimap.GetWidth and Minimap:GetWidth() or 0
+  if w > 0 then return w / 2 + 5 end
+  return M.RADIUS
+end
 M.ANGLE = 200
 M.TIP = "DoubtMyRotation\nLeft-click: settings\nRight-click: show or hide the timeline\nDrag: move this button"
 
@@ -64,7 +70,7 @@ function M.new(host)
   b.border:SetHeight(53)
   b.border:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0)
   function b:place(angle)
-    local x, y = M.offset(angle, shape())
+    local x, y = M.offset(angle, shape(), M.radius())
     self:ClearAllPoints()
     self:SetPoint("CENTER", Minimap, "CENTER", x, y)
   end

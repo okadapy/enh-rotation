@@ -20,7 +20,7 @@ M.HAND_LEVELS = { ["Flametongue Weapon"] = 10, ["Water Shield"] = 20, ["Windfury
 M.CARDS = {
   { level = 10, title = "Level 10: Flame Shock and totems",
     text = "Flame Shock burns the target for {dur:flameShock}. It shares one {cd:flameShock} cooldown with Earth Shock: "
-      .. "you can use one shock at a time. Searing Totem shoots one enemy near it for {dur:searingTotem}. "
+      .. "you can use one shock at a time. Searing Totem shoots one enemy near it while it stands. "
       .. "Put Flametongue Weapon on your weapon. From now on every level gives a talent point: "
       .. "this addon plays the Enhancement tree." },
   { level = 20, title = "Level 20: Frost Shock and Water Shield",
@@ -238,7 +238,8 @@ function M.window(host)
   w.widgets = { again, ok }
   for k, fn in pairs(W) do w[k] = fn end
   -- Escape closes it like OK (the client hides the frames listed in UISpecialFrames)
-  w:SetScript("OnHide", function(self) if self.close then self:finish() end end)
+  -- (Alt+Z hides UIParent and so the card: that is not reading it)
+  w:SetScript("OnHide", function(self) if self.close and UIParent:IsShown() then self:finish() end end)
   if UISpecialFrames then table.insert(UISpecialFrames, M.NAME) end
   w:Hide()
   M.frame = w

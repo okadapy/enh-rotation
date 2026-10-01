@@ -454,6 +454,17 @@ describe("addon core", function()
       assert.are.same({ panels[1] }, reloads)
     end)
 
+    -- a shared drop-down list: a closed page must not refresh its menus on every zone change
+    it("the same profile again leaves a closed Profiles page alone", function()
+      shaman()
+      login(opts())
+      local page = pages[#pages]
+      page:Hide()
+      local n = page.refreshes
+      DoubtMyRotationEvents.scripts.OnEvent(DoubtMyRotationEvents, "PLAYER_ENTERING_WORLD")
+      assert.are.equal(n, page.refreshes)
+    end)
+
     it("in a fight the profile waits for the fight's end", function()
       shaman({ instance = "raid" })
       _G.DoubtMyRotationCharDB = { auto = { raid = "Raid" } }

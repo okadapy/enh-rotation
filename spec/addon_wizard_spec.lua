@@ -120,4 +120,14 @@ describe("first-run guide", function()
     assert.are.same({ 2, 0 }, { closed, h.dones })
     assert.are.equal("DoubtMyRotationWizard", UISpecialFrames[1])
   end)
+
+  it("hiding the whole interface (Alt+Z) is not Skip", function()
+    local h = host()
+    local w = wizard.new(h)
+    w:open(close)
+    UIParent.shown = false
+    w:Hide()
+    assert.are.equal(0, closed)
+    UIParent.shown = true
+  end)
 end)

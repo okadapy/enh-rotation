@@ -41,6 +41,13 @@ describe("level cards", function()
     assert.has_error(function() cards.text("{what:stormstrike}") end)
   end)
 
+  -- spells.lua keeps one duration for all ranks; Searing Totem's grows by rank (30 s at 10, 1 min at 69)
+  it("no card states a duration that differs by rank", function()
+    for _, c in ipairs(cards.CARDS) do
+      assert.is_nil(c.text:find("{dur:searingTotem}", 1, true), c.title)
+    end
+  end)
+
   it("every card's text resolves", function()
     for _, c in ipairs(cards.CARDS) do
       local t = cards.text(c.text)
@@ -158,5 +165,16 @@ describe("level card window", function()
     w:Hide() -- Escape (UISpecialFrames)
     assert.are.equal(1, closed)
     assert.are.equal("DoubtMyRotationCard", UISpecialFrames[1])
+  end)
+
+  -- Alt+Z hides UIParent and so the card: not read, not closed
+  it("hiding the whole interface does not count the card as read", function()
+    local w = cards.window(h)
+    local closed = 0
+    w:open(cards.CARDS[1], function() closed = closed + 1 end)
+    UIParent.shown = false
+    w:Hide()
+    assert.are.equal(0, closed)
+    UIParent.shown = true
   end)
 end)

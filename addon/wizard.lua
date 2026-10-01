@@ -151,7 +151,8 @@ function M.new(host)
   w.widgets[#w.widgets + 1] = w.check
   for k, fn in pairs(W) do w[k] = fn end
   -- Escape is Skip (the client hides the frames listed in UISpecialFrames)
-  w:SetScript("OnHide", function(self) if self.close then self:finish("skip") end end)
+  -- (Alt+Z hides UIParent and so the guide: that is not Skip)
+  w:SetScript("OnHide", function(self) if self.close and UIParent:IsShown() then self:finish("skip") end end)
   if UISpecialFrames then table.insert(UISpecialFrames, M.NAME) end
   w:Hide()
   return w

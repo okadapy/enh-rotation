@@ -160,7 +160,8 @@ end
 function M.switch(o, name, why, announce)
   if name == M.profile then
     M.why = why
-    if M.profilePage then M.profilePage.refresh(M.profilePage) end
+    -- only an open page: its drop-downs share the client's menu list (it refreshes on OnShow anyway)
+    if M.profilePage and M.profilePage:IsShown() then M.profilePage.refresh(M.profilePage) end
     return
   end
   -- a new profile restarts the engine: not in the middle of a fight (PLAYER_REGEN_ENABLED picks again)

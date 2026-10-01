@@ -37,6 +37,14 @@ describe("minimap button", function()
     assert.are.near(0, minimap.angle(10, 10, 20, 10), 1e-9)
   end)
 
+  -- ElvUI's square minimap is 176 px and resizable: the rim is half its width out, plus a little
+  it("the rim follows the minimap's size", function()
+    Minimap:SetWidth(220)
+    assert.are.near(115, minimap.radius(), 1e-9)
+    Minimap:SetWidth(0)
+    assert.are.equal(minimap.RADIUS, minimap.radius())
+  end)
+
   it("is a child of the minimap at its saved angle, or the default one", function()
     local b = minimap.new(host())
     assert.are.equal(b, DoubtMyRotationMinimapButton)

@@ -34,7 +34,8 @@ M.HANDLE = {
     local bg = CreateFrame("Frame", nil, f)
     bg:Hide()
     bg:SetAllPoints(f)
-    bg:SetFrameLevel(f:GetFrameLevel())
+    -- a level below the timeline, as ElvUI's own backdrops: the icons are the timeline's textures
+    bg:SetFrameLevel(math.max(0, f:GetFrameLevel() - 1))
     bg:SetTemplate("Transparent")
     local shown = not f.bg or f.bg:IsShown()
     if f.bg then f.bg:Hide() end
