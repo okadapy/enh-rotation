@@ -2,6 +2,8 @@
 
 WeakAura-подсказчик для энх-шамана под WotLK 3.3.5a (WeakAuras 5.22 backport): мини-симулятор боя на 6 с вперёд, лента времени, часы ударов. Инструкция для игрока — `README.md`.
 
+Карта проекта (стек, дерево, модули) — `.claude/rules/ARCHITECTURE.md`; операционная память — `.claude/docs/`.
+
 - Тесты: `docker compose run --rm test busted`
 - Один файл: `docker compose run --rm test busted spec/<name>_spec.lua`
 - Без интеграционных (настоящие соседние модули): `docker compose run --rm test busted --exclude-tags=integration`
