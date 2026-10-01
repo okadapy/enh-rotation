@@ -149,8 +149,9 @@ end)
 
 describe("build (pure)", function()
   it("lists modules in the load order of the contract", function()
-    assert.are.same({ "util", "spells_data", "spells", "talents", "swing", "enemies", "ttd", "damage", "model",
-                      "value", "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }, build.MODULES)
+    assert.are.same({ "util", "spells_data", "spells", "talents", "raid", "gear_data", "gear", "swing", "enemies", "ttd",
+                      "damage", "model", "value", "search", "planner", "snapshot", "timeline", "recorder", "version",
+                      "runtime" }, build.MODULES)
     assert.are.equal("dist/DoubtMyRotation.txt", build.OUT)
   end)
 
@@ -343,8 +344,11 @@ describe("build #integration", function()
     for _, name in ipairs(srcModules()) do assert.is_true(listed[name] == true, "not in build.MODULES: " .. name) end
     local code = build.initCode("src")
     assert.is_not_nil(loadstring(code))
+    local addon = build.bundle("src", nil, true)
+    assert.is_not_nil(loadstring(addon))
     for _, name in ipairs(build.MODULES) do
-      assert.is_not_nil(code:find('__mods["' .. name .. '"]', 1, true), name)
+      assert.are.equal(not build.ADDON_SRC[name], code:find('__mods["' .. name .. '"]', 1, true) ~= nil, name)
+      assert.is_not_nil(addon:find('__mods["' .. name .. '"]', 1, true), name)
     end
   end)
 
@@ -365,6 +369,7 @@ describe("build #integration", function()
 
   it("uses nothing the WeakAuras sandbox blocks", function()
     assert.are.same({}, build.forbidden(build.bundle("src")))
+    assert.are.same({}, build.forbidden(build.bundle("src", nil, true)))
   end)
 
   it("round-trips the import string", function()
@@ -520,9 +525,10 @@ describe("addon build", function()
     assert.are.equal(before.deflate, o.libs.deflate)
   end)
 
-  it("starts with the aura's bundle: the engine's line numbers and version stay", function()
+  -- the addon's bundle keeps its addon-only modules and blocks (the aura's has blank lines there)
+  it("starts with the engine's bundle: its line numbers and version stay", function()
     local code = build.addonCode("src", "v7.7.7", { CORE })
-    assert.are.equal(1, code:find(build.bundle("src", "v7.7.7"), 1, true))
+    assert.are.equal(1, code:find(build.bundle("src", "v7.7.7", true), 1, true))
     assert.truthy(code:find('__mods["core"]', 1, true))
   end)
 
@@ -590,5 +596,52 @@ describe("addon build", function()
     assert.is_truthy(DoubtMyRotationReady)
     genv.SlashCmdList.DOUBTMYROTATION("")
     assert.are.equal(DoubtMyRotationPanel, G.opened)
+  end)
+end)
+
+describe("addon-only code", function()
+  it("strip blanks the lines from --@addon to --@end, markers included, and keeps the line count", function()
+    local code = "local a = 1\n--@addon\nlocal b = 2\n  --@end\nreturn a\n"
+    assert.are.equal("local a = 1\n\n\n\nreturn a\n", build.strip(code))
+    assert.are.equal("x\ny", build.strip("x\ny"))
+  end)
+
+  it("a marker is a whole line: a comment that only names one stays", function()
+    local code = "x = 1 -- see --@addon below\n"
+    assert.are.equal(code, build.strip(code))
+  end)
+
+  it("strip refuses an unclosed, a nested or a stray marker", function()
+    assert.has_error(function() build.strip("--@addon\nx\n") end)
+    assert.has_error(function() build.strip("x\n--@end\n") end)
+    assert.has_error(function() build.strip("--@addon\n--@addon\n--@end\n") end)
+  end)
+
+  it("every source module still compiles without its addon blocks, line for line", function()
+    for _, name in ipairs(build.MODULES) do
+      if name ~= "version" then
+        local raw = build.readFile("src/" .. name .. ".lua")
+        local s = build.strip(raw)
+        assert.is_not_nil(loadstring(s), name)
+        assert.are.equal(select(2, raw:gsub("\n", "")), select(2, s:gsub("\n", "")), name)
+      end
+    end
+  end)
+
+  it("the aura gets neither addon-only modules nor addon blocks", function()
+    local aura = build.bundle("src", "v0")
+    for name in pairs(build.ADDON_SRC) do assert.is_nil(aura:find('__mods["' .. name .. '"]', 1, true), name) end
+    assert.is_nil(aura:find("S.mods", 1, true))
+  end)
+
+  it("the addon-only stubs are neutral until their tasks fill them", function()
+    local raid, gearData, gear = dofile("src/raid.lua"), dofile("src/gear_data.lua"), dofile("src/gear.lua")
+    assert.are.same({}, raid.DEBUFFS)
+    assert.are.same({}, raid.BUFFS)
+    assert.are.same({}, raid.OWN_TOTEMS)
+    assert.are.same({ haste = 0.04, strength = 0.02 }, raid.SUPPORT)
+    assert.is_nil(raid.effects({}, {}, {}, nil))
+    assert.are.same({ SETS = {}, BONUS = {}, RELICS = {}, GLYPHS = {} }, gearData)
+    assert.is_nil(gear.effects({}, {}))
   end)
 end)
