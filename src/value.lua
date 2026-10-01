@@ -292,7 +292,13 @@ local function autoValue(S, damage)
     local ttd = S.target.ttd
     if ttd and ttd < left then left = ttd end
     if left < 0 then left = 0 end
-    v = v + left * M.SUPPORT * dps * M.DISCOUNT
+    local support = M.SUPPORT
+    --@addon
+    -- only what the group does not already give (raid.lua: Horn of Winter, another Windfury Totem...)
+    local mods = S.mods
+    if mods and mods.support then support = mods.support end
+    --@end
+    v = v + left * support * dps * M.DISCOUNT
   end
   return v
 end
@@ -421,19 +427,70 @@ end
 -- the margin an Earth Shock that saved 2.0-2.8 s (130 damage a second at 52) was within 50 of
 -- its mana, and the shock came and went as the mob's health fell. Without a memo (direct
 -- calls) the kill counts in full.
+--
+-- The expected time of death can fall after the horizon's end with the health already gone (the
+-- model's survival integral): the seconds to it count below zero, so a press that moves it from
+-- 7.2 s to 5.8 s saves as much as one inside the horizon. Cut at 0 there, every kill expected
+-- after the end was worth the same, and a press that sped it up was pure mana.
 M.FINISH_MIN = 0.5
 function M.killCredit(S, live)
   local died = S.target.diedAt
-  if live or not died or S.now <= died then return 0 end
+  if live or not died then return 0 end
   local m = S.memo
   local base = m and m.killBase
   if base and died < base then
     died = died + M.FINISH_MIN
     if died > base then died = base end
-    if S.now <= died then return 0 end
   end
   return (S.now - died) * M.dpsEstimate(S) * M.DISCOUNT
 end
+
+--@addon
+-- A relic's proc buff still up at the end of the plan (gear_data.PROCS): its stat for the time
+-- left, up to TAIL and the target's death, at the stat's worth in damage per second. The horizon
+-- itself is counted at the snapshot's stats (a proc up now is in them already), so a press of its
+-- button is worth the buff time it keeps up after the plan.
+M.HASTE_RATING = 25.21 -- melee haste rating per 1% at level 80: 32.79 less 30% for hybrids (the shaman one), since 3.1
+
+-- damage per second of one point of `stat` ("ap" | "haste"), once per search (S.memo): attack
+-- power by each hand's share of its weapon damage (UnitDamage holds AP / 14 x speed, the off hand
+-- half of it), times MELEE_SHARE; haste rating as 1% of the auto attacks per HASTE_RATING
+function M.statDps(S, stat)
+  local m = S.memo
+  local slot = stat == "ap" and "statDpsAp" or "statDpsHaste"
+  local v = m and m[slot]
+  if v then return v end
+  local damage = D()
+  local sw, w = S.swing, S.weapons
+  v = 0
+  for i = 1, 2 do
+    local hand = i == 1 and "mh" or "oh"
+    local s, wp = sw and sw[hand], w and w[hand]
+    if s and wp and (s.speed or 0) > 0 then
+      local dps = damage.auto(S, hand) / s.speed
+      if stat == "ap" then
+        local avgW = (wp.min + wp.max) / 2
+        if avgW > 0 then v = v + dps * (wp.base or wp.speed) * (hand == "oh" and 0.5 or 1) / 14 / avgW end
+      else
+        v = v + dps / (M.HASTE_RATING * 100)
+      end
+    end
+  end
+  if stat == "ap" then v = v * M.MELEE_SHARE end
+  if m then m[slot] = v end
+  return v
+end
+
+local function relicValue(S, p)
+  local r = S.buffs.relic
+  if not (r and r.stacks > 0 and r.remains > 0) then return 0 end
+  local left = r.remains < M.TAIL and r.remains or M.TAIL
+  local ttd = S.target.ttd
+  if ttd and ttd < left then left = ttd end
+  if left <= 0 then return 0 end
+  return left * r.stacks * p.amount * M.statDps(S, p.stat) * M.DISCOUNT
+end
+--@end
 
 function M.terminal(S)
   local damage = D()
@@ -460,6 +517,10 @@ function M.terminal(S)
   elseif (W[S.mode] or W.group).drink then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
   if live then
     v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
+    --@addon
+    local mods = S.mods
+    if mods and mods.proc then v = v + relicValue(S, mods.proc) end
+    --@end
   end
   return v
 end

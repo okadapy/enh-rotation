@@ -323,6 +323,24 @@ describe("value.terminal", function()
     assert.are.near((value.TAIL - 2) * value.SUPPORT * dps * value.DISCOUNT, value.terminal(long) - value.terminal(short), 1e-6)
   end)
 
+  -- the group gives part of what our totems give (raid.lua: Horn of Winter, another Windfury
+  -- Totem, Improved Icy Talons): our set is worth only the rest, S.mods.support
+  it("support totems the group already covers are worth only S.mods.support", function()
+    local function at(remains, mods)
+      local S = base({ totems = { fire = { kind = false, remains = 0 }, water = { remains = remains } } })
+      S.mods = mods
+      return S
+    end
+    local long = at(200)
+    local dps = damage.auto(long, "mh") / long.swing.mh.speed + damage.auto(long, "oh") / long.swing.oh.speed
+    local m = { support = 0.02 }
+    assert.are.near((value.TAIL - 2) * 0.02 * dps * value.DISCOUNT, value.terminal(at(200, m)) - value.terminal(at(2, m)), 1e-6)
+    m = { support = 0 }
+    assert.are.near(0, value.terminal(at(200, m)) - value.terminal(at(2, m)), 1e-6)
+    -- other mods leave the share alone
+    assert.are.equal(value.terminal(at(200)), value.terminal(at(200, { armor = 0.76 })))
+  end)
+
   -- stub damage: Stormstrike 2000 (351 mana), Earth Shock 1800 (791), Lava Lash 1500 (176)
   describe("solo mana reserve while the target is on its way", function()
     local function at(mana, over)
@@ -440,6 +458,23 @@ describe("value.terminal", function()
     assert.are.near(2.5 * per, value.killCredit(S, false), 1e-6)
   end)
 
+  -- the expected time of death (model: survival) can fall after the horizon's end with the health
+  -- already gone: a press that moves it from 7.2 s to 5.8 s (horizon 6 s) saves the same seconds
+  -- as one inside the horizon. At 0 for every death after S.now it saved nothing, and a mob dying
+  -- just after the horizon was finished by the swings alone (recorded #55, #65).
+  it("solo: a kill expected after the horizon's end counts the seconds to it below zero", function()
+    local S = base({ mode = "solo", target = { hp = 0, dead = true } })
+    local per = value.dpsEstimate(S) * value.DISCOUNT
+    S.memo = { killBase = S.now + 1.2 }
+    S.target.diedAt = S.now + 1.2 -- nothing pressed
+    local idle = value.killCredit(S, false)
+    assert.are.near(-1.2 * per, idle, 1e-6)
+    S.target.diedAt = S.now - 0.2 -- 1.4 s sooner
+    assert.are.near((1.4 - value.FINISH_MIN) * per, value.killCredit(S, false) - idle, 1e-6)
+    S.target.diedAt = S.now + 0.5 -- 0.7 s sooner, still after the end
+    assert.are.near((0.7 - value.FINISH_MIN) * per, value.killCredit(S, false) - idle, 1e-6)
+  end)
+
   -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing
   it("solo and group: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
     for _, mode in ipairs({ "solo", "group" }) do
@@ -462,6 +497,51 @@ describe("value.terminal", function()
     S.swing.attacking = false
     S.totems.water = nil
     assert.are.equal(0, value.terminal(S))
+  end)
+
+  it("statDps: attack power by each hand's weapon share, haste rating at 1% of auto attacks per 32.79", function()
+    local S = base({})
+    local w = S.weapons
+    local dmh = damage.auto(S, "mh") / S.swing.mh.speed
+    local doh = damage.auto(S, "oh") / S.swing.oh.speed
+    local ap = (dmh * (w.mh.base or w.mh.speed) / 14 / ((w.mh.min + w.mh.max) / 2)
+              + doh * (w.oh.base or w.oh.speed) * 0.5 / 14 / ((w.oh.min + w.oh.max) / 2)) * value.MELEE_SHARE
+    -- 3.1: hybrid classes (the shaman one of them) get 30% more melee haste from rating
+    assert.are.equal(25.21, value.HASTE_RATING)
+    assert.are.near(ap, value.statDps(S, "ap"), 1e-12)
+    assert.are.near((dmh + doh) / (value.HASTE_RATING * 100), value.statDps(S, "haste"), 1e-12)
+    -- once per search: the memo keeps both
+    S.memo = {}
+    local a, h = value.statDps(S, "ap"), value.statDps(S, "haste")
+    S.weapons = { mh = { speed = 1, min = 1, max = 1 }, oh = { speed = 1, min = 1, max = 1 } }
+    assert.are.equal(a, value.statDps(S, "ap"))
+    assert.are.equal(h, value.statDps(S, "haste"))
+  end)
+
+  it("a relic's proc still up at the end is worth its stat for the time left, up to TAIL and the target's death", function()
+    local P = { key = "stormstrike", stat = "ap", amount = 146, stacks = 3, duration = 15, chance = 1, icd = 0, aura = 71216 }
+    local function at(stacks, remains, target)
+      local S = base({ target = target })
+      S.mods = { proc = P }
+      S.buffs.relic = { stacks = stacks, remains = remains }
+      return S
+    end
+    local per = value.statDps(at(0, 0), "ap")
+    assert.is_true(per > 0)
+    local none = value.terminal(at(0, 0))
+    local plain = base({})
+    assert.are.equal(value.terminal(plain), none) -- no buff up: nothing, bit for bit
+    assert.are.near(math.min(15, value.TAIL) * 3 * 146 * per * value.DISCOUNT, value.terminal(at(3, 15)) - none, 1e-6)
+    assert.are.near(4 * 2 * 146 * per * value.DISCOUNT, value.terminal(at(2, 4)) - none, 1e-6)
+    local short = at(1, 10, { fs = 0, ttd = 3 })
+    assert.are.near(3 * 146 * per * value.DISCOUNT, value.terminal(short) - value.terminal(at(0, 0, { fs = 0, ttd = 3 })), 1e-6)
+    assert.are.near(value.terminal(at(0, 0, { fs = 0, dead = true })), value.terminal(at(3, 15, { fs = 0, dead = true })), 1e-9)
+    -- haste: the same, at the haste rating's worth
+    local H = { key = "lightningBolt", stat = "haste", amount = 200, stacks = 1, duration = 12, chance = 0.7, icd = 6, aura = 67385 }
+    local S = base({})
+    S.mods = { proc = H }
+    S.buffs.relic = { stacks = 0.7, remains = 8 }
+    assert.are.near(8 * 0.7 * 200 * value.statDps(S, "haste") * value.DISCOUNT, value.terminal(S) - none, 1e-6)
   end)
 end)
 

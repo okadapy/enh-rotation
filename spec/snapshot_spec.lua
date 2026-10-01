@@ -472,6 +472,33 @@ describe("snapshot", function()
     assert.are.equal(4396, S.player.baseMana)
   end)
 
+  -- the latency is measured: the median gap between a press (SENT) and the server's answer
+  it("latency: GetNetStats + 0.1 until PING_MIN presses are measured, then their median", function()
+    install({ latencyMs = 80 })
+    local ping = { n = 0, i = 0 }
+    assert.are.near(0.18, snapshot.build(ctx({ ping = ping })).latency, 1e-9)
+    snapshot.addPing(ping, 0.30)
+    snapshot.addPing(ping, 0.12)
+    assert.are.near(0.18, snapshot.build(ctx({ ping = ping })).latency, 1e-9) -- 2 < PING_MIN
+    snapshot.addPing(ping, 0.20)
+    assert.are.near(0.20, snapshot.build(ctx({ ping = ping })).latency, 1e-9)
+    snapshot.addPing(ping, 0.90) -- one outlier: 0.12 0.20 0.30 0.90
+    assert.are.near(0.25, snapshot.build(ctx({ ping = ping })).latency, 1e-9)
+  end)
+
+  it("addPing keeps the last PING_N samples and ignores a negative gap", function()
+    assert.are.equal(15, snapshot.PING_N)
+    assert.are.equal(3, snapshot.PING_MIN)
+    local ping = { n = 0, i = 0 }
+    for k = 1, snapshot.PING_N + 5 do snapshot.addPing(ping, k / 100) end
+    assert.are.equal(snapshot.PING_N, ping.n)
+    assert.are.near(0.13, ping.median, 1e-9) -- the 15 newest: 0.06 .. 0.20
+    snapshot.addPing(ping, -0.5)
+    assert.are.equal(snapshot.PING_N, ping.n)
+    assert.are.near(0.13, ping.median, 1e-9)
+    assert.are.near(0.25, snapshot.latency(nil, 150), 1e-9) -- no ping table: GetNetStats + 0.1
+  end)
+
   it("turns in-flight deadlines into remains and drops expired ones", function()
     install({})
     local c = ctx({ inflight = { flameShock = 100.6, earthShock = 99.0 } })
@@ -640,5 +667,109 @@ describe("snapshot", function()
       assert.is_true(c.ttd:estimate(102, "Creature-8") > 100)
       assert.is_true(S.target.ttd < 30, tostring(S.target.ttd))
     end)
+  end)
+end)
+
+-- S.mods: snapshot only reads the client and hands it on; raid.lua and gear.lua have their own
+-- specs for the numbers. Here both are fakes that record what they were given.
+describe("snapshot: S.mods (addon)", function()
+  local snap, got
+  local saved = {}
+  local NAMES = { "snapshot", "raid", "gear" }
+  before_each(function()
+    got = {}
+    for _, n in ipairs(NAMES) do saved[n] = package.loaded[n]; package.loaded[n] = nil end
+    package.loaded.raid = {
+      DEBUFFS = { [7386] = "sunder", [1490] = "elements" },
+      BUFFS = { [57330] = "hornOfWinter", [8512] = "windfuryTotem" },
+      OWN_TOTEMS = { [8075] = "strength", [8512] = "haste" },
+      effects = function(found, buffs, own, gearMods)
+        got.found, got.buffs, got.own, got.gear = found, buffs, own, gearMods
+        return { spellTaken = 1.13 }
+      end,
+    }
+    package.loaded.gear = { effects = function(items, glyphs)
+      got.items, got.glyphs = items, glyphs
+      return { ssFlat = 155 }
+    end }
+    snap = require("snapshot")
+  end)
+  after_each(function()
+    for _, n in ipairs(NAMES) do package.loaded[n] = saved[n] end
+  end)
+
+  it("reads every caster's debuffs on the target, the player's buffs and our earth and air totems", function()
+    install({ auras = {
+                target = { HARMFUL = { { name = "Sunder Armor", count = 5, expires = 125, caster = "raid7" },
+                                       { name = "Curse of the Elements", expires = 300, caster = "raid2" },
+                                       { name = "Flame Shock", expires = 109, caster = "player" } } },
+                player = { HELPFUL = { { name = "Horn of Winter", expires = 200, caster = "raid4" },
+                                       { name = "Windfury Totem", expires = 0, caster = "player" } } } },
+              totems = { [2] = { "Strength of Earth Totem VIII", 90, 300 }, [4] = { "Windfury Totem", 90, 300 } } })
+    local S = snap.build(ctx())
+    assert.are.same({ spellTaken = 1.13 }, S.mods)
+    assert.are.equal(5, got.found.sunder.count)
+    assert.is_table(got.found.elements)
+    assert.is_nil(got.found.fs)
+    assert.is_table(got.buffs.hornOfWinter)
+    assert.is_table(got.buffs.windfuryTotem)
+    assert.are.same({ earth = "strength", air = "haste" }, got.own)
+    assert.are.same({ ssFlat = 155 }, got.gear)
+    assert.are.near(9, S.target.fs, 1e-9) -- our own Flame Shock is read as before
+  end)
+
+  it("no target: no target debuffs, the group and the gear still count", function()
+    install({ target = { exists = false } })
+    snap.build(ctx())
+    assert.is_nil(got.found)
+    assert.are.same({ ssFlat = 155 }, got.gear)
+  end)
+
+  it("reads the tier slots, trinkets and relic and the active glyphs once, at scan", function()
+    install({ inventory = { [1] = 45412, [3] = 45413, [13] = 50355, [18] = 45169, [16] = 50737 },
+              glyphs = { [1] = { 55446, 1 }, [2] = { 58057, 2 } } })
+    local c = snap.scan()
+    assert.are.same({ 45412, 45413, 50355, 45169 }, c.gearItems) -- the weapons (16, 17) are read elsewhere
+    assert.are.same({ 55446, 58057 }, c.gearGlyphs)
+    assert.are.same({ ssFlat = 155 }, c.gearMods)
+  end)
+
+  -- an elemental shaman's Totem of Wrath outranks our Flametongue Totem: ours is a foreign kind,
+  -- worth no damage, and the model drops Searing / Magma over it (spec/wowsims_spec.lua)
+  it("our Flametongue Totem is a fire totem of the kind 'other'", function()
+    install({ totems = { [1] = { "Flametongue Totem VIII", 90, 300 } } })
+    assert.are.equal("other", snap.build(ctx()).totems.fire.kind)
+  end)
+end)
+
+describe("snapshot: a relic's proc buff (addon)", function()
+  it("reads the proc's stacks and time left into S.buffs.relic, only with such a relic", function()
+    install({ inventory = { [18] = 50463 }, spellNames = { [71216] = "Enraged" },
+              auras = { player = { HELPFUL = { { name = "Enraged", count = 2, expires = 110 } } } } })
+    local S = snapshot.build(ctx())
+    assert.are.same({ stacks = 2, remains = 10 }, S.buffs.relic)
+    assert.are.equal(require("gear_data").PROCS[50463], S.mods.proc)
+    install({ inventory = { [18] = 45169 } })
+    assert.is_nil(snapshot.build(ctx()).buffs.relic)
+  end)
+
+  it("a proc that is not up: no stacks, no time; a proc buff without stacks counts as one", function()
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" } })
+    assert.are.same({ stacks = 0, remains = 0 }, snapshot.build(ctx()).buffs.relic)
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" },
+              auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0, expires = 112 } } } } })
+    assert.are.same({ stacks = 1, remains = 12 }, snapshot.build(ctx()).buffs.relic)
+  end)
+
+  -- Totem of the Elemental Plane / Stonebreaker's Totem: the item's own passive shares the proc
+  -- buff's name; shown without an end time (or longer than the proc lasts) it is not the proc
+  it("an aura of the proc's name that outlasts the proc is the item's passive, not the proc", function()
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" },
+              auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0 } } } } })
+    assert.are.same({ stacks = 0, remains = 0 }, snapshot.build(ctx()).buffs.relic)
+    local dur = require("gear_data").PROCS[47667].duration
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" },
+              auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0, expires = 100 + dur + 1 } } } } })
+    assert.are.same({ stacks = 0, remains = 0 }, snapshot.build(ctx()).buffs.relic)
   end)
 end)

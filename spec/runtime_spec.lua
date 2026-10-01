@@ -396,6 +396,22 @@ describe("runtime", function()
     assert.are.equal(n, #rt2.tl.frame.children)
   end)
 
+  it("recounts the gear when the equipment, glyphs or spec change, not on another unit's inventory", function()
+    local snapshot = require("snapshot")
+    local real, calls = snapshot.scanGear, 0
+    snapshot.scanGear = function() calls = calls + 1 end
+    local rt = start()
+    calls = 0 -- start scans once (snapshot.scan); only the events count here
+    runtime.onEvent(rt, "UNIT_INVENTORY_CHANGED", "party1")
+    assert.are.equal(0, calls)
+    runtime.onEvent(rt, "UNIT_INVENTORY_CHANGED", "player")
+    runtime.onEvent(rt, "GLYPH_UPDATED")
+    runtime.onEvent(rt, "ACTIVE_TALENT_GROUP_CHANGED")
+    snapshot.scanGear = real
+    assert.are.equal(3, calls)
+    for e in pairs(runtime.REGEAR) do assert.is_true(rt.frame.events[e], e) end
+  end)
+
   it("goes to sleep when the host aura hides and wakes up when it shows again", function()
     local rt, env = start()
     runtime.update(rt, 0.3)
@@ -690,6 +706,27 @@ describe("runtime", function()
     runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
     assert.are.same({ kind = "cast", key = "lightningBolt", done = true }, rt.pending)
     assert.are.equal("onCastStart", rt.ctx.swing.calls[1][1])
+  end)
+
+  -- one sample per press: SENT -> SUCCEEDED of an instant, SENT -> START of a cast (its SUCCEEDED
+  -- is no second sample); a press without SENT or a FAILED one gives none
+  it("measures the round trip of each confirmed press, once per press", function()
+    local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100120, endMs = 102620, castID = 7 } })
+    assert.are.same({ n = 0, i = 0 }, rt.ctx.ping)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Earth Shock", "Rank 10", "Mob")
+    G.cfg.now = 100.12
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Lightning Bolt", "Rank 14", "Mob")
+    G.cfg.now = 100.30
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    G.cfg.now = 102.80
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10") -- no SENT
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    runtime.onEvent(rt, "UNIT_SPELLCAST_FAILED", "player", "Stormstrike", "")
+    assert.are.equal(2, rt.ctx.ping.n)
+    assert.are.near(0.12, rt.ctx.ping[1], 1e-9)
+    assert.are.near(0.18, rt.ctx.ping[2], 1e-9)
   end)
 
   -- a second tap during the GCD fails in the client: the first press still counts

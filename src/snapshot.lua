@@ -7,6 +7,50 @@ local model = require("model")
 
 local M = {}
 
+--@addon
+local raid = require("raid")
+local gear = require("gear")
+
+-- the slots of the items the model knows: tier (head, shoulders, chest, legs, hands), trinkets, relic
+M.GEAR_SLOTS = { 1, 3, 5, 7, 10, 13, 14, 18 }
+M.GLYPH_SOCKETS = 6
+
+-- equipped items and active glyphs -> c.gearMods (gear.effects): at scan and when the equipment,
+-- glyphs or spec change (runtime.REGEAR), never per snapshot
+function M.scanGear(c)
+  local items, glyphs = {}, {}
+  if GetInventoryItemID then
+    for _, slot in ipairs(M.GEAR_SLOTS) do
+      local id = GetInventoryItemID("player", slot)
+      if id then items[#items + 1] = id end
+    end
+  end
+  if GetGlyphSocketInfo then
+    for i = 1, M.GLYPH_SOCKETS do
+      local enabled, _, spell = GetGlyphSocketInfo(i)
+      if enabled and spell then glyphs[#glyphs + 1] = spell end
+    end
+  end
+  c.gearItems, c.gearGlyphs = items, glyphs
+  c.gearMods = gear.effects(items, glyphs)
+  -- the relic's proc buff by name (gear_data.PROCS); an unknown name: never up
+  local proc = c.gearMods and c.gearMods.proc
+  local name = proc and GetSpellInfo(proc.aura)
+  c.procNames = proc and (name and { [name] = "proc" } or {}) or nil
+end
+
+-- S.mods (raid.effects): raid debuffs on the target from every caster, the player's buffs the
+-- group gives, which earth and air totems are our own, the equipment. One more pass over the
+-- target's auras per snapshot (the search reads the result, never the client).
+function M.mods(c, S, now)
+  local deb = S.target.exists and M.auras("target", "HARMFUL", c.raidDebuffs, false, now) or nil
+  local buffs = M.auras("player", "HELPFUL", c.raidBuffs, false, now)
+  local earth = M.totem(M.SLOT.earth, c.raidTotems, now)
+  local air = M.totem(M.SLOT.air, c.raidTotems, now)
+  return raid.effects(deb, buffs, { earth = earth, air = air }, c.gearMods)
+end
+--@end
+
 M.BUFFS = { [53817] = "mw", [49281] = "ls", [16280] = "flurry", [30823] = "rage", [2825] = "lust", [32182] = "lust", [16166] = "em",
   -- Water Shield: matched by name, so rank 1 stands for all ranks (not a castable action here)
   [52127] = "ws" }
@@ -78,6 +122,10 @@ function M.scan(talentNames)
       end
     end
   end
+  --@addon
+  c.raidDebuffs, c.raidBuffs, c.raidTotems = namesOf(raid.DEBUFFS), namesOf(raid.BUFFS), namesOf(raid.OWN_TOTEMS)
+  M.scanGear(c)
+  --@end
   c.talents = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo, talentNames)
   return c
 end
@@ -438,6 +486,31 @@ end
 local function charges(a) return a and math.max(1, a.count) or 0 end
 local function remains(a) return a and a.remains or 0 end
 
+-- Latency: the median gap between a press (UNIT_SPELLCAST_SENT) and the server's answer (START of
+-- a cast, SUCCEEDED of an instant) over the session's last PING_N presses (runtime.onCast). That
+-- is what a press really takes, the server's tick included. GetNetStats is the home latency the
+-- client refreshes every 30 s, without the server's part; + 0.1 stood in for it, and still does
+-- until PING_MIN presses are measured. The median: one lag spike moves it little.
+M.PING_N, M.PING_MIN = 15, 3
+
+-- p = { n, i, median, [1..PING_N] }: a ring of the last samples
+function M.addPing(p, dt)
+  if dt < 0 then return end
+  local n, i = p.n or 0, (p.i or 0) % M.PING_N + 1
+  p.i, p[i] = i, dt
+  if n < M.PING_N then n = n + 1; p.n = n end
+  local s = {}
+  for k = 1, n do s[k] = p[k] end
+  table.sort(s)
+  local m = math.floor((n + 1) / 2)
+  p.median = n % 2 == 1 and s[m] or (s[m] + s[m + 1]) / 2
+end
+
+function M.latency(p, netMs)
+  if p and (p.n or 0) >= M.PING_MIN then return p.median end
+  return (netMs or 0) / 1000 + 0.1
+end
+
 function M.build(ctx)
   local now = ctx.now or GetTime()
   local c = ctx.cache or M.scan()
@@ -447,7 +520,7 @@ function M.build(ctx)
   local haste = M.spellHaste(c, mw)
   local S = { now = now, gcdRemains = 0, castRemains = 0, gcd = math.max(1.0, 1.5 / haste), mode = M.mode(ctx.mode) }
   local _, _, latMs = GetNetStats()
-  S.latency = (latMs or 0) / 1000 + 0.1
+  S.latency = M.latency(ctx.ping, latMs)
   local gcdName = c.names.lightningBolt
   if gcdName then
     local st, dur = GetSpellCooldown(gcdName)
@@ -476,6 +549,17 @@ function M.build(ctx)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }
+  --@addon
+  S.mods = M.mods(c, S, now)
+  -- the relic's proc buff: the model carries it along the plan (stacks at least 1 while up)
+  if c.procNames then
+    local a = M.auras("player", "HELPFUL", c.procNames, false, now).proc
+    -- the item's own passive may share the proc buff's name: one that outlasts the proc is not it
+    local p = S.mods and S.mods.proc
+    if a and p and a.remains > p.duration then a = nil end
+    S.buffs.relic = { stacks = a and math.max(1, a.count) or 0, remains = a and a.remains or 0 }
+  end
+  --@end
   S.swing = M.swingInfo(ctx, now, S.weapons)
   local melee, nearby = 0, 0
   if ctx.enemies then melee, nearby = ctx.enemies:counts(now) end

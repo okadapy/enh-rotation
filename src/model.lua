@@ -224,9 +224,15 @@ function M.cloneState(S)
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
     cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    --@addon
+    mods = S.mods, -- raid debuffs and gear: read-only, one table for the whole search
+    --@end
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
+              --@addon
+              relic = b.relic and { stacks = b.relic.stacks, remains = b.relic.remains }, -- own: changed in place
+              --@end
               rage = b.rage, lust = b.lust, em = b.em },
     target = { exists = t.exists, enemy = t.enemy, level = t.level, hp = t.hp, hpMax = t.hpMax, hpPct = t.hpPct,
                ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, diedAt = t.diedAt or false,
@@ -251,6 +257,9 @@ function fillState(n, S)
   n.now, n.gcdRemains, n.castRemains, n.gcd, n.latency = S.now, S.gcdRemains, S.castRemains, S.gcd, S.latency
   n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
   n.cooldowns, n.cdAllowed, n.weaveMin, n.memo = S.cooldowns, S.cdAllowed, S.weaveMin, S.memo
+  --@addon
+  if n.mods ~= S.mods then n.mods = S.mods end -- never a nil set on a missing key (Lua 5.1 adds it)
+  --@end
   local map, sp = n.spells, S.spells
   map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
   map.frostShock, map.lightningBolt, map.chainLightning = sp.frostShock, sp.lightningBolt, sp.chainLightning
@@ -265,6 +274,16 @@ function fillState(n, S)
   fillPair(nb.mw, b.mw, "stacks", "remains")
   fillPair(nb.ls, b.ls, "charges", "remains")
   nb.flurry = b.flurry and fillPair(pool.flurry, b.flurry, "charges", "remains") or nil
+  --@addon
+  local rl = b.relic
+  if rl then
+    local pr = pool.relic
+    if not pr then pr = {}; pool.relic = pr end -- once per arena table
+    nb.relic = fillPair(pr, rl, "stacks", "remains")
+  elseif nb.relic ~= nil then
+    nb.relic = nil -- never a nil set on a missing key (Lua 5.1 would add it)
+  end
+  --@end
   nb.rage, nb.lust, nb.em = b.rage, b.lust, b.em
   local nt = n.target
   nt.exists, nt.enemy, nt.level, nt.hp, nt.hpMax, nt.hpPct = t.exists, t.enemy, t.level, t.hp, t.hpMax, t.hpPct
@@ -391,7 +410,14 @@ end
 function M.cooldownFor(S, key)
   local meta = spells.byKey[key]
   if meta.sharedCd == "shock" then return 6 - 0.2 * talent(S, "reverberation") end
-  if key == "fireNova" then return 10 - 2 * talent(S, "improvedFireNova") end
+  if key == "fireNova" then
+    local cd = 10 - 2 * talent(S, "improvedFireNova")
+    --@addon
+    local mods = S.mods -- Glyph of Fire Nova: wowsims firenova.go, 10 - glyph 3 - 2 x talent
+    if mods and mods.fireNovaCd then cd = cd - mods.fireNovaCd end
+    --@end
+    return cd
+  end
   return meta.cd or 0
 end
 
@@ -399,6 +425,10 @@ function M.gcdFor(S, key)
   local g = byKey[key].gcd or 0
   if g <= 0 then return 0 end
   if g < 1.5 then return 1.0 end
+  --@addon
+  local mods = S.mods -- Glyph of Shocking: -0.5 s off the base GCD, hasted it is below the 1 s floor
+  if mods and SHOCK_RANGE[key] and (mods.shockGcd or 0) > 0 then return 1.0 end
+  --@end
   g = S.gcd or 1.5
   if g < 1.0 then return 1.0 end -- = math.max(1.0, g), inlined (hot)
   return g
@@ -906,6 +936,13 @@ function M.advance(n, dt, cast, cdsDone)
   if x > 0 then ls.remains = x else ls.remains = 0; ls.charges = 0 end
   x = (fl.remains or 0) - dt
   if x > 0 then fl.remains = x else fl.remains = 0; fl.charges = 0 end
+  --@addon
+  local rl = b.relic
+  if rl then
+    x = rl.remains - dt
+    if x > 0 then rl.remains = x else rl.remains = 0; rl.stacks = 0 end
+  end
+  --@end
   x = b.rage
   if x ~= 0 then x = (x or 0) - dt; b.rage = x > 0 and x or 0 end
   x = b.lust
@@ -1005,6 +1042,9 @@ local function fillScratch(S, dt)
     n.shieldPref = S.shieldPref
     n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
     n.weaveMin = S.weaveMin
+    --@addon
+    if n.mods ~= S.mods then n.mods = S.mods end -- never a nil set on a missing key
+    --@end
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.resetByInstant = S.swing.resetByInstant
@@ -1073,6 +1113,17 @@ local function fillScratch(S, dt)
   else
     b.flurry = nil
   end
+  --@addon
+  local rl = sb.relic
+  if rl then
+    local d = sp.relic
+    if not d then d = {}; sp.relic = d end -- once per buffer
+    d.stacks, d.remains = rl.stacks, rl.remains
+    b.relic = d
+  elseif b.relic ~= nil then
+    b.relic = nil
+  end
+  --@end
   b.rage, b.lust, b.em = sb.rage, sb.lust, sb.em
   t.hp, t.ttd, t.fs, t.dead, t.diedAt = st.hp, st.ttd, st.fs, st.dead, st.diedAt or false
   t.varDealt, t.deadSecs = st.varDealt or 0, st.deadSecs or 0
@@ -1155,6 +1206,24 @@ end
 
 local CAST = {} -- apply's cast description for advance, reused (advance does not keep it)
 
+--@addon
+-- A relic's proc on its button (gear_data.PROCS), an expected value like Maelstrom's stacks: a
+-- chance below 1 adds that share of a stack and of the refresh. While its internal cooldown runs
+-- (the buff younger than icd) a press procs nothing; a buff already gone counts as off cooldown
+-- (only Totem of the Elemental Plane's icd outlasts its buff). The proc comes when the spell
+-- lands (lead s after the press: a cast's time and latency), and the press's advance then counts
+-- the buff down from the press, so it gets lead s more.
+local function procRelic(r, p, lead)
+  if not r then return end
+  local rem = r.remains
+  if p.icd > 0 and rem > 0 and p.duration - rem < p.icd then return end
+  local c, s = p.chance, r.stacks
+  local top = s + 1 < p.stacks and s + 1 or p.stacks
+  r.stacks = s + c * (top - s)
+  r.remains = rem + c * (p.duration + lead - rem)
+end
+--@end
+
 -- apply() on a copy n of S whose cooldowns are already lowered by adv (<= dt): the state moves
 -- adv seconds on; if adv < dt the rest of the GCD / cast stays in gcdRemains / castRemains
 local function applyOn(n, key, ct, dt, adv)
@@ -1197,6 +1266,12 @@ local function applyOn(n, key, ct, dt, adv)
     if ss.charges <= 0 then ss.remains = 0 end
   end
   if CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
+  --@addon
+  local mods = n.mods
+  if mods then local proc = mods.proc -- without S.mods: one test (hot)
+    if proc and (proc.key == key or (proc.key == "shock" and SHOCK_RANGE[key])) then procRelic(n.buffs.relic, proc, ct > 0 and ct + (n.latency or 0) or 0) end
+  end
+  --@end
   -- Stormstrike and Lava Lash start auto attack (3.3.5a, as every melee attack): the next swing
   -- comes as soon as its timer is up
   if key == "stormstrike" then

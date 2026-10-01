@@ -2,8 +2,14 @@ package.path = "src/?.lua;tools/?.lua;vendor/?.lua;" .. package.path
 
 local B = {}
 
-B.MODULES = { "util", "spells_data", "spells", "talents", "swing", "enemies", "ttd", "damage", "model", "value",
-              "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }
+B.MODULES = { "util", "spells_data", "spells", "talents", "raid", "gear_data", "gear", "swing", "enemies", "ttd",
+              "damage", "model", "value", "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }
+-- Addon-only code (AGENTS.md): whole lines from --@addon to --@end, markers included, and the
+-- modules of B.ADDON_SRC go into the addon only. The aura gets blank lines in their place: line
+-- numbers in errors still match src/, and the engine computes exactly as before them (the aura's
+-- import string has no room left, B.MAX_IMPORT).
+B.ADDON_OPEN, B.ADDON_CLOSE = "--@addon", "--@end"
+B.ADDON_SRC = { raid = true, gear_data = true, gear = true }
 B.OUT = "dist/DoubtMyRotation.txt"
 B.FIXTURE = "spec/fixtures/recorded.lua"
 B.ADDON = "DoubtMyRotation"
@@ -130,16 +136,48 @@ function B.minify(code)
   return table.concat(out)
 end
 
+-- A marker is a whole line (only spaces around it), so a comment that merely names one stays.
+-- Blocks don't nest: an unclosed, nested or stray marker is a mistake in src/, not something to guess.
+function B.strip(code)
+  local out, n, inside = {}, 0, false
+  for line in (code .. "\n"):gmatch("(.-)\n") do
+    local mark = line:match("^%s*(%-%-@%a+)%s*$")
+    if mark == B.ADDON_OPEN then
+      assert(not inside, "--@addon inside --@addon")
+      inside, line = true, ""
+    elseif mark == B.ADDON_CLOSE then
+      assert(inside, "--@end without --@addon")
+      inside, line = false, ""
+    elseif inside then
+      line = ""
+    end
+    n = n + 1
+    out[n] = line
+  end
+  assert(not inside, "--@addon without --@end")
+  return table.concat(out, "\n")
+end
+
 -- src/version.lua в сборке заменяется строкой версии (version = nil: B.version()).
-function B.bundle(srcDir, version)
+-- addon: the addon's bundle (every module, addon blocks kept); else the aura's (B.strip, no B.ADDON_SRC)
+function B.bundle(srcDir, version, addon)
   version = version or B.version()
   local parts = {
     "local __mods = {}\n",
     "local function __require(name)\n  local m = __mods[name]\n  if m == nil then error('DoubtMyRotation: module not loaded: ' .. name) end\n  return m\nend\n",
   }
   for _, name in ipairs(B.MODULES) do
-    local code = name == "version" and ("return %q"):format(version) or B.minify(B.readFile(srcDir .. "/" .. name .. ".lua"))
-    parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)\n'):format(name, code)
+    if addon or not B.ADDON_SRC[name] then
+      local code
+      if name == "version" then
+        code = ("return %q"):format(version)
+      else
+        code = B.readFile(srcDir .. "/" .. name .. ".lua")
+        if not addon then code = B.strip(code) end
+        code = B.minify(code)
+      end
+      parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)\n'):format(name, code)
+    end
   end
   return table.concat(parts)
 end
@@ -161,13 +199,13 @@ function B.addonOptions()
   return { list = list, width = aura.WIDTH, height = aura.HEIGHT }
 end
 
--- One file: src as in the aura (minified, line numbers kept), then the libraries and addon/ as they
+-- One file: src as in the aura (minified, line numbers kept) plus its addon-only code, then the libraries and addon/ as they
 -- are, each in its own function (its locals and upvalues stay within that function's Lua 5.1 limits).
 -- Without LibStub the libraries return plain tables, which boot hands to the engine as env.libs.
 -- With LibStub and the same version already registered by another addon (WeakAuras, TSM...),
 -- LibSerialize returns nothing: the registered one is taken instead.
 function B.addonCode(srcDir, version, modules)
-  local parts = { B.bundle(srcDir, version) }
+  local parts = { B.bundle(srcDir, version, true) }
   for _, m in ipairs(modules or B.ADDON_MODULES) do
     local fallback = m[1]:match("^Lib") and (' or (LibStub and LibStub("%s", true))'):format(m[1]) or ""
     parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)%s\n'):format(m[1], B.readFile(m[2]), fallback)

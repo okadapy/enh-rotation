@@ -221,8 +221,11 @@ function M.onCast(rt, event, key, now, castID)
     return
   end
   local confirmed = sentFor(rt, key, now)
-  if confirmed and rt.rec and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED") then
-    rt.rec:confirm(key)
+  if confirmed and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED") then
+    -- the round trip of this press (snapshot.latency); START clears rt.sent, so the cast's
+    -- SUCCEEDED later is no second sample
+    if ctx.ping then snapshot.addPing(ctx.ping, now - rt.sent.at) end
+    if rt.rec then rt.rec:confirm(key) end
   end
   if event == "UNIT_SPELLCAST_START" then
     done = confirmed
@@ -488,6 +491,26 @@ function M.listen(frame)
   for e in pairs(M.RESCAN) do frame:RegisterEvent(e) end
 end
 
+--@addon
+-- the equipment, glyphs or talent spec changed: recount the gear mods only (snapshot.scanGear);
+-- 3.3.5a has no PLAYER_EQUIPMENT_CHANGED. One block over the shared handlers: each block costs
+-- the aura's string a few bytes of blank lines.
+M.REGEAR = { UNIT_INVENTORY_CHANGED = true, GLYPH_ADDED = true, GLYPH_REMOVED = true, GLYPH_UPDATED = true,
+             ACTIVE_TALENT_GROUP_CHANGED = true }
+local onEvent, listen = M.onEvent, M.listen
+function M.onEvent(rt, event, ...)
+  if not M.REGEAR[event] then return onEvent(rt, event, ...) end
+  -- UNIT_INVENTORY_CHANGED comes for party members too
+  if event ~= "UNIT_INVENTORY_CHANGED" or (...) == "player" then
+    snapshot.scanGear(rt.ctx.cache)
+    M.mark(rt, "aura")
+  end
+end
+function M.listen(frame)
+  listen(frame)
+  for e in pairs(M.REGEAR) do frame:RegisterEvent(e) end
+end
+--@end
 -- the host shows itself on request: the aura sends its trigger an event (env.show), the
 -- addon's frame needs nothing (no env.show)
 local function showHost(rt)
@@ -764,7 +787,7 @@ function M.start(config, env)
   local talentNames = talents.localNames(GetSpellInfo)
   local ctx = { cache = snapshot.scan(talentNames), talentNames = talentNames,
                 swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
-                inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
+                inflight = {}, ping = { n = 0, i = 0 }, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
                 shield = M.SHIELDS[config.shield or 1] or "auto" }
   ctx.cooldowns = M.cooldowns(config)
   ctx.weaveMin = M.weaveMin(config)
