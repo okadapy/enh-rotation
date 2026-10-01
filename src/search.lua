@@ -280,11 +280,18 @@ local function sortByScore(a)
   for i = 1, n do MERGE[i] = nil end -- holds no candidate after the search
 end
 
--- shallow root copy with a fresh per-search memo (see damage.lua); S itself is never touched
-local function root(S)
+-- shallow root copy with a fresh per-search memo (see damage.lua); S itself is never touched.
+-- Solo: memo.killBase = when the target dies if nothing is pressed (at most the horizon's end),
+-- the time value.killCredit measures a faster kill against
+local function root(S, o)
   local r = {}
   for k, v in pairs(S) do r[k] = v end
   r.memo = {}
+  if o and r.mode == "solo" and r.target then
+    local S2 = (o.model.peekWait or o.model.wait)(r, o.horizon)
+    local t = S2.target
+    r.memo.killBase = t and t.diedAt or (r.now or 0) + o.horizon
+  end
   return r
 end
 
@@ -555,7 +562,7 @@ end
 -- an arena (model.newArena) and go back to the model when the search is over: nothing in the
 -- result holds them. A search that fails keeps its tables (the garbage collector takes them).
 local function run(o, S, check)
-  S = root(S)
+  S = root(S, o)
   local m = o.model
   local arena = m.newArena and m.newArena()
   S.memo.arena = arena
@@ -662,14 +669,15 @@ end
 -- replay an existing plan on a fresh state; nil if a step is no longer possible
 -- -> value, retimed steps, the part of the value earned inside the horizon (without terminal)
 function M.evaluate(S, steps, opts)
-  return evaluateFrom(defaults(opts), root(S), steps)
+  local o = defaults(opts)
+  return evaluateFrom(o, root(S, o), steps)
 end
 
 -- pressing nothing for the whole horizon -> value, the part earned inside the horizon
 -- (the planner holds an empty plan against a new one with this, like evaluate for a plan)
 function M.idle(S, opts)
   local o = defaults(opts)
-  local r = root(S)
+  local r = root(S, o)
   return finalScore(o, { S = r, v = 0, steps = {}, depth = 0 }, r.now)
 end
 

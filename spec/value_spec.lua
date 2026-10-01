@@ -85,6 +85,25 @@ describe("value.manaPrice", function()
     assert.are.near(dps / (2934 / 30), value.manaPrice(low), 1e-9)
   end)
 
+  -- the player's solo mana option scales the drinking price; the reserve stays as it is
+  it("solo: the mana option multiplies the price (save 1.5, balanced / nil 1, spend 0.5), not in a group", function()
+    assert.are.same({ balanced = 1.0, save = 1.5, spend = 0.5 }, value.MANA_POLICY)
+    local S = fixtures.state({ mode = "solo", player = { mana = 5000, manaMax = 10000 } })
+    local base = value.manaPrice(S)
+    for name, f in pairs(value.MANA_POLICY) do
+      S.manaPolicy = name
+      assert.are.near(f * base, value.manaPrice(S), 1e-9, name)
+    end
+    S.manaPolicy = "unknown"
+    assert.are.near(base, value.manaPrice(S), 1e-9)
+    S.manaPolicy, S.spells = "spend", { stormstrike = { cost = 100 }, earthShock = { cost = 121 } }
+    assert.are.equal(221, value.manaReserve(S))
+    local G = fixtures.state({ mode = "group", player = { mana = 9000, manaMax = 10000 } })
+    local g = value.manaPrice(G)
+    G.manaPolicy = "save"
+    assert.are.near(g, value.manaPrice(G), 1e-12)
+  end)
+
   -- 3.3.5a water (wotlkdb.com): the best drink of the character's level
   it("drinkRate: the best water the level can drink", function()
     assert.are.near(2934 / 30, value.drinkRate(52), 1e-9) -- Morning Glory Dew (45)
@@ -389,6 +408,22 @@ describe("value.terminal", function()
     local g0 = value.terminal(G)
     G.target.diedAt = G.now - 2.5
     assert.are.near(g0, value.terminal(G), 1e-9)
+  end)
+
+  -- against the search's "nothing pressed" kill (memo.killBase): a kill that much sooner counts
+  -- only the seconds beyond FINISH_MIN; a later one, or no baseline, in full
+  it("solo: a kill sooner than the one without presses counts only the seconds beyond FINISH_MIN", function()
+    local S = base({ mode = "solo", target = { hp = 0, dead = true } })
+    local per = value.dpsEstimate(S) * value.DISCOUNT
+    S.target.diedAt = S.now - 2.5
+    S.memo = { killBase = S.now - 1.0 } -- 1.5 s sooner than without presses
+    assert.are.near((2.5 - value.FINISH_MIN) * per, value.killCredit(S, false), 1e-6)
+    S.memo.killBase = S.now - 2.3 -- 0.2 s sooner: as if at the baseline
+    assert.are.near(2.3 * per, value.killCredit(S, false), 1e-6)
+    S.memo.killBase = S.now - 3.0 -- later than without presses: in full
+    assert.are.near(2.5 * per, value.killCredit(S, false), 1e-6)
+    S.memo = {} -- no baseline
+    assert.are.near(2.5 * per, value.killCredit(S, false), 1e-6)
   end)
 
   -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing

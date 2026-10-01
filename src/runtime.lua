@@ -712,6 +712,12 @@ function M.weaveMin(config)
   return M.WEAVE_MINS[config.weave or 1] or M.WEAVE_MINS[1]
 end
 
+-- the option "manaPolicy" (select index) -> S.manaPolicy: solo, how dear mana is (value.MANA_POLICY)
+M.MANA_POLICIES = { "balanced", "save", "spend" }
+function M.manaPolicy(config)
+  return M.MANA_POLICIES[config.manaPolicy or 1] or M.MANA_POLICIES[1]
+end
+
 function M.start(config, env)
   local ok, msg = M.supported()
   if not ok then
@@ -733,6 +739,7 @@ function M.start(config, env)
                 shield = M.SHIELDS[config.shield or 1] or "auto" }
   ctx.cooldowns = M.cooldowns(config)
   ctx.weaveMin = M.weaveMin(config)
+  ctx.manaPolicy = M.manaPolicy(config)
   ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   -- after /reload auto-attack may already be on; PLAYER_ENTER_COMBAT will not come again
   if IsCurrentSpell and IsCurrentSpell(M.ATTACK_ID) then

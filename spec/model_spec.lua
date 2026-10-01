@@ -601,14 +601,41 @@ describe("model", function()
         assert.is_true(dmg > 0)
         assert.is_true(not S2.target.dead)
       end)
-      it("at the swing that takes the last hp, with the time of it", function()
+      it("the damage stops at the swing that takes the last hp", function()
         local st = damage.swingStats(solo(1))
         local S = solo(st.mh + 1) -- the main hand at 0.5 leaves 1 hp, the off hand at 1.6 kills
-        local S2 = model.wait(S, 3)
+        local S2, dmg = model.wait(S, 3)
         assert.is_true(S2.target.dead)
-        assert.are.near(S.now + 1.6, S2.target.diedAt, 1e-9)
-        S = solo(st.mh / 2)
-        assert.are.near(S.now + 0.5, model.wait(S, 3).target.diedAt, 1e-9)
+        assert.are.near(st.mh + st.oh, dmg, 1e-6)
+      end)
+      -- a hit's damage is random: the expected death is not a step of the health (#9 at 1.0-1.6x
+      -- its health: 2.6, 2.6, 1.9, 2.4, 3.2, 3.8, 3.4 s saved by an Earth Shock)
+      it("the expected time of death grows smoothly with the health", function()
+        local st = damage.swingStats(solo(1))
+        assert.is_true(st.vmh > 0 and st.voh > 0)
+        local prev
+        for hp = 50, 2 * (st.mh + st.oh), 10 do -- swings at 0.5 and 1.6, then 2.6 s later: dead by 4.2
+          local S = solo(hp)
+          local d = model.wait(S, 6).target.diedAt - S.now
+          if prev then
+            assert.is_true(d >= prev - 1e-9, "never earlier with more health: " .. hp)
+            assert.is_true(d - prev < 0.15, "no step at a swing: " .. hp .. " " .. prev .. " -> " .. d)
+          end
+          prev = d
+        end
+        -- a mob the off hand's swing at 1.6 kills on average: by chance sooner or later
+        local S = solo(st.mh + 1)
+        local d = model.wait(S, 3).target.diedAt - S.now
+        assert.is_true(d > 0.5 and d < 1.6 + 1.0, d)
+      end)
+      it("the expected time of death is the same however the wait is split", function()
+        local st = damage.swingStats(solo(1))
+        local S = solo(2.5 * (st.mh + st.oh))
+        local whole = model.wait(S, 6).target.diedAt
+        local x = S
+        for _, dt in ipairs({ 0.7, 1.1, 0.45, 1.3, 2.45 }) do x = model.wait(x, dt) end
+        assert.is_true(x.target.dead)
+        assert.are.near(whole, x.target.diedAt, 1e-3)
       end)
       it("periodic damage alone: where it runs the health out", function()
         local S = solo(100); S.swing.attacking = false; S.target.fs = 10
@@ -617,10 +644,28 @@ describe("model", function()
         assert.is_true(S2.target.dead)
         assert.are.near(S.now + 100 / r, S2.target.diedAt, 1e-4)
       end)
-      it("a press that takes the health: dead at the press (at the cast's end for a cast)", function()
+      it("a press that takes the health: dead at the press, expected a little later (it can miss)", function()
         local S = solo(10)
         local S2 = model.apply(S, "earthShock")
-        assert.are.near(S.now, S2.target.diedAt, 1e-9)
+        assert.is_true(S2.target.dead)
+        assert.is_true(S2.target.diedAt >= S.now and S2.target.diedAt < S.now + 0.2, S2.target.diedAt - S.now)
+        S.mode = "group" -- the ttd and the press decide there: at the press
+        assert.are.near(S.now, model.apply(S, "earthShock").target.diedAt, 1e-9)
+      end)
+      -- Magma Totem, Fire Nova and Chain Lightning on two enemies: half (Chain Lightning: 1 / 1.7)
+      -- of their damage takes the target's health, the rest the other enemy's
+      it("an area spell takes only the target's share of its damage from the target's health", function()
+        local S = solo(1e6); S.swing.attacking = false
+        S.enemies = { melee = 2, nearby = 2 }; S.target.range = "melee"
+        local S2, dmg = model.apply(S, "fireNova")
+        assert.is_true(dmg > 0)
+        assert.are.near(S.target.hp - dmg / 2, S2.target.hp, 1e-6)
+        S.totems.fire = { kind = "magma", remains = 20 }
+        local S3, d3 = model.wait(S, 4)
+        assert.are.near(S.target.hp - d3 / 2, S3.target.hp, 1e-6)
+        S.totems.fire = { kind = false, remains = 0 }
+        local S4, d4 = model.apply(S, "chainLightning")
+        assert.are.near(S.target.hp - d4 / 1.7, S4.target.hp, 1e-6)
       end)
       it("in a group, or with a guessed health, the ttd still ends it", function()
         local S = solo(1e6); S.mode = "group"

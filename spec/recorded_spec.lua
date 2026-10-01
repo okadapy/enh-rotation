@@ -57,3 +57,36 @@ describe("recorded snapshots #integration", function()
     end
   end
 end)
+
+-- The solo mana option (value.MANA_POLICY): a dearer price never plans more mana, a cheaper one
+-- never less (the mana of the plan's buttons, every recorded snapshot)
+describe("recorded snapshots: the solo mana option #integration", function()
+  local f = io.open(path, "rb")
+  if not f then return end
+  f:close()
+  local search, util = require("search"), require("util")
+  local Sc = require("scenario")
+  it("save <= balanced (nil) <= spend in the mana planned", function()
+    local total, lines = { save = 0, balanced = 0, spend = 0 }, {}
+    for i, rec in ipairs(dofile(path)) do
+      local cost = {}
+      for _, pol in ipairs({ "save", "balanced", "spend" }) do
+        local S = util.copy(rec.S)
+        S.manaPolicy = pol ~= "balanced" and pol or nil
+        local c = 0
+        for _, st in ipairs(search.best(S, Sc.OPTS).steps) do
+          local sp = S.spells[st.key]
+          c = c + (sp and sp.cost or 0)
+        end
+        cost[pol] = c
+        total[pol] = total[pol] + c
+      end
+      if cost.save > cost.balanced or cost.balanced > cost.spend then
+        lines[#lines + 1] = ("#%d %d / %d / %d"):format(i, cost.save, cost.balanced, cost.spend)
+      end
+    end
+    assert.are.equal(0, #lines, table.concat(lines, "\n"))
+    assert.is_true(total.save < total.balanced and total.balanced < total.spend,
+      ("%d / %d / %d"):format(total.save, total.balanced, total.spend))
+  end)
+end)

@@ -189,7 +189,7 @@ end
 -- rehash it on every fill)
 local function newTarget()
   return { exists = false, enemy = false, level = 0, hp = 0, hpMax = 0, hpPct = 0, ttd = false, range = false,
-           fs = 0, guessed = false, dead = false, diedAt = false, armor = false, inCombat = false,
+           fs = 0, guessed = false, dead = false, diedAt = false, varDealt = 0, deadSecs = 0, armor = false, inCombat = false,
            isPlayer = false, meleeIn = false, isBoss = false, ss = false }
 end
 
@@ -223,13 +223,14 @@ function M.cloneState(S)
   return {
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
-    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, manaPolicy = S.manaPolicy, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
               rage = b.rage, lust = b.lust, em = b.em },
     target = { exists = t.exists, enemy = t.enemy, level = t.level, hp = t.hp, hpMax = t.hpMax, hpPct = t.hpPct,
-               ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, diedAt = t.diedAt or false, armor = t.armor,
+               ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, diedAt = t.diedAt or false,
+               varDealt = t.varDealt or 0, deadSecs = t.deadSecs or 0, armor = t.armor,
                inCombat = t.inCombat, isPlayer = t.isPlayer, meleeIn = t.meleeIn, isBoss = t.isBoss,
                ss = ss and { charges = ss.charges, remains = ss.remains } },
     totems = { fire = fire and { kind = fire.kind, remains = fire.remains },
@@ -250,6 +251,7 @@ function fillState(n, S)
   n.now, n.gcdRemains, n.castRemains, n.gcd, n.latency = S.now, S.gcdRemains, S.castRemains, S.gcd, S.latency
   n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
   n.cooldowns, n.cdAllowed, n.weaveMin, n.memo = S.cooldowns, S.cdAllowed, S.weaveMin, S.memo
+  n.manaPolicy = S.manaPolicy
   local map, sp = n.spells, S.spells
   map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
   map.frostShock, map.lightningBolt, map.chainLightning = sp.frostShock, sp.lightningBolt, sp.chainLightning
@@ -269,6 +271,7 @@ function fillState(n, S)
   nt.exists, nt.enemy, nt.level, nt.hp, nt.hpMax, nt.hpPct = t.exists, t.enemy, t.level, t.hp, t.hpMax, t.hpPct
   nt.ttd, nt.range, nt.fs, nt.guessed, nt.dead, nt.armor = t.ttd, t.range, t.fs, t.guessed, t.dead, t.armor
   nt.diedAt = t.diedAt or false -- never nil: a nil set on a missing key makes Lua 5.1 rehash
+  nt.varDealt, nt.deadSecs = t.varDealt or 0, t.deadSecs or 0
   nt.inCombat, nt.isPlayer, nt.meleeIn, nt.isBoss = t.inCombat, t.isPlayer, t.meleeIn, t.isBoss
   nt.ss = ss and fillPair(pool.ss, ss, "charges", "remains") or nil
   local ntot = n.totems
@@ -632,7 +635,24 @@ local function firstSwing(s, cast)
   return at
 end
 
--- damage over [0, x] of the periodic sources advance counts (Flame Shock, fire totem, wolves)
+-- the share of an area spell's damage (damage.targets: Magma Totem, Fire Nova, Chain Lightning)
+-- that falls on the target. The rest hits the other enemies, not the target's health: counted
+-- there, Magma Totem and a Fire Nova on two mobs took the target's health twice as fast, a mob
+-- of 2438 hp "died" in 6 s, and a plan with Stormstrike lost the remaining totem and swings to it.
+local function ownShare(n, key)
+  local k = damage.targets(n, key)
+  if k <= 1 then return 1 end
+  if key == "chainLightning" then
+    local f, sum = damage.CL_FALLOFF, 0
+    for i = 1, k do sum = sum + (f[i] or 0) end
+    return sum > 0 and 1 / sum or 1
+  end
+  return 1 / k
+end
+M.ownShare = ownShare
+
+-- damage over [0, x] of the periodic sources advance counts (Flame Shock, fire totem, wolves),
+-- the target's own share of them (ownShare)
 local function periodicUpTo(n, x, r, src)
   local t, fire = n.target, n.totems.fire
   local d = 0
@@ -642,38 +662,114 @@ local function periodicUpTo(n, x, r, src)
   if src and fireLeft > 0 then
     local span = fireLeft < x and fireLeft or x
     if src == "searingTotem" then span = damage.fireUptime(n, src, span) end
-    d = d + r[src] * span
+    d = d + r[src] * span * (src == "magmaTotem" and ownShare(n, src) or 1)
   end
   local wolves = n.pets and n.pets.wolves or 0
   if wolves > 0 then d = d + r.feralSpirit * (wolves < x and wolves or x) end
   return d
 end
 
--- seconds into advance(n, dt, cast) at which the swings and periodic damage take the target's
--- health, or nil if it lives through dt. Only a step that can kill walks its swings.
+-- Solo, the expected time of death. The model deals average damage, so a mob dies at the hit
+-- that takes its last point: a step of its health. A hit's damage is random (misses, dodges,
+-- glancing blows, crits, the weapon's range: damage.swingVar / actionCv2), so whether the next
+-- hit or the one after kills is a matter of chance, and the expected time of death does not jump
+-- with the health. The step made the seconds a finishing press saves jump with the health left
+-- (#9 at 1.0-1.6x its health: 2.6, 2.6, 1.9, 2.4, 3.2, 3.8, 3.4 s; two swings landing 0.04 s
+-- apart, then 1.9 s of nothing), and a planned Earth Shock came and went as the mob's health
+-- fell. The damage dealt since the search's root is taken as normal around the model's
+-- (variance target.varDealt), P(dead by x) = P(damage by x >= health), and the expected time
+-- of death = root + the integral of 1 - P. The part of it before the step (target.deadSecs, the
+-- integral of P so far) is carried, so the result is the same however a wait is split into steps.
+M.SURVIVAL_HITS = 64  -- hits (looks) after the step start at most (P is ~1 long before)
+M.SURVIVAL_STEP = 0.5 -- s between looks without auto attack (periodic damage only)
+M.SURVIVAL_SD = 4     -- a step whose damage is this many deviations short of the health: P = 0
+
+-- P(the damage has taken the health): mean excess x, variance v (logistic approximation of the
+-- normal distribution, within 0.01)
+local function pDead(x, v)
+  if v <= 0 then return x >= 0 and 1 or 0 end
+  return 1 / (1 + math.exp(-1.702 * x / math.sqrt(v)))
+end
+
+-- integral of 1 - P(dead) over [from, T] of advance(n, ., cast): health hp at the step start
+-- (after a press, <= 0 when the press took it), variance v; P changes at the swings (between two
+-- at the earlier one's, the periodic damage up to it included), without auto attack every
+-- SURVIVAL_STEP s.
+-- k: the time the average damage takes the health, for periodic damage without any variance.
+local function survival(n, hp, cast, v, from, T, k)
+  local t, sw = n.target, n.swing
+  local fire = n.totems.fire
+  local src = fire.kind and FIRE_SOURCE[fire.kind]
+  local r = damage.rates(n)
+  local amh, aoh, smh, soh, st
+  if sw.attacking and t.range == "melee" then
+    st = damage.swingStats(n)
+    local mh, oh = sw.mh, sw.oh
+    if mh and (mh.speed or 0) > 0 then amh, smh = firstSwing(mh, cast), mh.speed end
+    if oh and (oh.speed or 0) > 0 then aoh, soh = firstSwing(oh, cast), oh.speed end
+  end
+  if not (amh or aoh) and v <= 0 then
+    local e = k or T
+    return (e < T and e or T) - from
+  end
+  local done, prev, acc = 0, from, 0
+  local p = pDead(periodicUpTo(n, from, r, src) - hp, v)
+  for _ = 1, M.SURVIVAL_HITS do
+    if p >= 0.999 then return acc end
+    local e, hand
+    if amh and (not aoh or amh <= aoh) then e, hand = amh, 1 elseif aoh then e, hand = aoh, 2 end
+    if not e then e = prev + M.SURVIVAL_STEP end
+    if e >= T then return acc + (1 - p) * (T - prev) end
+    acc = acc + (1 - p) * (e - prev)
+    if hand == 1 then
+      done, v, amh = done + st.mh, v + st.vmh, amh + smh
+    elseif hand == 2 then
+      done, v, aoh = done + st.oh, v + st.voh, aoh + soh
+    end
+    p = pDead(periodicUpTo(n, e, r, src) + done - hp, v)
+    prev = e
+  end
+  return acc -- not reached in practice
+end
+
+-- Solo, inside advance(n, dt, cast) -> k, at, dead, var:
+-- k: the seconds at which the swings and periodic damage take the target's health (nil: it
+-- lives through dt); at: then the expected time of death, relative to the step start (survival,
+-- minus the time it is already expected dead); dead: otherwise the integral of P(dead) over the
+-- step (target.deadSecs grows by it); var: the variance of the hits in the step (target.varDealt).
 killTime = function(n, dt, cast)
   local t, sw = n.target, n.swing
   local hp = t.hp or 0
-  if hp <= 0 then return 0 end
+  if hp <= 0 then return 0, 0, 0, 0 end
   local fire = n.totems.fire
   local src = fire.kind and FIRE_SOURCE[fire.kind]
   local r = damage.rates(n)
   local swings = sw.attacking and t.range == "melee"
   local st, amh, aoh, smh, soh
-  local total = periodicUpTo(n, dt, r, src)
+  local total, var = periodicUpTo(n, dt, r, src), 0
   if swings then
     st = damage.swingStats(n)
     local mh, oh = sw.mh, sw.oh
     if mh and (mh.speed or 0) > 0 then
       amh, smh = firstSwing(mh, cast), mh.speed
-      if amh <= dt + 1e-9 then total = total + st.mh * (math.floor((dt + 1e-9 - amh) / smh) + 1) end
+      if amh <= dt + 1e-9 then
+        local c = math.floor((dt + 1e-9 - amh) / smh) + 1
+        total, var = total + st.mh * c, var + st.vmh * c
+      end
     end
     if oh and (oh.speed or 0) > 0 then
       aoh, soh = firstSwing(oh, cast), oh.speed
-      if aoh <= dt + 1e-9 then total = total + st.oh * (math.floor((dt + 1e-9 - aoh) / soh) + 1) end
+      if aoh <= dt + 1e-9 then
+        local c = math.floor((dt + 1e-9 - aoh) / soh) + 1
+        total, var = total + st.oh * c, var + st.voh * c
+      end
     end
   end
-  if total < hp then return nil end
+  local v0 = t.varDealt or 0
+  if total < hp then
+    if total + M.SURVIVAL_SD * math.sqrt(v0 + var) < hp then return nil, nil, 0, var end
+    return nil, nil, dt - survival(n, hp, cast, v0, 0, dt), var
+  end
   -- walk the swings in time order; between two the periodic damage grows (bisection)
   local done, prev = 0, 0
   local function cross(a, b)
@@ -683,17 +779,19 @@ killTime = function(n, dt, cast)
     end
     return b
   end
+  local k
   while true do
     local e, isMh
     if amh and amh <= dt + 1e-9 then e, isMh = amh, true end
     if aoh and aoh <= dt + 1e-9 and (not e or aoh < e) then e, isMh = aoh, false end
     if not e then break end
-    if periodicUpTo(n, e, r, src) + done >= hp then return cross(prev, e) end
+    if periodicUpTo(n, e, r, src) + done >= hp then k = cross(prev, e); break end
     if isMh then done = done + st.mh; amh = amh + smh else done = done + st.oh; aoh = aoh + soh end
-    if periodicUpTo(n, e, r, src) + done >= hp then return e end
+    if periodicUpTo(n, e, r, src) + done >= hp then k = e; break end
     prev = e
   end
-  return cross(prev, dt)
+  k = k or cross(prev, dt)
+  return k, survival(n, hp, cast, v0, 0, math.huge, k) - (t.deadSecs or 0), 0, var
 end
 
 -- scratch state: a spell can be on cooldown only in its own entry, i.e. one on cooldown in the
@@ -730,18 +828,21 @@ function M.advance(n, dt, cast, cdsDone)
   end
   local live = t and t.exists and t.enemy and not t.dead
   local life = dt
+  local deathAt, deadAdd, varAdd -- solo: killTime's expected time of death, deadSecs and varDealt growth
   local ttd = t.ttd
   local byHp = false
   if live then
     if n.mode == "solo" and not t.guessed then -- M.hpDeath(n), inlined (hot)
       byHp = true
-      local k = killTime(n, dt, cast)
+      local k
+      k, deathAt, deadAdd, varAdd = killTime(n, dt, cast)
       if k then life = k end
     elseif ttd then
       if ttd < 0 then life = 0 elseif ttd < life then life = ttd end
     end
   end
   local dmg = 0
+  local splash = 0 -- of dmg, on the other enemies (ownShare)
   local mh, oh = sw.mh, sw.oh
   if sw.attacking and live and t.range == "melee" then
     -- with the memo both hands read the same swingStats table (its slot depends on Lightning
@@ -774,6 +875,7 @@ function M.advance(n, dt, cast, cdsDone)
         -- only Searing Totem can be out of reach (damage.fireUptime is the identity for the rest)
         if src == "searingTotem" then span = damage.fireUptime(n, src, span) end
         dmg = dmg + r[src] * span
+        if src == "magmaTotem" then splash = r[src] * span * (1 - ownShare(n, src)) end
       end
       if wolves > 0 then dmg = dmg + r.feralSpirit * (wolves < life and wolves or life) end
     end
@@ -843,11 +945,12 @@ function M.advance(n, dt, cast, cdsDone)
     end
   end
   if live then
-    local hp = (t.hp or 0) - dmg
+    local hp = (t.hp or 0) - (dmg - splash)
     if hp < 0 then hp = 0 end
     t.hp = hp
     if ttd then ttd = ttd - dt; t.ttd = ttd end
-    if hp <= 0 or (ttd and ttd <= 0 and not byHp) then t.dead, t.diedAt = true, n.now - dt + life end
+    if varAdd then t.varDealt, t.deadSecs = (t.varDealt or 0) + varAdd, (t.deadSecs or 0) + deadAdd end
+    if hp <= 0 or (ttd and ttd <= 0 and not byHp) then t.dead, t.diedAt = true, n.now - dt + (deathAt or life) end
   end
   return dmg
 end
@@ -901,6 +1004,7 @@ local function fillScratch(S, dt)
     n.shieldPref = S.shieldPref
     n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
     n.weaveMin = S.weaveMin
+    n.manaPolicy = S.manaPolicy
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.resetByInstant = S.swing.resetByInstant
@@ -971,6 +1075,7 @@ local function fillScratch(S, dt)
   end
   b.rage, b.lust, b.em = sb.rage, sb.lust, sb.em
   t.hp, t.ttd, t.fs, t.dead, t.diedAt = st.hp, st.ttd, st.fs, st.dead, st.diedAt or false
+  t.varDealt, t.deadSecs = st.varDealt or 0, st.deadSecs or 0
   t.range, t.meleeIn = st.range, st.meleeIn -- advance changes them (the target comes in)
   local ss = st.ss
   if ss then
@@ -1129,11 +1234,13 @@ local function applyOn(n, key, ct, dt, adv)
     n.inflight = n.inflight or {}
     n.inflight[key] = M.INFLIGHT
   end
+  local left -- the health the press leaves, below 0 when it kills (survival)
   if dmg > 0 then
-    local hp = (t.hp or 0) - dmg
-    hp = hp > 0 and hp or 0 -- = math.max(0, hp)
-    t.hp = hp
-    if hp <= 0 then t.dead, t.diedAt = true, n.now + (ct > 0 and ct + (n.latency or 0) or 0) end
+    local own = dmg
+    if key == "fireNova" or key == "chainLightning" then own = dmg * ownShare(n, key) end
+    left = (t.hp or 0) - own
+    t.hp = left > 0 and left or 0 -- = math.max(0, left)
+    if n.mode == "solo" and not t.guessed then t.varDealt = (t.varDealt or 0) + own * own * damage.actionCv2(n, key) end
   end
 
   local cast
@@ -1143,6 +1250,14 @@ local function applyOn(n, key, ct, dt, adv)
     cast.ends, cast.reset = ct + (n.latency or 0), mwAtCast == 0
   elseif n.swing.resetByInstant and n.swing.resetByInstant[key] then
     M.resetSwings(n)
+  end
+  if left and left <= 0 then
+    -- dead when the spell lands; solo, expected later when it takes the health only on average
+    local lands = ct > 0 and ct + (n.latency or 0) or 0
+    t.dead, t.diedAt = true, n.now + lands
+    if n.mode == "solo" and not t.guessed then
+      t.diedAt = n.now + lands + survival(n, left, cast, t.varDealt or 0, lands, math.huge, lands) - (t.deadSecs or 0)
+    end
   end
   n.gcdRemains, n.castRemains = dt, ct
   local autoDmg = M.advance(n, adv, cast, true)

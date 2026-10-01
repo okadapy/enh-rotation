@@ -140,6 +140,37 @@ describe("stability near a mob's death with a noisy time-to-die #integration", f
   end)
 end)
 
+-- Review, round 4: recorded #8 and #9 (a mob near its death in melee, Earth Shock ready) with the
+-- health (and time to die) scaled 0.5-2.0: a press planned or not changed back and forth
+-- (#8: nothing, LB, ES, nothing, ES), the finisher icon came and went as the health fell. The
+-- kill was at the hit that took the last point: the seconds a press saved jumped with the health.
+describe("a finisher as a dying mob's health falls #integration", function()
+  local search, util = require("search"), require("util")
+  local recorded = dofile("spec/fixtures/recorded.lua")
+  for _, i in ipairs({ 8, 9 }) do
+    it("#" .. i .. ": planned or not changes at most once each way along 0.5-2.0x the health", function()
+      local S0 = recorded[i].S
+      local seq, ups, downs, last = {}, 0, 0, nil
+      for k = 0, 30 do
+        local f = 0.5 + 0.05 * k
+        local S = util.copy(S0)
+        S.target.hp = S0.target.hp * f
+        S.target.ttd = S0.target.ttd * f
+        local plan = search.best(S)
+        local first = plan.steps[1] and plan.steps[1].key or "-"
+        local pressed = first ~= "-"
+        if last ~= nil and pressed ~= last then
+          if pressed then ups = ups + 1 else downs = downs + 1 end
+        end
+        last = pressed
+        seq[#seq + 1] = ("%.2f:%s"):format(f, first)
+      end
+      local info = table.concat(seq, " ")
+      assert.is_true(ups <= 1 and downs <= 1, info)
+    end)
+  end
+end)
+
 -- Review of the cooldown gate: a trash mob whose noisy time to die hovers around Feral Spirit's
 -- 22.5 s line, only Feral Spirit and Stormstrike ready. Deciding the gate per model state flipped
 -- the first button feralSpirit <-> stormstrike on every update (the gate made the held plan

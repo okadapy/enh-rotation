@@ -455,6 +455,7 @@ function M.build(ctx)
   S.target.meleeIn = M.meleeIn(S)
   S.cooldowns = ctx.cooldowns -- the player's options for the long cooldowns (read-only, shared)
   S.weaveMin = ctx.weaveMin -- the weaving option (nil: the model decides, as before the option)
+  S.manaPolicy = ctx.manaPolicy -- solo mana option (value.MANA_POLICY; nil: balanced)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }

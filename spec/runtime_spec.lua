@@ -108,6 +108,12 @@ describe("runtime", function()
     assert.are.equal(0, (start({ weave = 3 })).ctx.weaveMin)
   end)
 
+  it("fills the solo mana option from the config (balanced without it)", function()
+    assert.are.equal("balanced", (start({})).ctx.manaPolicy)
+    assert.are.equal("save", (start({ manaPolicy = 2 })).ctx.manaPolicy)
+    assert.are.equal("spend", (start({ manaPolicy = 3 })).ctx.manaPolicy)
+  end)
+
   it("no low-mana Shamanistic Rage alert when the player set it to never", function()
     local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0
     S.cooldowns = { shamanisticRage = "never" }
