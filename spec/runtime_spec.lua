@@ -86,6 +86,11 @@ describe("runtime", function()
   end)
   after_each(function() planner.new = realNew end)
 
+  it("one button mode reaches the timeline; without the option (the aura) it is off", function()
+    assert.is_true(runtime.timelineOptions({ compact = true }).compact)
+    assert.is_false(runtime.timelineOptions({}).compact)
+  end)
+
   local function start(config, extra)
     install(extra)
     local env = { config = config or {}, region = CreateFrame("Frame"), saved = {},
