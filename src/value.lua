@@ -453,9 +453,11 @@ function M.terminal(S)
     mael = stacks * M.MW_SHARE * lb * M.DISCOUNT
   end
   local v = mael + readyValue(S, damage, A, live)
-  local mode = S.mode
-  if mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) + M.killCredit(S, live)
-  elseif mode == "group" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
+  -- where mana costs drinking (solo, group and the modes on its weights: pvp, unknown), Rage and
+  -- the shield count; solo also the kill
+  local W = M.WEIGHTS
+  if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) + M.killCredit(S, live)
+  elseif (W[S.mode] or W.group).drink then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
   if live then
     v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
   end

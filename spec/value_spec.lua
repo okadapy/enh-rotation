@@ -378,9 +378,11 @@ describe("value.terminal", function()
     it("ready, it is a whole window for a later fight; on cooldown the recovered share", function()
       local S = rage(0, 0)
       assert.are.near(worth(S, value.RAGE_DURATION), value.rageValue(S, damage, true), 1e-6)
-      local G = rage(0, 0); G.mode = "group"
-      local none = rage(0, 0); none.mode = "group"; none.spells.shamanisticRage = nil
-      assert.are.near(value.terminal(none) + worth(G, value.RAGE_DURATION), value.terminal(G), 1e-6)
+      for _, mode in ipairs({ "group", "pvp" }) do -- pvp has the group weights
+        local G = rage(0, 0); G.mode = mode
+        local none = rage(0, 0); none.mode = mode; none.spells.shamanisticRage = nil
+        assert.are.near(value.terminal(none) + worth(G, value.RAGE_DURATION), value.terminal(G), 1e-6)
+      end
       local R = rage(0, 0); R.mode = "raid"
       none = rage(0, 0); none.mode = "raid"; none.spells.shamanisticRage = nil
       assert.are.near(value.terminal(none), value.terminal(R), 1e-6) -- not in a raid
