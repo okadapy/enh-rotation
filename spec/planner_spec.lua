@@ -5,7 +5,8 @@ local function stubSearch(script)
   local s = { seen = {} }
   function s.best(S)
     s.seen[#s.seen + 1] = S
-    return { value = script.best, steps = script.steps or { { key = script.bestKey or "fresh", at = 0, reason = "" } } }
+    return { value = script.best, firstValue = script.firstValue,
+             steps = script.steps or { { key = script.bestKey or "fresh", at = 0, reason = "" } } }
   end
   function s.evaluate(_, steps)
     s.lastEval = steps
@@ -26,6 +27,18 @@ describe("planner", function()
   it("takes the first plan as is", function()
     local p = planner.new({ search = stubSearch({ best = 100, bestKey = "a" }) })
     assert.are.equal("a", p:update(at(100)).steps[1].key)
+  end)
+
+  -- the last finished search, for the fight review: its time, values and the searched state
+  it("keeps the last finished search", function()
+    local fv = { a = 100, b = 90 }
+    local p = planner.new({ search = stubSearch({ best = 100, bestKey = "a", firstValue = fv }) })
+    assert.is_nil(p.last)
+    p:update(at(100))
+    assert.are.equal(100, p.last.now)
+    assert.are.equal(100, p.last.value)
+    assert.are.equal(fv, p.last.firstValue)
+    assert.are.equal(100, p.last.s.now)
   end)
 
   -- margin = HYSTERESIS (0.08) x the held plan's damage inside the horizon (script.horizon)
