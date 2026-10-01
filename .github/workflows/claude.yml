@@ -1,4 +1,5 @@
 # Claude отвечает на issue и чинит код: напишите @claude в issue, комментарии или ревью PR.
+# Новое issue от владельца или участника Claude берёт в работу сразу, без @claude.
 # Нужно один раз: приложение https://github.com/apps/claude на репозиторий и секрет
 # CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) или ANTHROPIC_API_KEY в Settings → Secrets → Actions.
 name: Claude
@@ -18,7 +19,8 @@ jobs:
     # только владелец и участники: чужие issue не тратят лимит, их можно передать Claude комментарием @claude
     if: |
       (github.event_name == 'issues' &&
-        (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        (github.event.action == 'opened' ||
+          contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)) ||
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
@@ -43,6 +45,9 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # новое issue: комментарий с ходом работы и задание; иначе — обычный ответ на @claude
+          track_progress: ${{ github.event_name == 'issues' && github.event.action == 'opened' }}
+          prompt: ${{ github.event_name == 'issues' && github.event.action == 'opened' && format('Возьми в работу issue #{0}: прочитай его целиком (картинки, ссылки, вложения), разберись и почини или ответь в issue. Если не хватает данных (снапшотов, строки экспорта, уровня, экипировки) — попроси их комментарием и остановись. Правила проекта — .claude/CLAUDE.md.', github.event.issue.number) || '' }}
           additional_permissions: |
             actions: read
           claude_args: |
