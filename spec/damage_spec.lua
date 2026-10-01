@@ -526,3 +526,124 @@ describe("S.mods (addon: raid debuffs on the target)", function()
     assert.are.near(0.96, damage.spellHit(s80({ mods = { spellHitTaken = 0.03 } })), 1e-12)
   end)
 end)
+
+describe("S.mods (addon: equipment and glyphs)", function()
+  local function full(o)
+    local S = s80(o)
+    S.talents = { staticShock = 3, elementalWeapons = 3, concussion = 5, elementalFury = 5, maelstromWeapon = 5 }
+    S.buffs.ls = { charges = 3, remains = 600 }
+    S.spells.stormstrike = { id = 17364, rank = 1, cd = 0, cost = 351, cast = 0 }
+    S.spells.lavaLash = { id = 60103, rank = 1, cd = 0, cost = 176, cast = 0 }
+    return S
+  end
+  local function diff(key, mods) return damage.action(full({ mods = mods }), key) - damage.action(full(), key) end
+  local ZERO = { ssFlat = 0, llFlat = 0, wfAp = 0, ssMult = 0, llMult = 0, lsMult = 0, shockMult = 0, lbMult = 0,
+                 staticChance = 0, mwPpm = 0, ssNature = 0, llFt = 0, fsCrit = 0, wolvesAp = 0, wfChance = 0, clTargets = 0 }
+  local OH = (300 + 450) / 2 -- Lava Lash: the off hand's own (not normalized) weapon damage
+
+  it("gear mods at 0 change nothing, bit for bit", function()
+    local a, b = full(), full({ mods = ZERO })
+    a.enemies, b.enemies = { melee = 5, nearby = 5 }, { melee = 5, nearby = 5 }
+    a.target.ss, b.target.ss = { charges = 2, remains = 10 }, { charges = 2, remains = 10 }
+    for _, key in ipairs({ "stormstrike", "lavaLash", "earthShock", "flameShock", "lightningBolt", "chainLightning", "fireNova" }) do
+      assert.are.equal(damage.action(a, key), damage.action(b, key), key)
+    end
+    for _, src in ipairs(damage.PERIODIC) do assert.are.equal(damage.periodic(a, src), damage.periodic(b, src), src) end
+    assert.are.equal(damage.auto(a, "mh"), damage.auto(b, "mh"))
+    assert.are.equal(damage.auto(a, "oh"), damage.auto(b, "oh"))
+    assert.are.equal(damage.mwPerSwing(a, "mh"), damage.mwPerSwing(b, "mh"))
+    assert.are.equal(damage.spellCritFactor(a, "flameShock"), damage.spellCritFactor(b, "flameShock"))
+    assert.are.equal(damage.targets(a, "chainLightning"), damage.targets(b, "chainLightning"))
+  end)
+
+  it("Totem of the Dancing Flame: +155 on each of Stormstrike's two hits, before crit and armor", function()
+    local S = full()
+    local y = damage.meleeTable(S, false)
+    assert.are.near(2 * 155 * y.factor * damage.armorMult(S), diff("stormstrike", { ssFlat = 155 }), 1e-6)
+  end)
+
+  it("T8 2: Stormstrike's weapon part and Lava Lash +20%", function()
+    local S = full()
+    local y = damage.meleeTable(S, false)
+    local w = damage.normalized(S, "mh") + damage.normalized(S, "oh")
+    assert.are.near(0.2 * w * y.factor * damage.armorMult(S), diff("stormstrike", { ssMult = 0.2 }), 1e-6)
+    assert.are.near(0.2 * OH * 1.25 * y.factor, diff("lavaLash", { llMult = 0.2 }), 1e-6)
+  end)
+
+  it("Glyph of Lava Lash: +35% with Flametongue on the off hand instead of +25%; Venture Co. Flame Slicer +25", function()
+    local S = full()
+    local y = damage.meleeTable(S, false)
+    assert.are.near(0.10 * OH * y.factor, diff("lavaLash", { llFt = 0.10 }), 1e-6)
+    assert.are.near(25 * 1.25 * y.factor, diff("lavaLash", { llFlat = 25 }), 1e-6)
+    -- the glyph needs Flametongue on the off hand
+    local a, b = full(), full({ mods = { llFt = 0.10 } })
+    a.weapons.oh.enchant, b.weapons.oh.enchant = "wf", "wf"
+    assert.are.equal(damage.action(a, "lavaLash"), damage.action(b, "lavaLash"))
+  end)
+
+  it("T9 4 and Glyph of Lightning Bolt: one multiplier with Concussion", function()
+    local a = damage.action(full(), "earthShock")
+    assert.are.near((1.05 + 0.25) / 1.05, damage.action(full({ mods = { shockMult = 0.25 } }), "earthShock") / a, 1e-12)
+    local f = damage.periodic(full({ mods = { shockMult = 0.25 } }), "flameShock") / damage.periodic(full(), "flameShock")
+    assert.are.near((1.05 + 0.25) / 1.05, f, 1e-12)
+    local lb = damage.action(full({ mods = { lbMult = 0.04 } }), "lightningBolt") / damage.action(full(), "lightningBolt")
+    assert.are.near((1.05 + 0.04) / 1.05, lb, 1e-12)
+    assert.are.equal(damage.action(full(), "chainLightning"), damage.action(full({ mods = { lbMult = 0.04 } }), "chainLightning"))
+    assert.are.equal(damage.action(full(), "lightningBolt"), damage.action(full({ mods = { shockMult = 0.25 } }), "lightningBolt"))
+  end)
+
+  it("Static Shock: T7 2 + Glyph of Lightning Shield +30% damage, T9 2 +3% chance", function()
+    local a = damage.staticHit(full())
+    assert.are.near(1.3, damage.staticHit(full({ mods = { lsMult = 0.3 } })) / a, 1e-12)
+    assert.are.near((0.06 + 0.03) / 0.06, damage.staticHit(full({ mods = { staticChance = 0.03 } })) / a, 1e-12)
+  end)
+
+  it("Glyph of Stormstrike: +28% nature under Stormstrike instead of +20%", function()
+    local S = full()
+    S.target.ss = { charges = 2, remains = 10 }
+    local G = full({ mods = { ssNature = 0.08 } })
+    G.target.ss = { charges = 2, remains = 10 }
+    assert.are.near(1.28 / 1.2, damage.spellMult(G, "earthShock") / damage.spellMult(S, "earthShock"), 1e-12)
+    -- no Stormstrike charges on the target: the glyph adds nothing
+    assert.are.equal(damage.spellMult(full(), "earthShock"), damage.spellMult(full({ mods = { ssNature = 0.08 } }), "earthShock"))
+  end)
+
+  it("Glyph of Flame Shock: +60% to Flame Shock's crit bonus only", function()
+    local S = full({ mods = { fsCrit = 0.6 } })
+    assert.are.near(1 + 0.2 * (2.0 + 0.3 - 1), damage.spellCritFactor(S, "flameShock"), 1e-12)
+    assert.are.near(1 + 0.2 * (2.0 - 1), damage.spellCritFactor(S, "earthShock"), 1e-12)
+    local k = (1 + 0.2 * 1.3) / (1 + 0.2 * 1.0)
+    assert.are.near(k, damage.action(S, "flameShock") / damage.action(full(), "flameShock"), 1e-12)
+    assert.are.near(k, damage.periodic(S, "flameShock") / damage.periodic(full(), "flameShock"), 1e-12)
+  end)
+
+  it("T8 4: Maelstrom Weapon procs 20% more often", function()
+    assert.are.near(1.2, damage.mwPerHit(full({ mods = { mwPpm = 0.2 } }), "mh") / damage.mwPerHit(full(), "mh"), 1e-12)
+  end)
+
+  it("Windfury: Totem of Splintering +212 AP (before Elemental Weapons), its glyph +2% chance", function()
+    local S = full()
+    local y = damage.meleeTable(S, false)
+    local _, procs = damage.wf(S)
+    local extra = procs * 2 * (212 / 14 * 2.6 * 1.4) * y.factor * damage.armorMult(S)
+    assert.are.near(extra, damage.wf(full({ mods = { wfAp = 212 } })) - damage.wf(S), 1e-6)
+    local _, p2 = damage.wf(full({ mods = { wfChance = 0.02 } }))
+    assert.are.near(0.22 / (1 + 0.22 * 1), p2, 1e-12)
+  end)
+
+  it("Glyph of Feral Spirit: wolves get 61% of attack power", function()
+    local S = full({ mods = { wolvesAp = 0.30 } })
+    local want = (120 + 0.61 * 4000 / 14 * 1.5) / (120 + 0.31 * 4000 / 14 * 1.5)
+    assert.are.near(want, damage.periodic(S, "feralSpirit") / damage.periodic(full(), "feralSpirit"), 1e-12)
+  end)
+
+  it("Glyph of Chain Lightning: a 4th target at 0.7^3", function()
+    local a, b = full(), full({ mods = { clTargets = 1 } })
+    a.enemies, b.enemies = { melee = 5, nearby = 5 }, { melee = 5, nearby = 5 }
+    assert.are.equal(3, damage.targets(a, "chainLightning"))
+    assert.are.equal(4, damage.targets(b, "chainLightning"))
+    assert.are.near(0.343, damage.CL_FALLOFF[4], 1e-12)
+    local single = damage.action(full(), "chainLightning")
+    assert.are.near(single * 0.343, damage.action(b, "chainLightning") - damage.action(a, "chainLightning"), 1e-6)
+  end)
+end)
