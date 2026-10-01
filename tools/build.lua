@@ -135,8 +135,12 @@ function B.bundle(srcDir, version)
   return table.concat(parts)
 end
 
+-- the addon and the aura installed together: the addon runs the engine, the aura stays idle
 function B.initCode(srcDir, version)
-  return B.bundle(srcDir, version) .. "__require('runtime').start(aura_env.config or {}, aura_env)\n"
+  return "if DoubtMyRotationAddon then print('DoubtMyRotation: the addon is installed, this aura stays idle') return end\n"
+    .. B.bundle(srcDir, version)
+    .. "aura_env.show = function() WeakAuras.ScanEvents('ENHROT_SHOW') end\n"
+    .. "__require('runtime').start(aura_env.config or {}, aura_env)\n"
 end
 
 local function number(n)
