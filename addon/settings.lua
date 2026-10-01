@@ -7,8 +7,31 @@ M.HELP = {
   "/dmr reset - defaults; /dmr export - copy window with snapshots",
   "/dmr lock | unlock - move the timeline; /dmr show | hide",
   "/dmr check - is everything ready (imbues, shield, totems, ranks)",
+  "/dmr guide - the first-run guide again",
 }
-M.ACTIONS = { export = true, lock = true, unlock = true, show = true, hide = true, check = true }
+M.ACTIONS = { export = true, lock = true, unlock = true, show = true, hide = true, check = true, guide = true }
+
+-- the addon's own options, on top of the aura's (tools/aura.lua M.OPTIONS): the aura has none of these
+M.ADDON_OPTIONS = {
+  { type = "toggle", key = "compact", name = "One button mode",
+    desc = "Only the big icon and reminders: no lane, no swings, no stacks", default = false },
+  { type = "toggle", key = "minimap", name = "Minimap button",
+    desc = "Left-click: settings, right-click: show or hide the timeline, drag: move it", default = true },
+  { type = "toggle", key = "levelCards", name = "What's new on level up",
+    desc = "A short card at levels 10, 20 ... 80, out of combat, once", default = true },
+  { type = "toggle", key = "elvui", name = "ElvUI style",
+    desc = "Style these windows like ElvUI when it is installed. Turning it off takes a /reload", default = true },
+}
+
+-- options plus the extra ones not in it yet, as a new list: the build's list stays the aura's
+function M.withExtra(options, extra)
+  local list, have = {}, {}
+  for i, o in ipairs(options) do list[i], have[o.key] = o, true end
+  for _, o in ipairs(extra or {}) do
+    if not have[o.key] then list[#list + 1], have[o.key] = o, true end
+  end
+  return list
+end
 
 function M.defaults(options)
   local c = {}

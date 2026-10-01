@@ -223,6 +223,9 @@ function B.addonToc(version)
     "## Notes: Enhancement shaman rotation helper: a 6 s fight simulation, timeline and swing clock",
     "## Version: " .. (version or B.version()),
     "## SavedVariables: DoubtMyRotationDB",
+    "## SavedVariablesPerCharacter: DoubtMyRotationCharDB",
+    -- ElvUI first: its Skins module is up by our PLAYER_LOGIN (addon/skin.lua)
+    "## OptionalDeps: ElvUI",
     "",
     "DoubtMyRotation.lua",
     "",

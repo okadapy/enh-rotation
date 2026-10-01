@@ -5,17 +5,22 @@ local settings = require("settings")
 
 local M = {}
 M.ROW = 46       -- px per control row
+-- a check box after a check box: no label above it to make room for (sliders and lists have one)
+M.TOGGLE_ROW = 32
 M.LEFT, M.TOP = 16, -56
-M.ACTIONS = { "lock", "export", "hide" }
+M.ACTIONS = { "lock", "export", "hide", "guide" }
+M.PER_ROW = 3
 M.TITLE = "DoubtMyRotation"
 
 M.SECTIONS = {
   { key = "general", options = { "scale", "seconds", "icons", "showReason", "showLust",
-                                 "highlightButtons", "showKeybind", "hoverTips" }, actions = true },
+                                 "highlightButtons", "showKeybind", "hoverTips",
+                                 "compact", "minimap", "levelCards" }, actions = true },
   { key = "combat", title = "Combat",
     options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield" } },
   { key = "advanced", title = "Advanced",
-    options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck", "readyCheck", "rankWarning" } },
+    options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck", "readyCheck", "rankWarning",
+                "elvui" } },
 }
 
 local function copy(t)
@@ -111,7 +116,7 @@ end
 
 function M.new(o, host)
   local main
-  local pages, controls, buttons = {}, {}, {}
+  local pages, controls, buttons, widgets = {}, {}, {}, {}
   for i, list in ipairs(sections(o.options)) do
     local sec = M.SECTIONS[i]
     local f = CreateFrame("Frame", "DoubtMyRotationPanel" .. (sec.title or ""), UIParent)
@@ -123,27 +128,37 @@ function M.new(o, host)
     local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", f, "TOPLEFT", M.LEFT, -16)
     title:SetText(sec.title and (M.TITLE .. " - " .. sec.title) or M.TITLE)
-    for row, opt in ipairs(list) do
+    local y, last = M.TOP, nil
+    for _, opt in ipairs(list) do
+      if last then y = y - ((last == "toggle" and opt.type == "toggle") and M.TOGGLE_ROW or M.ROW) end
+      last = opt.type
       local c = MAKE[opt.type](f, opt, host)
-      c:SetPoint("TOPLEFT", f, "TOPLEFT", M.LEFT, M.TOP - (row - 1) * M.ROW)
+      c:SetPoint("TOPLEFT", f, "TOPLEFT", M.LEFT, y)
       -- the slider and check box templates show tooltipText on hover
       if opt.desc then c.tooltipText = opt.desc end
       controls[opt.key] = c
+      widgets[#widgets + 1] = c
     end
     if sec.actions then
+      local top = last and y - (last == "toggle" and M.TOGGLE_ROW or M.ROW) or M.TOP
       for j, act in ipairs(M.ACTIONS) do
         local b = CreateFrame("Button", "DoubtMyRotationPanel_" .. act, f, "UIPanelButtonTemplate")
+        b.kind = "button"
         b:SetWidth(150)
         b:SetHeight(22)
-        b:SetPoint("TOPLEFT", f, "TOPLEFT", M.LEFT + (j - 1) * 160, M.TOP - #list * M.ROW - 8)
+        local col, line = (j - 1) % M.PER_ROW, math.floor((j - 1) / M.PER_ROW)
+        b:SetPoint("TOPLEFT", f, "TOPLEFT", M.LEFT + col * 160, top - 8 - line * 28)
         b:SetScript("OnClick", function() host.action(act); main.refresh(main) end)
         buttons[act] = b
+        widgets[#widgets + 1] = b
       end
     end
     pages[sec.key] = f
     main = main or f
   end
-  main.pages, main.controls, main.buttons = pages, controls, buttons
+  -- widgets: every control and button of all pages in creation order, each with its kind
+  -- (addon/skin.lua styles them by it)
+  main.pages, main.controls, main.buttons, main.widgets = pages, controls, buttons, widgets
   host.quiet = function() return main.refreshing end
   -- the client calls these on every page (refresh on open, okay / cancel on close):
   -- one shared state, kept on the main page, so Cancel puts things back once
@@ -179,6 +194,14 @@ function M.new(o, host)
     InterfaceOptionsFrame:HookScript("OnHide", function() main.opened = nil end)
   end
   return main
+end
+
+-- another profile's settings came in (addon/core.lua): the snapshot taken for Cancel belongs to
+-- the old profile, and Cancel would copy it over the new one. An open window takes a fresh one.
+function M.reload(main)
+  local open = main.opened ~= nil
+  main.opened = nil
+  if open then main.refresh(main) end
 end
 
 return M

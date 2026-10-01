@@ -456,6 +456,8 @@ describe("addon build", function()
     assert.truthy(toc:find("## Interface: 30300\n", 1, true))
     assert.truthy(toc:find("## Version: v9.9.9\n", 1, true))
     assert.truthy(toc:find("## SavedVariables: DoubtMyRotationDB\n", 1, true))
+    assert.truthy(toc:find("## SavedVariablesPerCharacter: DoubtMyRotationCharDB\n", 1, true))
+    assert.truthy(toc:find("## OptionalDeps: ElvUI\n", 1, true))
     assert.truthy(toc:find("\nDoubtMyRotation.lua\n", 1, true))
   end)
 
