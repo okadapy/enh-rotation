@@ -102,6 +102,9 @@ end
 function P:finish(job)
   local fresh, s = job.search.result, job.s
   self.job = nil
+  -- the best chain of every first button and when it was planned: the addon's tooltip names the
+  -- runner-up from it (read only, nothing here decides by it)
+  self.alts, self.altsNow = fresh.byFirst, s.now
   if not job.force and self.plan then
     local old = shifted(self.plan, s.now - self.planNow)
     -- a search's "press nothing" is held too: without it any new search replaced it at once,
