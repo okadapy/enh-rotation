@@ -80,6 +80,10 @@ describe("settings window", function()
     for _, o in ipairs(require("helpers").options()) do assert.is_true(placed[o.key], o.key) end
     for _, k in ipairs({ "highlightButtons", "showKeybind", "hoverTips" }) do assert.are.equal("general", where[k], k) end
     for _, k in ipairs({ "readyCheck", "rankWarning" }) do assert.are.equal("advanced", where[k], k) end
+    -- and the addon's own (settings.ADDON_OPTIONS)
+    for _, o in ipairs(settings.ADDON_OPTIONS) do assert.is_true(placed[o.key], o.key) end
+    for _, k in ipairs({ "compact", "minimap", "levelCards" }) do assert.are.equal("general", where[k], k) end
+    assert.are.equal("advanced", where.elvui)
   end)
 
   it("a section key with no such option is skipped", function()
@@ -210,13 +214,75 @@ describe("settings window", function()
     assert.are.same({ 2, 1 }, { h.cfg.scale, h.cfg.mode })
   end)
 
-  it("the action buttons call the host and show its label", function()
+  it("the action buttons call the host and show its label, three in a row", function()
     local h = host()
     local f = panel.new({ options = OPTIONS }, h)
     f.refresh(f)
     assert.are.equal("Unlock timeline", f.buttons.lock.text)
-    for _, name in ipairs({ "lock", "export", "hide" }) do f.buttons[name]:Click() end
-    assert.are.same({ "lock", "export", "hide" }, h.actions)
+    assert.are.equal("guide", f.buttons.guide.text)
+    for _, name in ipairs({ "lock", "export", "hide", "guide" }) do
+      f.buttons[name]:Click()
+      assert.are.equal("button", f.buttons[name].kind)
+    end
+    assert.are.same({ "lock", "export", "hide", "guide" }, h.actions)
     assert.are.equal(f, f.buttons.lock:GetParent())
+    assert.are.equal(3, panel.PER_ROW)
+    -- the fourth starts the second row, under the first
+    assert.are.equal(f.buttons.lock.point[4], f.buttons.guide.point[4])
+    assert.is_true(f.buttons.guide.point[5] < f.buttons.lock.point[5])
+    assert.are.equal(f.buttons.lock.point[5], f.buttons.hide.point[5])
+  end)
+
+  -- a check box has no label above it, a slider or a list does: a run of check boxes sits closer
+  it("check boxes in a run take a shorter row", function()
+    local opts = { OPTIONS[1], OPTIONS[3],
+                   { type = "toggle", key = "showLust", name = "Lust", default = true },
+                   { type = "range", key = "icons", name = "Icons", min = 1, max = 5, default = 3 } }
+    local f = panel.new({ options = opts }, host())
+    local function y(k) return f.controls[k].point[5] end
+    assert.is_true(panel.TOGGLE_ROW < panel.ROW)
+    assert.are.equal(panel.TOP, y("scale"))
+    assert.are.equal(panel.TOP - panel.ROW, y("showReason"))
+    assert.are.equal(y("showReason") - panel.TOGGLE_ROW, y("showLust"))
+    assert.are.equal(y("showLust") - panel.ROW, y("icons"))
+  end)
+
+  -- eleven options and two rows of buttons on General: all of it inside the Interface Options
+  -- panel (about 570 px tall in 3.3.5a), with room to spare
+  it("the real General page fits with its buttons", function()
+    local list = settings.withExtra(require("build").addonOptions().list, { require("update").OPTION })
+    list = settings.withExtra(settings.withExtra(list, require("helpers").options()), settings.ADDON_OPTIONS)
+    local f = panel.new({ options = list }, host())
+    assert.are.equal(11, #f.list)
+    for _, opt in ipairs(f.list) do assert.is_true(f.controls[opt.key].point[5] > -480, opt.key) end
+    for name, b in pairs(f.buttons) do assert.is_true(b.point[5] - 22 > -520, name) end
+  end)
+
+  -- addon/skin.lua styles what is listed here, by kind
+  it("lists every control and button of all pages in widgets", function()
+    local f = panel.new({ options = OPTIONS }, host())
+    local seen = {}
+    for _, w in ipairs(f.widgets) do
+      assert.is_string(w.kind)
+      seen[w] = true
+    end
+    for _, c in pairs(f.controls) do assert.is_true(seen[c]) end
+    for _, b in pairs(f.buttons) do assert.is_true(seen[b]) end
+    assert.are.equal(#OPTIONS + #panel.ACTIONS, #f.widgets)
+  end)
+
+  -- another profile came in (addon/core.lua): Cancel goes back to it, not to the old profile
+  it("reload takes a fresh snapshot for Cancel only when the window had one", function()
+    local h = host()
+    local f = panel.new({ options = OPTIONS }, h)
+    panel.reload(f)
+    assert.is_nil(f.opened)
+    f.refresh(f)
+    h.cfg = { scale = 2, mode = 2, showReason = false } -- the new profile's values
+    panel.reload(f)
+    assert.are.equal(2, f.controls.scale:GetValue())
+    f.controls.scale:SetValue(1.5)
+    f.cancel(f)
+    assert.are.same({ scale = 2, mode = 2, showReason = false }, h.cfg)
   end)
 end)
