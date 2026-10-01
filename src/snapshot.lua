@@ -323,11 +323,15 @@ end
 
 -- Expected seconds to kill the target from what the state knows, for the young regression
 -- (ttd): health / (the character's damage per second + the Flame Shock and fire totem already
--- ticking on it). Solo only: in a group others hit the mob too, and our own rate says nothing of
--- it. Only while the mob fights us: before the pull nothing is killing it.
+-- ticking on it). In a party every other member adds GROUP_MATE of that rate (issue #22, Dire Maul
+-- in a party of five: our 239K of the group's 739K, the group killing ~3.1x as fast as we alone):
+-- without a prior a young regression read 736 s on a mob that died in ~27 s, and nothing while it
+-- had seen no decline. Not in a raid: twenty-odd players' damage says nothing of ours. Only while
+-- the mob fights us: before the pull nothing is killing it.
+M.GROUP_MATE = 0.55
 function M.ttdPrior(S)
   local t = S.target
-  if S.mode ~= "solo" or not t.enemy or (t.hp or 0) <= 0 or not S.player.inCombat then return nil end
+  if (S.mode ~= "solo" and S.mode ~= "group") or not t.enemy or (t.hp or 0) <= 0 or not S.player.inCombat then return nil end
   local fighting = t.inCombat
   if fighting == nil then fighting = UnitAffectingCombat("target") or (t.fs or 0) > 0 end
   if not fighting then return nil end
@@ -340,6 +344,7 @@ function M.ttdPrior(S)
     if src and fire.remains > 0 then dps = dps + r[src] end
   end
   if dps <= 0 then return nil end
+  if S.mode == "group" then dps = dps * (1 + M.GROUP_MATE * (GetNumPartyMembers() or 0)) end
   return t.hp / dps
 end
 
