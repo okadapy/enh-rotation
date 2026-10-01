@@ -52,10 +52,15 @@
 
 ## Волна 2 — параллельно, от `feat/addon` после слияния волны 1
 
+Уточнения по итогам волны 1:
+- В `spec/support/game_mock.lua` флаг `noLibs` не работает: `cfg.noLibs and nil or function…` всегда даёт функцию. Чинит C1 (владелец мока): `if cfg.noLibs then _G.LibStub = nil else _G.LibStub = function(name) return libs[name] end end`.
+- Глобальные переменные, которые должен увидеть код аддона или ауры, тесты ставят через `_G.X = …` (busted держит голые глобальные присваивания спека в своём окружении).
+
 ### C1. Вход аддона (задача 3 плана + `core`-часть задачи 4)
 
 - **Владеет:** `addon/core.lua`, `spec/addon_core_spec.lua`, `spec/support/game_mock.lua` (только добавления для аддона: `UnitClass`, `SlashCmdList`, сброс глобальных `DoubtMyRotation*`, `GetPoint`, `ClearAllPoints`, `SetHeight`, `StartMoving`, `IsMouseEnabled`, `IsShown`, `InterfaceOptionsFrame_OpenToCategory` → `G.opened`).
 - **Опирается на:** `runtime.start/showExport` (A), `settings.*` (B); `panel.new(o, host) -> frame` — **подменяется в своих тестах** через `package.loaded.panel = { new = function(o, host) … return CreateFrame("Frame", "DoubtMyRotationPanel") end }` до `require("core")`.
+- **Также:** в `core.boot` к `o.options` добавить опцию проверки обновлений `update.OPTION` (копией списка, исходный не менять); в `core.login` после `runtime.start` — `M.updates = M.updates or update.new(runtime.VERSION, { db = M.db, send = SendAddonMessage, say = say, enabled = function() return M.db.config.updateCheck ~= false end })` и `M.updates:start(DoubtMyRotationUpdates or CreateFrame("Frame", "DoubtMyRotationUpdates"))`. Модуль `update` в своих тестах подменить через `package.loaded.update` (его пишет C3) и проверить, что он создан с версией движка и запущен; не шаману — не создаётся.
 - **Выдаёт:** `core.boot(o)`, `core.load(o)`, `core.login(o)`, `core.handle(o, msg)`, `core.apply(delay)`, `core.host(o)`; глобальные `DoubtMyRotationAddon`, `DoubtMyRotationDB`, `SLASH_DOUBTMYROTATION1 = "/dmr"`, `SlashCmdList.DOUBTMYROTATION`; рамки `DoubtMyRotationLoader`, `DoubtMyRotationFrame`, `DoubtMyRotationTimer`; хост окна — `{ config, set, replace, action, label }` как в плане; `action = "open"` из `settings.command` открывает окно (`InterfaceOptionsFrame_OpenToCategory` дважды).
 - **Принимается, если:** все тесты задачи 3 плана и тесты core из задачи 4 («/dmr alone opens the settings window», «many changes in a row restart the engine once, after the pause») зелёные.
 
@@ -65,6 +70,22 @@
 - **Опирается на:** `settings.defaults`, `settings.snap` (B); хост `{ config, set, replace, action, label }` (тесты дают свой).
 - **Выдаёт:** `panel.SECTIONS`, `panel.new(o, host) -> main frame` с `main.pages`, `main.controls`, `main.buttons`; страницы `DoubtMyRotationPanel` (`name = "DoubtMyRotation"`), `DoubtMyRotationPanelCombat`, `DoubtMyRotationPanelAdvanced` (`parent = "DoubtMyRotation"`); `refresh`/`okay`/`cancel`/`default` на каждой странице с общим состоянием; `host.quiet`, выставленный окном.
 - **Принимается, если:** все тесты окна из задачи 4 плана зелёные, включая «three pages …», «an option of no section goes to Advanced», «the real options all have a section», «cancel puts back …»; шаблоны — только существующие в 3.3.5a (`OptionsSliderTemplate`, `InterfaceOptionsCheckButtonTemplate`, `UIDropDownMenuTemplate`, `UIPanelButtonTemplate`).
+
+### C3. Проверка обновлений
+
+В клиенте 3.3.5a нет доступа в интернет: версии сверяются между игроками с аддоном через скрытые аддон-сообщения (как у DBM/BigWigs). API 3.3.5a (сверено по `ChatThrottleLib`/`AceComm-3.0` бэкпорта WeakAuras): `SendAddonMessage(prefix, text, distribution[, target])`, `distribution` — `"PARTY"`, `"RAID"`, `"GUILD"`, `"BATTLEGROUND"`, `"WHISPER"`; событие `CHAT_MSG_ADDON` с аргументами `prefix, message, distribution, sender`; регистрации префикса (`RegisterAddonMessagePrefix`) в 3.3.5a нет — не вызывать. Префикс без табуляции, префикс + текст ≤ 254 байт.
+
+- **Владеет:** `addon/update.lua`, `spec/addon_update_spec.lua`.
+- **Выдаёт:**
+  - `update.PREFIX = "DoubtMyRotation"`, `update.URL = "github.com/okadapy/enh-rotation/releases"`, `update.THROTTLE = 60` (с между отправками в один канал);
+  - `update.OPTION = { type = "toggle", key = "updateCheck", name = "Tell me when a newer version is out", default = true }`;
+  - `update.parse(v) -> { major, minor, patch } | nil` — `"v1.2.3"` и `"1.2.3"`; `"dev"`, `"v1.2"`, мусор → `nil`;
+  - `update.newer(a, b) -> bool` — версия `a` новее `b` (обе строки; если любая не разбирается — `false`);
+  - `update.new(version, deps) -> checker`, `deps = { db, send(prefix, text, distribution), say(line), enabled() -> bool, now() -> number (по умолчанию GetTime), inGuild() (по умолчанию IsInGuild), party() / raid() (по умолчанию GetNumPartyMembers / GetNumRaidMembers) }`;
+  - `checker:start(frame)` — регистрирует `PLAYER_ENTERING_WORLD`, `PARTY_MEMBERS_CHANGED`, `RAID_ROSTER_UPDATE`, `CHAT_MSG_ADDON` на `frame` и ставит `OnEvent` → `checker:onEvent(event, ...)`;
+  - `checker:onEvent(event, ...)`: при входе в мир — своя версия в `GUILD` (если в гильдии); при появлении группы/рейда — в `PARTY`/`RAID` (рейд важнее группы); не чаще `THROTTLE` в канал; сообщение — `"V:" .. version`; на `CHAT_MSG_ADDON` с нашим префиксом и `V:<версия>` новее своей — запомнить в `db.newest` и **один раз за сессию** сказать: `a newer version is out: v1.1.0 (you have v1.0.6) - github.com/okadapy/enh-rotation/releases`; при входе в мир, если `db.newest` уже новее своей версии, — сказать то же сразу (игрок не обновился с прошлого раза), а если своя догнала — `db.newest = nil`.
+  - своя версия `dev` или неразбираемая — ничего не отправлять и не сообщать; `enabled()` ложно — то же; своё же сообщение (sender = имя игрока) и чужие префиксы — игнорировать; кривой текст (`V:abc`, `X:1.2.3`) — игнорировать без ошибок.
+- **Принимается, если:** тесты на каждое правило выше зелёные — разбор и сравнение версий (`1.10.0` новее `1.9.9`), троттлинг по каналам, одно сообщение за сессию при нескольких новых версиях (сообщается самая новая на момент первого сообщения, дальше молчит), напоминание после перезахода из `db.newest`, сброс `db.newest` после обновления, `dev`, выключенная опция, игнор своих/чужих/кривых сообщений. Тесты — на чистых функциях с подменёнными `deps`, без мока клиента.
 
 ## Волна 3 — интегратор
 
