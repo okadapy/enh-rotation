@@ -161,10 +161,13 @@ end
 -- One file: src as in the aura (minified, line numbers kept), then the libraries and addon/ as they
 -- are, each in its own function (its locals and upvalues stay within that function's Lua 5.1 limits).
 -- Without LibStub the libraries return plain tables, which boot hands to the engine as env.libs.
+-- With LibStub and the same version already registered by another addon (WeakAuras, TSM...),
+-- LibSerialize returns nothing: the registered one is taken instead.
 function B.addonCode(srcDir, version, modules)
   local parts = { B.bundle(srcDir, version) }
   for _, m in ipairs(modules or B.ADDON_MODULES) do
-    parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)\n'):format(m[1], B.readFile(m[2]))
+    local fallback = m[1]:match("^Lib") and (' or (LibStub and LibStub("%s", true))'):format(m[1]) or ""
+    parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)%s\n'):format(m[1], B.readFile(m[2]), fallback)
   end
   parts[#parts + 1] = "local __o = " .. B.dump(B.addonOptions()) .. "\n"
   parts[#parts + 1] = "__require('core').boot({ options = __o.list, width = __o.width, height = __o.height,\n"

@@ -483,6 +483,40 @@ describe("addon build", function()
     assert.are.same(t, back)
   end)
 
+  -- the player's client: WeakAuras (or TSM...) brought LibStub and registered the same libraries
+  -- first; our copies then return nothing (LibSerialize) or the registered one (LibDeflate)
+  it("uses the libraries another addon registered in LibStub before it", function()
+    local G = require("game_mock")
+    G.install({ now = 100 })
+    local libs, minors = {}, {}
+    local stub = {}
+    function stub:NewLibrary(major, minor)
+      if minors[major] and minors[major] >= minor then return nil end
+      libs[major] = libs[major] or {}
+      minors[major] = minor
+      return libs[major]
+    end
+    function stub:GetLibrary(major, silent)
+      if not libs[major] and not silent then error("no " .. major) end
+      return libs[major], minors[major]
+    end
+    setmetatable(stub, { __call = stub.GetLibrary })
+    local genv = clientEnv({ LibStub = stub })
+    for _, path in ipairs({ "vendor/LibSerialize.lua", "vendor/LibDeflate.lua" }) do
+      local lib = assert(loadstring(build.readFile(path)))
+      setfenv(lib, genv)
+      lib()
+    end
+    local before = { serialize = libs.LibSerialize, deflate = libs.LibDeflate }
+    assert.is_function(before.serialize.Serialize)
+    local chunk = assert(loadstring(build.addonCode("src", "v0", { LIBS[1], LIBS[2], CORE })))
+    setfenv(chunk, genv)
+    chunk()
+    local o = assert(genv.BOOTED)
+    assert.are.equal(before.serialize, o.libs.serialize)
+    assert.are.equal(before.deflate, o.libs.deflate)
+  end)
+
   it("starts with the aura's bundle: the engine's line numbers and version stay", function()
     local code = build.addonCode("src", "v7.7.7", { CORE })
     assert.are.equal(1, code:find(build.bundle("src", "v7.7.7"), 1, true))
