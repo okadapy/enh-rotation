@@ -157,12 +157,16 @@ function F:aura(sub, amount)
   end
 end
 
--- a hard cast started (castTime in seconds): in melee it delays the swings
+-- a hard cast started (castTime in seconds): counted when in melee and it ends after the next
+-- main-hand swing (S.swing.mh.next: seconds after S.now) - a cast that fits before it delays nothing
 function F:castStart(castTime)
   local f = self.f
   if not f or (castTime or 0) <= 0 then return end
   local S = self.deps.state()
-  if S and S.target and S.target.range == "melee" then f.swings = f.swings + 1 end
+  if not (S and S.target and S.target.range == "melee") then return end
+  local sw = S.swing
+  if not (sw and sw.attacking ~= false and sw.mh and S.now) then return end
+  if self.deps.now() + castTime > S.now + sw.mh.next then f.swings = f.swings + 1 end
 end
 
 -- the fight is over: its review data, or nil (too short, too few presses, never began)

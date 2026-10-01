@@ -28,13 +28,22 @@ local function evaluate(s, steps) return (search.evaluate(s, steps)) end
 local R = {}
 R.__index = R
 
+-- the engine's rt while it is running and its state is fresh (a sleeping, stopped or inactive engine
+-- keeps its last S and due: samples from them would count idle GCD that was not)
+local function live(deps)
+  local rt = deps.rt()
+  if not rt or rt.sleeping or rt.stopped or rt.inactive then return nil end
+  if rt.S and rt.S.now and rt.S.now < deps.now() - 1 then return nil end
+  return rt
+end
+
 -- deps: rt() -> the engine's rt or nil, db, say(line), config(), now(), time(), date(fmt, t)
 function M.new(deps)
   local self = setmetatable({ deps = deps }, R)
   self.log = fightlog.new({
     now = deps.now,
-    state = function() local rt = deps.rt(); return rt and rt.S end,
-    due = function() local rt = deps.rt(); return rt and rt.due end,
+    state = function() local rt = live(deps); return rt and rt.S end,
+    due = function() local rt = live(deps); return rt and rt.due end,
     boss = M.boss,
     targetName = function() if UnitExists("target") and UnitCanAttack("player", "target") then return UnitName("target") end end,
     difficulty = M.difficulty,

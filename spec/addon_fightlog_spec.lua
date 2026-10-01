@@ -227,10 +227,12 @@ describe("addon fight collector", function()
   it("counts hard casts in melee as delayed swings", function()
     local w = rig()
     w.F:begin()
-    w.S = melee()
-    w.F:castStart(2.5)
+    w.t = 10
+    w.S = melee({ now = 10, swing = { attacking = true, mh = { next = 1 } } })
+    w.F:castStart(2.5) -- ends 1.5 s after the swing: delayed
     w.F:castStart(0) -- instant
-    w.S = melee({ target = { exists = true, enemy = true, range = "30" } })
+    w.F:castStart(0.5) -- ends before the swing (weaving): not delayed
+    w.S = melee({ now = 10, swing = { attacking = true, mh = { next = 1 } }, target = { exists = true, enemy = true, range = "30" } })
     w.F:castStart(2.5) -- at range: no swing to delay
     hits(w, 10, 0)
     w.t = 30

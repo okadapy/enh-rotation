@@ -285,6 +285,8 @@ function G.install(cfg)
     return f
   end
   _G.UIParent = G.frame("Frame", "UIParent")
+  _G.UISpecialFrames = {}
+  _G.tinsert = table.insert
   _G.WorldFrame = G.frame("Frame", "WorldFrame")
   _G.WeakAuras = { ScanEvents = function(...) G.sent[#G.sent + 1] = { ... } end }
   _G.print = function(...)

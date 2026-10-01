@@ -14,6 +14,25 @@ local function rig()
 end
 
 describe("addon fight history", function()
+  it("rebuilds a corrupted boss record", function()
+    for _, bad in ipairs({ 5, {}, { list = "x" } }) do
+      local w = rig()
+      w.db.fights["Marrowgar 25 Player"] = bad
+      assert.are.same({}, w.H:boss("Marrowgar 25 Player"))
+      w.H:add(fight(), TIPS)
+      assert.are.equal(1, #w.H:boss("Marrowgar 25 Player"))
+    end
+  end)
+
+  it("latestKey: the boss fought last, nil with none", function()
+    local w = rig()
+    assert.is_nil(w.H:latestKey())
+    w.H:add(fight({ key = "A 10 Player" }), TIPS)
+    w.t = 2000
+    w.H:add(fight({ key = "B 25 Player" }), TIPS)
+    assert.are.equal("B 25 Player", w.H:latestKey())
+  end)
+
   it("exports the limits", function()
     assert.are.equal(10, history.SESSION_MAX)
     assert.are.equal(20, history.BOSS_FIGHTS)

@@ -27,6 +27,38 @@ local function fight(w, n, seconds)
 end
 
 describe("addon fight review", function()
+  -- a live engine state with a due button long past, the GCD idle
+  local function idleState(w, now)
+    w.rt.S = { now = now, gcdRemains = 0, castRemains = 0, buffs = { mw = { stacks = 0 } },
+               target = { exists = true, enemy = true, range = "melee" } }
+    w.rt.due = { key = "stormstrike", at = 0 }
+  end
+
+  it("no idle GCD samples from a sleeping or stopped engine", function()
+    for _, flag in ipairs({ "sleeping", "stopped", "inactive" }) do
+      local w = rig()
+      w.R:onEvent("PLAYER_REGEN_DISABLED")
+      for i = 1, 10 do w.R:press({ t = 100, key = "x", sug = "x", due = 100, last = { now = 100, firstValue = { x = 1 } } }) end
+      idleState(w, 100)
+      w.rt[flag] = true
+      w.t = 105
+      for _ = 1, 5 do w.R:onUpdate(0.5) end
+      assert.are.equal(0, w.R.log.f.gcdIdle, flag)
+    end
+  end)
+
+  it("no idle GCD samples from a state older than a second", function()
+    local w = rig()
+    w.R:onEvent("PLAYER_REGEN_DISABLED")
+    idleState(w, 90)
+    w.t = 105
+    for _ = 1, 5 do w.R:onUpdate(0.5) end
+    assert.are.equal(0, w.R.log.f.gcdIdle)
+    idleState(w, 105) -- the same state, fresh: counted
+    for _ = 1, 5 do w.R:onUpdate(0.5) end
+    assert.is_true(w.R.log.f.gcdIdle > 0)
+  end)
+
   it("after a fight: one line in chat and the fight in the session", function()
     local w = rig()
     fight(w, 12, 30)

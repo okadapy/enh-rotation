@@ -30,7 +30,7 @@ describe("addon fight window", function()
       "GCD idle 3s, swings delayed by casts 5",
       "Flame Shock uptime 90%",
       "Without: shield 12s, fire totem 0s, enchants 0s, auto-attack 2s",
-      "Not rated: 3 (stale plan 1, late 2)",
+      "Not rated 3, stale plan 1, late 2",
     }, "\n"), fightwin.detail(entry()))
   end)
 
@@ -60,6 +60,24 @@ describe("addon fight window", function()
     assert.is_truthy(W.text:GetText():find("^Boss history: Marrowgar 25 Player"))
     W:hide()
     assert.is_false(W.frame:IsShown())
+  end)
+
+  it("registers for Esc", function()
+    fightwin.new({ history = history.new({}, function() return 7 end), date = function() return "" end })
+    local found
+    for _, n in ipairs(UISpecialFrames) do if n == "DoubtMyRotationFightWindow" then found = true end end
+    assert.is_true(found)
+  end)
+
+  it("boss history with an empty session shows the latest saved boss", function()
+    local db = { fights = {
+      ["Old 10 Player"] = { last = 1, list = { { date = 1, seconds = 30, tips = {} } } },
+      ["New 25 Player"] = { last = 9, list = { { date = 9, seconds = 40, tips = {} } } } } }
+    local W = fightwin.new({ history = history.new(db, function() return 7 end), date = function(_, t) return "d" .. t end })
+    W:open("history")
+    assert.is_truthy(W.text:GetText():find("^Boss history: New 25 Player\nd9"))
+    W:open("last")
+    assert.are.equal(fightwin.EMPTY, W.text:GetText())
   end)
 
   it("opens with no fights yet and says so", function()

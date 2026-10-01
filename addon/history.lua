@@ -62,6 +62,7 @@ function H:add(f, tips)
   if f.key and not f.trash then
     local fights = self.db.fights
     local b = fights[f.key]
+    if type(b) ~= "table" or type(b.list) ~= "table" then b = nil end
     entry.trend = M.trend(b and b.list or {}, short)
     if not b then
       b = { list = {} }
@@ -77,7 +78,17 @@ end
 
 function H:boss(key)
   local b = self.db.fights[key]
-  return b and b.list or {}
+  return type(b) == "table" and type(b.list) == "table" and b.list or {}
+end
+
+-- the boss fought last (highest `last`; ties: the smaller key), nil with none saved
+function H:latestKey()
+  local best, bestKey
+  for k, b in pairs(self.db.fights) do
+    local t = type(b) == "table" and b.last or 0
+    if best == nil or t > best or (t == best and k < bestKey) then best, bestKey = t, k end
+  end
+  return bestKey
 end
 
 return M

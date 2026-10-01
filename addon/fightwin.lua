@@ -36,7 +36,7 @@ function M.detail(entry)
   add(("GCD idle %ds, swings delayed by casts %d"):format(s(f.gcdIdle), f.swings or 0))
   if (fs.seen or 0) > 0 then add(("Flame Shock uptime %s"):format(advice.pct(fs.up / fs.seen))) end
   add(("Without: shield %ds, fire totem %ds, enchants %ds, auto-attack %ds"):format(s(pr.shield), s(pr.totems), s(pr.enchants), s(pr.autoAttack)))
-  add(("Not rated: %d (stale plan %d, late %d)"):format(f.unrated or 0, f.stale or 0, f.late or 0))
+  add(("Not rated %d, stale plan %d, late %d"):format(f.unrated or 0, f.stale or 0, f.late or 0))
   return table.concat(out, "\n")
 end
 
@@ -70,6 +70,7 @@ function M.new(deps)
   f:SetScript("OnDragStart", function(fr) if not InCombatLockdown() then fr:StartMoving() end end)
   f:SetScript("OnDragStop", function(fr) fr:StopMovingOrSizing() end)
   f:Hide()
+  tinsert(UISpecialFrames, "DoubtMyRotationFightWindow") -- Esc closes it
   self.frame = f
   for i = 1, M.ROWS do
     local b = CreateFrame("Button", nil, f)
@@ -109,8 +110,12 @@ function W:refresh()
     end
   end
   local e = list[self.selected]
+  local H = self.deps.history
   if self.mode == "history" and e and e.fight.key then
-    self.text:SetText(M.historyText(e.fight.key, self.deps.history:boss(e.fight.key), self.deps.date))
+    self.text:SetText(M.historyText(e.fight.key, H:boss(e.fight.key), self.deps.date))
+  elseif self.mode == "history" and not e and H:latestKey() then
+    -- nothing fought this session: the saved history of the boss fought last
+    self.text:SetText(M.historyText(H:latestKey(), H:boss(H:latestKey()), self.deps.date))
   elseif e then
     self.text:SetText(M.detail(e))
   else
