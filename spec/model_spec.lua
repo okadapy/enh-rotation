@@ -737,6 +737,43 @@ describe("model", function()
       assert.are.same(before, S)
     end)
   end)
+
+  describe("glyphs (S.mods)", function()
+    it("Glyph of Shocking: a shock triggers a 1 s GCD, other spells the hasted one", function()
+      local S = fixtures.state({ gcd = 1.4 })
+      assert.are.equal(1.4, model.gcdFor(S, "earthShock"))
+      S.mods = { shockGcd = 0, fireNovaCd = 0 } -- neutral: no glyph
+      assert.are.equal(1.4, model.gcdFor(S, "earthShock"))
+      S.mods = { shockGcd = 1 }
+      assert.are.equal(1.0, model.gcdFor(S, "earthShock"))
+      assert.are.equal(1.0, model.gcdFor(S, "flameShock"))
+      assert.are.equal(1.0, model.gcdFor(S, "frostShock"))
+      assert.are.equal(1.4, model.gcdFor(S, "stormstrike"))
+      assert.are.equal(1.4, model.gcdFor(S, "lightningBolt"))
+    end)
+
+    it("after a shock with Glyph of Shocking the next press waits 1 s", function()
+      local S = fixtures.state({ gcd = 1.4 })
+      S.mods = { shockGcd = 1 }
+      local _, _, dt = model.apply(S, "earthShock")
+      local _, _, dtP = model.peekApply(S, "earthShock")
+      assert.are.near(1.0, dt, 1e-9)
+      assert.are.near(1.0, dtP, 1e-9)
+      -- cut at 0.5 s: half of the 1 s GCD is left, not 0.9 of the hasted one
+      assert.are.near(0.5, model.apply(S, "earthShock", 0.5).gcdRemains, 1e-9)
+      local _, _, dtS = model.apply(S, "stormstrike")
+      assert.are.near(1.4, dtS, 1e-9)
+    end)
+
+    it("Glyph of Fire Nova: the cooldown 3 s shorter, after Improved Fire Nova", function()
+      local S = fixtures.state({ talents = { improvedFireNova = 2 } })
+      assert.are.equal(6, model.cooldownFor(S, "fireNova"))
+      S.mods = { fireNovaCd = 3 }
+      assert.are.equal(3, model.cooldownFor(S, "fireNova"))
+      S.mods = { shockGcd = 1 } -- another glyph: Fire Nova keeps its cooldown
+      assert.are.equal(6, model.cooldownFor(S, "fireNova"))
+    end)
+  end)
 end)
 
 describe("model: a mob running in (target.meleeIn)", function()
@@ -888,7 +925,9 @@ describe("model working copies (search speed)", function()
                            { mode = "solo", target = { range = "30" }, enemies = { melee = 0 } },
                            -- raid debuffs on the target (addon: S.mods)
                            { mods = { armor = 0.76, spellTaken = 1.13, physTaken = 1.04, critTaken = 0.03,
-                                      spellCritTaken = 0.05, spellHitTaken = 0.03, support = 0.02 } } }) do
+                                      spellCritTaken = 0.05, spellHitTaken = 0.03, support = 0.02 } },
+                           -- glyphs of Shocking and Fire Nova (addon: S.mods)
+                           { gcd = 1.4, mods = { shockGcd = 1, fireNovaCd = 3 } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S
