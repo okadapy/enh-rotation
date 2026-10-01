@@ -78,7 +78,8 @@ describe("settings window", function()
     assert.is_nil(placed.export)
     -- the helpers' options (addon/helpers.lua) too
     for _, o in ipairs(require("helpers").options()) do assert.is_true(placed[o.key], o.key) end
-    for _, k in ipairs({ "highlightButtons", "showKeybind", "hoverTips" }) do assert.are.equal("general", where[k], k) end
+    -- on Combat: General has no room left for them (see the page size test)
+    for _, k in ipairs({ "highlightButtons", "showKeybind", "hoverTips" }) do assert.are.equal("combat", where[k], k) end
     for _, k in ipairs({ "readyCheck", "rankWarning" }) do assert.are.equal("advanced", where[k], k) end
     -- and the addon's own (settings.ADDON_OPTIONS)
     for _, o in ipairs(settings.ADDON_OPTIONS) do assert.is_true(placed[o.key], o.key) end
@@ -214,7 +215,7 @@ describe("settings window", function()
     assert.are.same({ 2, 1 }, { h.cfg.scale, h.cfg.mode })
   end)
 
-  it("the action buttons call the host and show its label, three in a row", function()
+  it("the action buttons call the host and show its label, two in a row", function()
     local h = host()
     local f = panel.new({ options = OPTIONS }, h)
     f.refresh(f)
@@ -226,11 +227,13 @@ describe("settings window", function()
     end
     assert.are.same({ "lock", "export", "hide", "guide" }, h.actions)
     assert.are.equal(f, f.buttons.lock:GetParent())
-    assert.are.equal(3, panel.PER_ROW)
-    -- the fourth starts the second row, under the first
-    assert.are.equal(f.buttons.lock.point[4], f.buttons.guide.point[4])
-    assert.is_true(f.buttons.guide.point[5] < f.buttons.lock.point[5])
-    assert.are.equal(f.buttons.lock.point[5], f.buttons.hide.point[5])
+    assert.are.equal(2, panel.PER_ROW)
+    -- the third starts the second row, under the first
+    assert.are.equal(f.buttons.lock.point[4], f.buttons.hide.point[4])
+    assert.is_true(f.buttons.hide.point[5] < f.buttons.lock.point[5])
+    assert.are.equal(f.buttons.lock.point[5], f.buttons.export.point[5])
+    assert.are.equal(f.buttons.hide.point[5], f.buttons.guide.point[5])
+    assert.are.equal(f.buttons.export.point[4], f.buttons.guide.point[4])
   end)
 
   -- a check box has no label above it, a slider or a list does: a run of check boxes sits closer
@@ -247,15 +250,55 @@ describe("settings window", function()
     assert.are.equal(y("showLust") - panel.ROW, y("icons"))
   end)
 
-  -- eleven options and two rows of buttons on General: all of it inside the Interface Options
-  -- panel (about 570 px tall in 3.3.5a), with room to spare
-  it("the real General page fits with its buttons", function()
+  -- Interface Options in 3.3.5a (InterfaceOptionsFrame.xml): a 648 x 520 window, the category
+  -- list 175 x 429 on its left; a page gets the rest, about 413 x 429. What sticks out of it is
+  -- cut off or lies over the window's border and buttons.
+  local PAGE_W, PAGE_H = 413, 429
+  -- the templates' own sizes (OptionsSliderTemplate 144 x 17 with its min / max under it,
+  -- InterfaceOptionsCheckButtonTemplate 26 x 26 with its text to the right, UIDropDownMenu_SetWidth
+  -- adds 25 px on each side, 32 tall); the text's width is a guess: 6 px a letter of GameFontHighlight
+  local function box(w)
+    local p = w.point
+    assert.are.equal("TOPLEFT", p[1])
+    assert.are.equal("TOPLEFT", p[3])
+    local x, y, width, height = p[4], p[5], w.w, w.h
+    if w.kind == "range" then width, height = 144, 17 + 14
+    elseif w.kind == "toggle" then width, height = 26 + 2 + 6 * #(_G[w:GetName() .. "Text"].text or ""), 26
+    elseif w.kind == "select" then width, height = (w.ddWidth or 0) + 50, 32 end
+    return x, y, x + width, y - height
+  end
+
+  local function fits(page, list)
+    assert.is_true(#list > 0, page.name)
+    for _, w in ipairs(list) do
+      local left, top, right, bottom = box(w)
+      local what = page.name .. ": " .. tostring(w:GetName())
+      assert.is_true(left >= 0 and top <= 0, what)
+      assert.is_true(right <= PAGE_W, what .. " ends at x = " .. right)
+      assert.is_true(bottom >= -PAGE_H, what .. " ends at y = " .. bottom)
+    end
+  end
+
+  it("every page, Profiles too, fits in Interface Options' page area", function()
     local list = settings.withExtra(require("build").addonOptions().list, { require("update").OPTION })
     list = settings.withExtra(settings.withExtra(list, require("helpers").options()), settings.ADDON_OPTIONS)
     local f = panel.new({ options = list }, host())
-    assert.are.equal(11, #f.list)
-    for _, opt in ipairs(f.list) do assert.is_true(f.controls[opt.key].point[5] > -480, opt.key) end
-    for name, b in pairs(f.buttons) do assert.is_true(b.point[5] - 22 > -520, name) end
+    -- the real labels: the longest check box text is the one to measure
+    for _, opt in ipairs(list) do
+      local c = f.controls[opt.key]
+      if opt.type == "toggle" then assert.are.equal(opt.name, _G[c:GetName() .. "Text"].text) end
+    end
+    for _, sec in ipairs(panel.SECTIONS) do
+      local page, mine = f.pages[sec.key], {}
+      for _, w in ipairs(f.widgets) do
+        if w:GetParent() == page then mine[#mine + 1] = w end
+      end
+      fits(page, mine)
+    end
+    local names = function() return { "Default" } end
+    local p = require("profilepage").new({ list = names, current = function() return "Default" end,
+      active = function() return "Default", "picked" end, rule = function() end })
+    fits(p, p.widgets)
   end)
 
   -- addon/skin.lua styles what is listed here, by kind

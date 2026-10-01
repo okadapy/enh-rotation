@@ -444,10 +444,14 @@ describe("addon build", function()
     assert.are.equal("DoubtMyRotation", build.ADDON)
     assert.are.equal("dist/DoubtMyRotation", build.ADDON_DIR)
     assert.are.same({ { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate", "vendor/LibDeflate.lua" },
-                      { "settings", "addon/settings.lua" }, { "panel", "addon/panel.lua" },
+                      { "settings", "addon/settings.lua" }, { "profiles", "addon/profiles.lua" },
+                      { "panel", "addon/panel.lua" }, { "profilepage", "addon/profilepage.lua" },
                       { "update", "addon/update.lua" }, { "actionbars", "addon/actionbars.lua" },
                       { "highlight", "addon/highlight.lua" }, { "explain", "addon/explain.lua" },
                       { "ready", "addon/ready.lua" }, { "helpers", "addon/helpers.lua" },
+                      { "guide", "addon/guide.lua" }, { "cards", "addon/cards.lua" },
+                      { "wizard", "addon/wizard.lua" }, { "coach", "addon/coach.lua" },
+                      { "minimap", "addon/minimap.lua" }, { "skin", "addon/skin.lua" },
                       { "core", "addon/core.lua" } }, build.ADDON_MODULES)
   end)
 
@@ -554,7 +558,7 @@ describe("addon build", function()
     local runtime = require("runtime")
     local known = {}
     for _, meta in ipairs(spells.CATALOG) do known[meta.ranks[#meta.ranks]] = true end
-    G.install({ now = 100, known = known, noLibs = true, castMs = { ["Lightning Bolt"] = 2500 },
+    G.install({ now = 100, known = known, noLibs = true, inCombat = false, castMs = { ["Lightning Bolt"] = 2500 },
                 target = { level = 83, hp = 1e6, hpMax = 1e6, guid = "Creature-9" }, inRange = { Stormstrike = 1 },
                 enchants = { mh = true, oh = true }, tooltip = { [16] = { "Windfury 8" }, [17] = { "Flametongue 10" } },
                 auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } } })
@@ -571,7 +575,14 @@ describe("addon build", function()
     local core = genv.DoubtMyRotationAddon
     local rt = core.rt
     assert.are.equal(DoubtMyRotationFrame, rt.env.region)
-    assert.are.equal(3, #G.categories)
+    assert.are.equal(4, #G.categories)
+    assert.are.equal(DoubtMyRotationPanelProfiles, G.categories[4])
+    assert.is_true(DoubtMyRotationMinimapButton.shown)
+    assert.is_true(DoubtMyRotationWizard:IsShown()) -- a new character, out of combat
+    assert.are.same({ Default = genv.DoubtMyRotationDB.profiles.Default }, genv.DoubtMyRotationDB.profiles)
+    assert.is_table(genv.DoubtMyRotationCharDB)
+    -- the helpers read the active profile's values, not the old account-wide config
+    assert.are.equal(core.config, core.helpers.highlight.deps.config())
     assert.is_not_nil(core.panel.controls.updateCheck)
     EnhRotEngineFrame.scripts.OnUpdate(EnhRotEngineFrame, 0.3)
     for _ = 1, 20 do

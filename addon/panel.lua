@@ -9,15 +9,18 @@ M.ROW = 46       -- px per control row
 M.TOGGLE_ROW = 32
 M.LEFT, M.TOP = 16, -56
 M.ACTIONS = { "lock", "export", "hide", "guide" }
-M.PER_ROW = 3
+-- a page of Interface Options in 3.3.5a is about 413 x 429 px (InterfaceOptionsFrame.xml: the
+-- 648 x 520 window less the 175 px category list): two 150 px buttons a row, and General keeps
+-- no more options than fit above them (spec/addon_panel_spec.lua measures every page)
+M.PER_ROW = 2
 M.TITLE = "DoubtMyRotation"
 
 M.SECTIONS = {
   { key = "general", options = { "scale", "seconds", "icons", "showReason", "showLust",
-                                 "highlightButtons", "showKeybind", "hoverTips",
                                  "compact", "minimap", "levelCards" }, actions = true },
   { key = "combat", title = "Combat",
-    options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield" } },
+    options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield",
+                "highlightButtons", "showKeybind", "hoverTips" } },
   { key = "advanced", title = "Advanced",
     options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck", "readyCheck", "rankWarning",
                 "elvui" } },
