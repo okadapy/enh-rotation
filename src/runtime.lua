@@ -54,6 +54,7 @@ M.IMBUE_ICONS = {
   rockbiter = "Interface\\Icons\\Spell_Nature_RockBiter",
 }
 M.DRINK_PCT = 0.5 -- out of combat, no enemy target, less mana than this: "Drink"
+M.DRINK_PULL_PCT = 0.3 -- solo, a mob out of melee and nobody in combat, at most this much mana: "Drink"
 -- the buffs of drinking, by their (localized) names: "Drink" (430) is on every plain drink;
 -- the mage's conjured food of 3.3.5a (Mana Strudel 58648, Mana Pie 61828: Ritual of
 -- Refreshment) restores health and mana under "Refreshment". "Food" (433) gives no mana.
@@ -532,7 +533,7 @@ function M.show(rt, plan, S, now)
   end
   rt.plan, rt.S = plan, S
   rt.tl:render(plan, S, now)
-  rt.tl:setAlert(rt.alert or M.idleHint(plan, S, rt.searching))
+  rt.tl:setAlert(rt.alert or M.idleHint(plan, S, rt.searching, M.drinking))
   return true
 end
 
@@ -564,19 +565,32 @@ function M.drinking()
   return false
 end
 
+-- Out of combat with the mana below pct of the bar (at most, with atMost): the "Drink" hint, or
+-- false while already drinking (nothing to say); nil when no drink is due
+local function drinkHint(S, pct, isDrinking, atMost)
+  local p = S.player
+  local max = p and p.manaMax or 0
+  if not p or p.inCombat or max <= 0 then return nil end
+  local mana, limit = p.mana or 0, max * pct
+  if mana > limit or (mana == limit and not atMost) then return nil end
+  if isDrinking and isDrinking() then return false end
+  return withIcon({ key = "drink", reason = "Drink" })
+end
+
 -- An empty timeline must say why. At 20-30 yards (solo, mana is dear) the plan values the walk
 -- to melee at nothing; in melee it may be the mana; with no enemy about, low mana means a drink.
+-- Solo with a mob not yet pulled (out of melee, neither of us in combat) and the bar nearly
+-- empty (DRINK_PULL_PCT), the drink comes before the walk: the pull would be fought without mana;
+-- while drinking, nothing (the walk waits for the drink).
 -- isDrinking: a function, asked only when a drink would be suggested
 function M.idleHint(plan, S, searching, isDrinking)
   local t = S and S.target
   if searching or #plan.steps > 0 or not t then return nil end
-  if not (t.exists and t.enemy) then
-    local p = S.player
-    if p and not p.inCombat and (p.manaMax or 0) > 0 and p.mana / p.manaMax < M.DRINK_PCT
-      and not (isDrinking and isDrinking()) then
-      return withIcon({ key = "drink", reason = "Drink" })
-    end
-    return nil
+  if not (t.exists and t.enemy) then return drinkHint(S, M.DRINK_PCT, isDrinking) or nil end
+  if S.mode == "solo" and t.range ~= "melee" and not t.inCombat then
+    -- drinking already: not "Move into melee" in the middle of it
+    local h = drinkHint(S, M.DRINK_PULL_PCT, isDrinking, true)
+    if h ~= nil then return h or nil end
   end
   if t.range == "20" or t.range == "30" then return withIcon({ key = "moveIn", reason = "Move into melee" }) end
   if t.range == "melee" and M.outOfMana(S) then return withIcon({ key = "outOfMana", reason = "Out of mana" }) end

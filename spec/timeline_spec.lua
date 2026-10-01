@@ -1,12 +1,14 @@
 local G = require("game_mock")
 local spells = require("spells")
 
--- timeline only needs model.castTime; a fake keeps this spec independent of the real model
+-- timeline only needs model.castTime and model.weaveAllowed; a fake cast time keeps this spec
+-- independent of the real model's haste, the weaving rule is the real one (the band must follow it)
 local realModel = package.loaded.model
 local model = { castTime = function() return 1.0 end }
 package.loaded.model = model
 local timeline = require("timeline")
 package.loaded.model = realModel
+model.weaveAllowed = require("model").weaveAllowed
 
 local function S(patch)
   local s = {
@@ -95,6 +97,50 @@ describe("timeline layout", function()
     assert.is_nil(timeline.castWindow(s0, timeline.swingTimes(s0, 6)))
     local s5 = S({ buffs = { mw = { stacks = 5, remains = 10 } } })
     assert.is_nil(timeline.castWindow(s5, timeline.swingTimes(s5, 6)))
+  end)
+
+  -- the band follows the weaving option (model.weaveAllowed): no "Bolt fits" while a Bolt at
+  -- these stacks would never be suggested
+  describe("with the weaving option (S.weaveMin)", function()
+    local function woven(weaveMin, stacks, patch)
+      local s = S({ weaveMin = weaveMin, buffs = { mw = { stacks = stacks, remains = 20 } },
+                    target = { exists = true, enemy = true, range = "melee" },
+                    talents = { maelstromWeapon = 5 } })
+      for k, v in pairs(patch or {}) do s[k] = v end
+      return s
+    end
+    local function band(s) return timeline.castWindow(s, timeline.swingTimes(s, 6)) end
+
+    it("nil or 0: the band at 1-4 stacks, as before", function()
+      for n = 1, 4 do
+        assert.is_not_nil(band(woven(nil, n)), "nil/" .. n)
+        assert.is_not_nil(band(woven(0, n)), "0/" .. n)
+      end
+    end)
+
+    it("3: hidden at 1-2 stacks in melee, shown at 3-4", function()
+      assert.is_nil(band(woven(3, 1)))
+      assert.is_nil(band(woven(3, 2)))
+      assert.is_not_nil(band(woven(3, 3)))
+      assert.is_not_nil(band(woven(3, 4)))
+      assert.is_nil(timeline.layout(plan(), woven(3, 2), {}, 0).window)
+      assert.is_not_nil(timeline.layout(plan(), woven(3, 3), {}, 0).window)
+    end)
+
+    it("5: never in melee (a 5-stack Bolt is instant, the band is for 1-4)", function()
+      for n = 1, 5 do assert.is_nil(band(woven(5, n)), n) end
+    end)
+
+    it("exception: a target out of melee may take a hard cast, the band stays", function()
+      for _, range in ipairs({ "10", "20", "30" }) do
+        assert.is_not_nil(band(woven(5, 1, { target = { exists = true, enemy = true, range = range } })), range)
+      end
+    end)
+
+    it("exception: without Maelstrom Weapon the option does not apply", function()
+      assert.is_not_nil(band(woven(3, 1, { talents = {} })))
+      assert.is_not_nil(band(woven(5, 2, { talents = {} })))
+    end)
   end)
 
   it("slides ticks, window and GCD band left as time passes", function()
