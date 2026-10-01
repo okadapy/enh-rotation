@@ -3,7 +3,8 @@ local Sc = require("scenario")
 -- every case: level 80 raid boss, MH Windfury / OH Flametongue unless patched.
 -- wowsims drops the totems before the pull and then only refreshes them, so the base state has
 -- Magma Totem up (15 s left); cases about a missing fire totem remove it explicitly.
--- setup(S) mutates the base state; expect = first action; alt = allowed alternatives with a written reason.
+-- setup(S) mutates the base state; expect = first action; alt = allowed alternatives with a written reason;
+-- raidAlt = the same, for the run under the raid's debuffs only.
 
 local function base()
   local S = Sc.state(80)
@@ -14,6 +15,9 @@ local CASES = {
   { name = "pull: Feral Spirit before everything",
     setup = function(S) Sc.cd(S, { feralSpirit = 0 }) end,
     expect = "feralSpirit",
+    -- under the raid's debuffs the search starts with Flame Shock (the alt below): fire takes 13%
+    -- more and 8% more spell crit, the wolves only the armor and 4%. With either forced first and
+    -- the rest searched: 25097 against 25041 (without debuffs 20999 against 20991)
     alt = { -- value.readyValue: a cooldown is worth the share of it already recovered
             flameShock = "one GCD of delay costs Feral Spirit 1.3/180 of a use (~60 damage) but the 6 s shock " ..
                          "cooldown 1.3/6 of an Earth Shock (~300); wowsims casts cooldowns first by rule" } },
@@ -36,6 +40,14 @@ local CASES = {
     expect = "earthShock" },
   { name = "Magma Totem when no fire totem is down",
     setup = function(S) S.totems.fire = { kind = false, remains = 0 }; S.target.fs = 9; Sc.cd(S, { stormstrike = 4, shock = 3 }) end,
+    expect = "magmaTotem" },
+  -- our Flametongue Totem under an elemental's Totem of Wrath: theirs gives the spell power, ours
+  -- is a foreign kind (snapshot: "other") worth no damage, so a damage totem goes over it
+  { name = "a foreign fire totem (our Flametongue under an elemental's Totem of Wrath): Magma Totem",
+    setup = function(S)
+      S.totems.fire = { kind = "other", remains = 100 }; S.target.fs = 9
+      Sc.cd(S, { stormstrike = 4, shock = 3, fireNova = 4 })
+    end,
     expect = "magmaTotem" },
   { name = "Fire Nova with Magma Totem down",
     setup = function(S) S.target.fs = 9; S.totems.fire = { kind = "magma", remains = 15 }; Sc.cd(S, { stormstrike = 4, shock = 3 }) end,
@@ -145,16 +157,24 @@ local function instant(key, at)
   return at <= 0.1
 end
 
+-- every case twice: on a target without debuffs, and under the wowsims raid's (FullDebuffs, the
+-- set their enhancement APL runs with). raidAlt: alternatives for the second one only, with a reason
+local VARIANTS = { { suffix = "", mods = nil }, { suffix = " (raid debuffs)", mods = Sc.raidMods } }
+
 describe("wowsims APL agreement at level 80 #integration", function()
-  for _, c in ipairs(CASES) do
-    it(c.name, function()
-      local S = base()
-      c.setup(S)
-      local key, at = Sc.first(S)
-      local ok = key == c.expect or (c.alt and c.alt[key] ~= nil)
-      assert.is_true(ok, ("expected %s, got %s"):format(c.expect, tostring(key)))
-      assert.is_true(instant(key, at), ("%s should be pressed now, planned at %s"):format(tostring(key), tostring(at)))
-    end)
+  for _, var in ipairs(VARIANTS) do
+    for _, c in ipairs(CASES) do
+      it(c.name .. var.suffix, function()
+        local S = base()
+        S.mods = var.mods and var.mods() or nil
+        c.setup(S)
+        local key, at = Sc.first(S)
+        local ok = key == c.expect or (c.alt and c.alt[key] ~= nil)
+          or (var.mods and c.raidAlt and c.raidAlt[key] ~= nil)
+        assert.is_true(ok, ("expected %s, got %s"):format(c.expect, tostring(key)))
+        assert.is_true(instant(key, at), ("%s should be pressed now, planned at %s"):format(tostring(key), tostring(at)))
+      end)
+    end
   end
 
   -- wowsims weaves a 3-stack Bolt only when it does not delay a swing. The model may start it now:
@@ -215,5 +235,27 @@ describe("wowsims APL agreement at level 80 #integration", function()
     S.target.fs = 9; S.totems.fire = { kind = "fireElemental", remains = 90 }
     Sc.cd(S, { stormstrike = 4, shock = 3 })
     for _, st in ipairs(Sc.best(S).steps) do assert.are_not.equal("magmaTotem", st.key) end
+  end)
+
+  -- the multipliers at 1 and the additions at 0 must give the very same plans: S.mods may only
+  -- ever change a result through a field that is set (AGENTS.md "bit for bit"). shockGcd is not
+  -- in the set: any value above 0 turns the glyph on
+  it("neutral S.mods: the same plans as without, bit for bit", function()
+    local neutral = { armor = 1, spellTaken = 1, physTaken = 1, critTaken = 0, spellCritTaken = 0, spellHitTaken = 0,
+                      ssFlat = 0, llFlat = 0, wfAp = 0, ssMult = 0, llMult = 0, lsMult = 0, shockMult = 0, lbMult = 0,
+                      staticChance = 0, mwPpm = 0, ssNature = 0, llFt = 0, fsCrit = 0, wolvesAp = 0, wfChance = 0,
+                      clTargets = 0, fireNovaCd = 0 }
+    for i, S in ipairs(Sc.randomStates(30, 11)) do
+      local plain = Sc.best(S)
+      S.mods = neutral
+      local with = Sc.best(S)
+      assert.are.equal(plain.value, with.value, "state " .. i)
+      assert.are.equal(plain.nodes, with.nodes, "state " .. i)
+      assert.are.equal(#plain.steps, #with.steps, "state " .. i)
+      for k, st in ipairs(plain.steps) do
+        assert.are.equal(st.key, with.steps[k].key, "state " .. i)
+        assert.are.equal(st.at, with.steps[k].at, "state " .. i)
+      end
+    end
   end)
 end)

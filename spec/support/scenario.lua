@@ -129,6 +129,20 @@ function Sc.cd(S, map)
   return S
 end
 
+-- the target debuffs of the wowsims raid (sim/core/test_utils.go FullDebuffs) as raid.effects
+-- gives them (spec/raid_spec.lua "the wowsims full raid"): Sunder Armor / Expose Armor, Faerie
+-- Fire, Curse of the Elements, Totem of Wrath, Blood Frenzy, Improved Scorch, Misery
+function Sc.raidMods()
+  return { armor = 0.8 * 0.95, spellTaken = 1.13, physTaken = 1.04, critTaken = 0.03, spellCritTaken = 0.05,
+           spellHitTaken = 0.03 }
+end
+
+-- a typical ICC enhancement's equipment as gear.effects gives it: Totem of the Dancing Flame, T8 4,
+-- glyphs of Stormstrike, Lightning Shield (+ T7 2) and Feral Spirit
+function Sc.gearMods()
+  return { ssFlat = 155, ssMult = 0.2, llMult = 0.2, mwPpm = 0.2, ssNature = 0.08, lsMult = 0.3, wolvesAp = 0.3 }
+end
+
 local function lcg(seed)
   local s = seed
   return function() s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648 end
