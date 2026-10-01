@@ -452,6 +452,9 @@ describe("addon build", function()
                       { "guide", "addon/guide.lua" }, { "cards", "addon/cards.lua" },
                       { "wizard", "addon/wizard.lua" }, { "coach", "addon/coach.lua" },
                       { "minimap", "addon/minimap.lua" }, { "skin", "addon/skin.lua" },
+                      { "fightlog", "addon/fightlog.lua" }, { "advice", "addon/advice.lua" },
+                      { "history", "addon/history.lua" }, { "fightwin", "addon/fightwin.lua" },
+                      { "review", "addon/review.lua" },
                       { "core", "addon/core.lua" } }, build.ADDON_MODULES)
   end)
 
@@ -609,6 +612,18 @@ describe("addon build", function()
     assert.is_truthy(DoubtMyRotationReady)
     genv.SlashCmdList.DOUBTMYROTATION("")
     assert.are.equal(DoubtMyRotationPanel, G.opened)
+    -- the fight review: the addon's build keeps the engine's hooks (--@addon), presses reach it
+    assert.is_table(rt.planner.last)
+    assert.is_table(rt.planner.last.firstValue)
+    DoubtMyRotationFights.scripts.OnEvent(DoubtMyRotationFights, "PLAYER_REGEN_DISABLED")
+    rt.env.onPress({ t = 100, key = rt.plan.steps[1].key, sug = rt.plan.steps[1].key, due = 100, last = rt.planner.last })
+    assert.are.equal(1, core.review.log.f.presses)
+    -- its window waits for the guide's window (one at a time), then opens with ElvUI's kinds
+    genv.SlashCmdList.DOUBTMYROTATION("last")
+    assert.is_false(DoubtMyRotationFightWindow:IsShown())
+    DoubtMyRotationWizard:Hide() -- Esc: skip the guide
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+    assert.are.equal("window", DoubtMyRotationFightWindow.kind)
   end)
 end)
 

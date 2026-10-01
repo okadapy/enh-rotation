@@ -24,6 +24,9 @@ B.ADDON_MODULES = { { "LibSerialize", "vendor/LibSerialize.lua" }, { "LibDeflate
                     { "guide", "addon/guide.lua" }, { "cards", "addon/cards.lua" },
                     { "wizard", "addon/wizard.lua" }, { "coach", "addon/coach.lua" },
                     { "minimap", "addon/minimap.lua" }, { "skin", "addon/skin.lua" },
+                    { "fightlog", "addon/fightlog.lua" }, { "advice", "addon/advice.lua" },
+                    { "history", "addon/history.lua" }, { "fightwin", "addon/fightwin.lua" },
+                    { "review", "addon/review.lua" },
                     { "core", "addon/core.lua" } }
 -- Потолок длины строки импорта: клиент 3.3.5a обрезает длинную вставку (issue #20). Строка v0.1.9
 -- (63 336 байт) импортировалась, v1.0.0 (99 154) — уже нет; выше потолка — ужимать сборку.

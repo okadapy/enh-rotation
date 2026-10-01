@@ -1,7 +1,8 @@
 -- The addon's entry: SavedVariables (the account's profiles in DoubtMyRotationDB, the character's
 -- pick, place and progress in DoubtMyRotationCharDB), the timeline's frame, /dmr, the settings
 -- window and its Profiles page, the update check, the stage 1 helpers, the first-run guide and
--- level cards, the minimap button, ElvUI's look, and the same engine the aura runs (runtime.start).
+-- level cards, the minimap button, ElvUI's look, the fight review (addon/review.lua), and the same
+-- engine the aura runs (runtime.start).
 -- The aura's host gives the engine a region, saved data and a "show me" signal; here the frame is
 -- ours, always there, and needs no signal (env.show stays nil).
 local runtime = require("runtime")
@@ -19,6 +20,7 @@ local wizard = require("wizard")
 local coach = require("coach")
 local minimap = require("minimap")
 local skin = require("skin")
+local review = require("review")
 
 local M = {}
 M.NAME = "DoubtMyRotation"
@@ -207,7 +209,8 @@ function M.handle(o, msg)
   elseif a == "check" then if M.helpers then M.helpers.check() end
   elseif a == "unlock" or a == "lock" then M.move(a == "unlock")
   elseif a == "hide" then M.char.hidden = true; M.frame:Hide()
-  elseif a == "show" then M.char.hidden = false; M.frame:Show() end
+  elseif a == "show" then M.char.hidden = false; M.frame:Show()
+  elseif a == "last" or a == "history" then if M.review then M.review:open(a) end end
   -- reset: the place too, the one way back for a timeline lost off screen
   if (msg or ""):match("^%s*(%S*)"):lower() == "reset" then
     M.char.point = nil
@@ -351,7 +354,9 @@ function M.login(o)
   M.choose(o, false) -- the profile for where the character is, before the engine starts
   M.frame = M.frame or M.newFrame(o, M.char)
   M.frame:Show()
-  M.env = { region = M.frame, saved = M.db.saved, libs = o.libs }
+  -- onPress: the engine's presses to the fight review (src/runtime.lua, addon-only)
+  M.env = { region = M.frame, saved = M.db.saved, libs = o.libs,
+            onPress = function(e) if M.review then M.review:press(e) end end }
   start()
   M.skin = M.skin or skin.new({ enabled = function() return M.config.elvui ~= false end, say = say })
   M.skin:frame(M.frame)
@@ -375,6 +380,12 @@ function M.login(o)
   M.coach = M.coach or coach.new(coachDeps(o))
   M.coach:start(DoubtMyRotationCoach or CreateFrame("Frame", "DoubtMyRotationCoach"))
   M.coach:login()
+  M.review = M.review or review.new({
+    rt = function() return M.rt end, db = M.char, say = say, config = function() return M.config end,
+    now = GetTime, time = time, date = date,
+    guide = function() return M.guide end, skin = function(f) M.skin:frame(f) end,
+  })
+  M.review:start(DoubtMyRotationFights or CreateFrame("Frame", "DoubtMyRotationFights"))
   -- hidden last time: the frame's OnHide (hooked by runtime.start) puts the engine to sleep
   if M.char.hidden then M.frame:Hide() end
 end

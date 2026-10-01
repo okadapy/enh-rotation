@@ -112,6 +112,7 @@ end
 describe("addon core", function()
   before_each(function()
     core.db, core.frame, core.env, core.rt, core.panel, core.updates, core.due = nil, nil, nil, nil, nil, nil, nil
+    core.review = nil
     panels, checkers = {}, {}
     core.helpers, helperRuns = nil, {}
     core.char, core.config, core.profile, core.why, core.level = nil, nil, nil, nil, nil
@@ -242,6 +243,71 @@ describe("addon core", function()
     SlashCmdList.DOUBTMYROTATION("export")
     assert.is_true(EnhRotExportFrame.shown)
     assert.are.same(DoubtMyRotationDB.saved.enhrotSnapshots, require("build").decodeExport(EnhRotExportFrame.box.text))
+  end)
+
+  it("/dmr last opens the fight review window, /dmr history its boss history", function()
+    calm()
+    _G.DoubtMyRotationCharDB = { wizard = "done" }
+    login(opts())
+    SlashCmdList.DOUBTMYROTATION("last")
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+    SlashCmdList.DOUBTMYROTATION("history") -- already up: only the page changes
+    assert.are.equal("history", core.review.window.mode)
+    DoubtMyRotationFightWindow:Hide() -- Esc: its turn in the queue is over
+    assert.is_nil(core.guide.current)
+    SlashCmdList.DOUBTMYROTATION("history")
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+    -- ElvUI's look: the window is one of the skin's frames, with its kind
+    local styled = false
+    for _, f in ipairs(core.skin.frames) do styled = styled or f == DoubtMyRotationFightWindow end
+    assert.is_true(styled)
+    assert.are.equal("window", DoubtMyRotationFightWindow.kind)
+  end)
+
+  it("the fight review waits for the guide and for the fight's end, one window at a time", function()
+    calm()
+    login(opts())
+    assert.is_true(wizards[1]:IsShown())
+    SlashCmdList.DOUBTMYROTATION("last")
+    assert.is_false(DoubtMyRotationFightWindow:IsShown())
+    assert.truthy(G.printed[#G.printed]:find("fight review opens", 1, true))
+    wizards[1]:Hide()
+    wizards[1].close()
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+    -- a fight hides it, its end brings it back
+    DoubtMyRotationGuide.scripts.OnEvent(DoubtMyRotationGuide, "PLAYER_REGEN_DISABLED")
+    assert.is_false(DoubtMyRotationFightWindow:IsShown())
+    DoubtMyRotationGuide.scripts.OnEvent(DoubtMyRotationGuide, "PLAYER_REGEN_ENABLED")
+    assert.is_true(DoubtMyRotationFightWindow:IsShown())
+  end)
+
+  it("hands the engine a press hook and adds the fight summary option once", function()
+    shaman()
+    local o = opts()
+    local loader = login(o)
+    assert.are.equal("function", type(core.env.onPress))
+    -- the hook reaches the review's collector
+    core.review.log:begin()
+    core.env.onPress({ t = 101, key = "stormstrike", sug = "stormstrike", due = 101,
+                       last = { now = 101, value = 60, firstValue = { stormstrike = 60 } } })
+    assert.are.equal(1, core.review.log.f.presses)
+    -- booting a second time must not add the options again
+    core.boot(o)
+    local summary, check = 0, 0
+    for _, opt in ipairs(o.options) do
+      if opt.key == "fightSummary" then summary = summary + 1 end
+      if opt.key == "updateCheck" then check = check + 1 end
+    end
+    assert.are.equal(1, summary)
+    assert.are.equal(1, check)
+    assert.is_true(core.config.fightSummary)
+    -- the boss history is the character's
+    assert.are.same({}, DoubtMyRotationCharDB.fights)
+    assert.is_nil(DoubtMyRotationDB.fights)
+    -- a second login keeps the same review
+    local review = core.review
+    loader.scripts.OnEvent(loader, "PLAYER_LOGIN")
+    assert.are.equal(review, core.review)
   end)
 
   it("/dmr before login does nothing", function()
@@ -400,7 +466,7 @@ describe("addon core", function()
       assert.are.equal(n, #given)
       assert.are.equal(n + 2 + #settings.ADDON_OPTIONS, #o.options)
       assert.are.equal("updateCheck", o.options[n + 1].key)
-      assert.are.equal("elvui", o.options[#o.options].key)
+      assert.are.equal("fightSummary", o.options[#o.options].key)
       assert.is_true(core.config.updateCheck)
       assert.are.equal(o.options, panels[1].o.options)
     end)

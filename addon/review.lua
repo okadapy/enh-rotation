@@ -1,0 +1,126 @@
+-- The fight review in the game: the collector (fightlog) on the client's events and the
+-- engine's press hook, the copied presses valued out of combat one a frame, then the tips,
+-- the history, a line in chat and the window. The window waits its turn in the message queue
+-- (deps.guide, addon/guide.lua): one window at a time, none in a fight.
+local fightlog = require("fightlog")
+local advice = require("advice")
+local history = require("history")
+local fightwin = require("fightwin")
+local search = require("search")
+
+local M = {}
+M.EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "COMBAT_LOG_EVENT_UNFILTERED", "UNIT_SPELLCAST_START" }
+
+function M.boss()
+  if UnitExists("boss1") then return UnitName("boss1") end
+  if UnitExists("target") and UnitClassification("target") == "worldboss" then return UnitName("target") end
+  return nil
+end
+
+-- "25 Player", "10 Player (Heroic)", ... ; "" outside instances
+function M.difficulty()
+  local _, kind, _, name = GetInstanceInfo()
+  if kind == nil or kind == "none" then return "" end
+  return name or ""
+end
+
+local function evaluate(s, steps) return (search.evaluate(s, steps)) end
+
+local R = {}
+R.__index = R
+
+-- the engine's rt while it is running and its state is fresh (a sleeping, stopped or inactive engine
+-- keeps its last S and due: samples from them would count idle GCD that was not)
+local function live(deps)
+  local rt = deps.rt()
+  if not rt or rt.sleeping or rt.stopped or rt.inactive then return nil end
+  if rt.S and rt.S.now and rt.S.now < deps.now() - 1 then return nil end
+  return rt
+end
+
+-- deps: rt() -> the engine's rt or nil, db (the character's saved table: the boss history), say(line),
+-- config() (the active profile), now(), time(), date(fmt, t); guide() -> the message queue or nil
+-- (nil: the window opens at once and a fight hides it), skin(frame) -> ElvUI's look or nil
+function M.new(deps)
+  local self = setmetatable({ deps = deps }, R)
+  self.log = fightlog.new({
+    now = deps.now,
+    state = function() local rt = live(deps); return rt and rt.S end,
+    due = function() local rt = live(deps); return rt and rt.due end,
+    boss = M.boss,
+    targetName = function() if UnitExists("target") and UnitCanAttack("player", "target") then return UnitName("target") end end,
+    difficulty = M.difficulty,
+  })
+  self.history = history.new(deps.db, deps.time)
+  return self
+end
+
+function R:report(f)
+  local tips = advice.tips(f)
+  local entry = self.history:add(f, tips)
+  if self.deps.config().fightSummary ~= false then self.deps.say(advice.summary(f, tips, entry.trend)) end
+  if self.window and self.window.frame:IsShown() then self.window:refresh() end
+end
+
+function R:onEvent(event, ...)
+  if event == "PLAYER_REGEN_DISABLED" then
+    if self.settling then
+      fightlog.abandon(self.settling)
+      self:report(self.settling)
+      self.settling = nil
+    end
+    -- with the queue the queue hides it (and shows it again after the fight)
+    if self.window and not self:queue() then self.window:hide() end
+    self.log:begin()
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    -- a second ENABLED without DISABLED (a /reload) must not drop a fight still being valued
+    local f = self.log:finish()
+    if f then self.settling = f end
+  elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+    local _, sub, _, _, _, dst, _, _, spellId, _, _, _, amount = ...
+    if spellId == fightlog.MW_ID and dst == UnitGUID("player") then self.log:aura(sub, amount) end
+  elseif event == "UNIT_SPELLCAST_START" then
+    if (...) ~= "player" then return end
+    local _, _, _, _, startMs, endMs = UnitCastingInfo("player")
+    self.log:castStart((startMs and endMs) and (endMs - startMs) / 1000 or 0)
+  end
+end
+
+function R:onUpdate(dt)
+  if self.log:active() then
+    self.log:tick(dt)
+  elseif self.settling and fightlog.settle(self.settling, evaluate) then
+    local f = self.settling
+    self.settling = nil
+    self:report(f)
+  end
+end
+
+function R:press(e) self.log:press(e) end
+
+function R:queue() return self.deps.guide and self.deps.guide() end
+
+function R:open(mode)
+  if not self.window then
+    self.window = fightwin.new({ history = self.history, date = self.deps.date })
+    if self.deps.skin then self.deps.skin(self.window.frame) end
+  end
+  local w, q = self.window, self:queue()
+  -- already up (/dmr history over /dmr last): only the page changes, its turn goes on
+  if not q or w.frame:IsShown() then return w:open(mode, w.close) end
+  self.mode = mode
+  local queued = q:push({ id = "fights",
+    show = function(close) w:open(self.mode, close) end,
+    hide = function() w:hide() end })
+  if not queued then return end -- waiting already: it opens on the page asked last
+  if not w.frame:IsShown() then self.deps.say("the fight review opens when this window or the fight is over") end
+end
+
+function R:start(frame)
+  for _, e in ipairs(M.EVENTS) do frame:RegisterEvent(e) end
+  frame:SetScript("OnEvent", function(_, event, ...) self:onEvent(event, ...) end)
+  frame:SetScript("OnUpdate", function(_, dt) self:onUpdate(dt) end)
+  return frame
+end
+
+return M

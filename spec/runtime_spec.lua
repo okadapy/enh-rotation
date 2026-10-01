@@ -1030,6 +1030,30 @@ describe("runtime", function()
     assert.is_nil(env.saved.enhrotPresses)
   end)
 
+  -- the host's press hook (the addon's fight review): every press, recording on or off
+  it("tells the host about every press against the shown plan", function()
+    local rt, env = start()
+    local got = {}
+    env.onPress = function(e) got[#got + 1] = e end
+    runtime.update(rt, 0.3) -- shows stormstrike @0 at 100
+    rt.planner.last = { now = 100, value = 5, firstValue = { stormstrike = 5 } }
+    G.cfg.now = 100.4
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    assert.are.equal(1, #got)
+    assert.are.equal(100.4, got[1].t)
+    assert.are.equal("stormstrike", got[1].key)
+    assert.are.equal("stormstrike", got[1].sug)
+    assert.are.near(100, got[1].due, 1e-9)
+    assert.are.equal(rt.planner.last, got[1].last)
+    assert.is_nil(env.saved.enhrotPresses)
+  end)
+
+  it("runs without a press hook (the aura)", function()
+    local rt = start()
+    runtime.update(rt, 0.3)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+  end)
+
   it("counts the delay from the moment the first button became due, not from the last replan", function()
     local rt = {}
     local ss = { steps = { { key = "stormstrike", at = 0.5 } } }

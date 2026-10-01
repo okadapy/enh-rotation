@@ -20,7 +20,7 @@ M.SECTIONS = {
                                  "compact", "minimap", "levelCards" }, actions = true },
   { key = "combat", title = "Combat",
     options = { "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage", "shield",
-                "highlightButtons", "showKeybind", "hoverTips" } },
+                "highlightButtons", "showKeybind", "hoverTips", "fightSummary" } },
   { key = "advanced", title = "Advanced",
     options = { "weave", "manaPolicy", "record", "printDebug", "updateCheck", "readyCheck", "rankWarning",
                 "elvui" } },

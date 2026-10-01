@@ -66,7 +66,7 @@ describe("addon settings", function()
   end)
 
   it("plain words are actions", function()
-    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide", "check", "guide" }) do
+    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide", "check", "guide", "last", "history" }) do
       assert.are.equal(a, settings.command(OPTIONS, {}, " " .. a:upper() .. " ").action)
     end
   end)
@@ -84,7 +84,8 @@ describe("addon settings", function()
     local check
     for _, line in ipairs(r.lines) do if line:find("^/dmr check") then check = line end end
     assert.are.equal("/dmr check - is everything ready (imbues, shield, totems, ranks)", check)
-    assert.are.equal("/dmr guide - the first-run guide again", r.lines[#r.lines])
+    assert.are.equal("/dmr guide - the first-run guide again", r.lines[#r.lines - 1])
+    assert.are.equal("/dmr last - review of the last fights; /dmr history - per boss", r.lines[#r.lines])
     r = settings.command(OPTIONS, {}, "whatever")
     assert.is_nil(r.action)
     assert.are.same(settings.HELP, r.lines)
@@ -99,8 +100,8 @@ describe("addon settings", function()
       assert.is_true(settings.valid(o, o.default), o.key)
       keys[#keys + 1], defaults[#defaults + 1] = o.key, o.default
     end
-    assert.are.same({ "compact", "minimap", "levelCards", "elvui" }, keys)
-    assert.are.same({ false, true, true, true }, defaults)
+    assert.are.same({ "compact", "minimap", "levelCards", "elvui", "fightSummary" }, keys)
+    assert.are.same({ false, true, true, true, true }, defaults)
   end)
 
   it("withExtra adds the options not there yet, as a copy", function()
