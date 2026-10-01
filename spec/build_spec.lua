@@ -634,14 +634,12 @@ describe("addon-only code", function()
     assert.is_nil(aura:find("S.mods", 1, true))
   end)
 
-  it("the addon-only stubs are neutral until their tasks fill them", function()
+  -- each addon-only module loads on its own and gives what the snapshot and the formulas call
+  it("the addon-only modules load on their own with their interface", function()
     local raid, gearData, gear = dofile("src/raid.lua"), dofile("src/gear_data.lua"), dofile("src/gear.lua")
-    assert.are.same({}, raid.DEBUFFS)
-    assert.are.same({}, raid.BUFFS)
-    assert.are.same({}, raid.OWN_TOTEMS)
-    assert.are.same({ haste = 0.04, strength = 0.02 }, raid.SUPPORT)
-    assert.is_nil(raid.effects({}, {}, {}, nil))
-    assert.are.same({ SETS = {}, BONUS = {}, RELICS = {}, GLYPHS = {} }, gearData)
-    assert.is_nil(gear.effects({}, {}))
+    for _, k in ipairs({ "DEBUFFS", "BUFFS", "OWN_TOTEMS", "SUPPORT" }) do assert.is_table(raid[k], k) end
+    assert.is_function(raid.effects)
+    for _, k in ipairs({ "SETS", "BONUS", "RELICS", "GLYPHS" }) do assert.is_table(gearData[k], k) end
+    assert.is_function(gear.effects)
   end)
 end)
