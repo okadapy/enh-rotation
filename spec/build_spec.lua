@@ -296,6 +296,35 @@ describe("build (pure)", function()
     assert.are.equal("v3.1.4", mods())
   end)
 
+  it("minifies code: no comments, fewer spaces, strings untouched, line numbers kept", function()
+    local code = table.concat({
+      "local a = 1 -- a comment",
+      "  local s = \"x -- not a comment\" .. 'it\\'s' -- tail",
+      "--[[ long",
+      "comment ]] local b = a - -a",
+      "local l = [==[",
+      "  kept -- as is ]] ]==]",
+      "return s, l, b, 1 .. a, a --[[x]]+ b, b == a",
+    }, "\n")
+    local m = build.minify(code)
+    assert.are.equal(table.concat({
+      "local a=1",
+      "local s=\"x -- not a comment\"..'it\\'s'",
+      "",
+      "local b=a- -a",
+      "local l=[==[",
+      "  kept -- as is ]] ]==]",
+      "return s,l,b,1 ..a,a+b,b==a",
+    }, "\n"), m)
+    assert.are.equal(build.minify(m), m)
+    local run = function(c) return assert(loadstring(c))() end
+    assert.are.same({ run(code) }, { run(m) })
+  end)
+
+  it("treats every Lua whitespace as a separator when minifying", function()
+    assert.are.equal("local a=1\nreturn a", build.minify("local\fa\v=\t1\r\nreturn\f\va"))
+  end)
+
   it("imports recorded snapshots into a fixture file", function()
     local out = os.tmpname()
     assert.are.equal(2, build.importSnapshots(SAMPLE, out))
@@ -317,6 +346,21 @@ describe("build #integration", function()
     for _, name in ipairs(build.MODULES) do
       assert.is_not_nil(code:find('__mods["' .. name .. '"]', 1, true), name)
     end
+  end)
+
+  it("minifies every source module without changing its line count", function()
+    for _, name in ipairs(build.MODULES) do
+      local raw = build.readFile("src/" .. name .. ".lua")
+      local m = build.minify(raw)
+      assert.is_not_nil(loadstring(m), name)
+      assert.are.equal(select(2, raw:gsub("\n", "")), select(2, m:gsub("\n", "")), name)
+    end
+  end)
+
+  -- issue #20: the 3.3.5a client cuts a too long pasted import string, WeakAuras says "Error decompressing"
+  it("keeps the import string short enough to paste into the client", function()
+    local str = enc.encode(aura.transmit(build.initCode("src")))
+    assert.is_true(#str <= build.MAX_IMPORT, ("import string %d > %d bytes"):format(#str, build.MAX_IMPORT))
   end)
 
   it("uses nothing the WeakAuras sandbox blocks", function()

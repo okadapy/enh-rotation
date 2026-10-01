@@ -6,6 +6,9 @@ B.MODULES = { "util", "spells_data", "spells", "talents", "swing", "enemies", "t
               "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }
 B.OUT = "dist/DoubtMyRotation.txt"
 B.FIXTURE = "spec/fixtures/recorded.lua"
+-- Потолок длины строки импорта: клиент 3.3.5a обрезает длинную вставку (issue #20). Строка v0.1.9
+-- (63 336 байт) импортировалась, v1.0.0 (99 154) — уже нет; выше потолка — ужимать сборку.
+B.MAX_IMPORT = 63000
 -- Слова, которые песочница WeakAuras блокирует или которые запрещены в src/ (Global Constraints),
 -- и библиотеки Lua, которых нет в клиенте 3.3.5a (package, io, debug): обращение к ним падает в игре.
 B.FORBIDDEN = { "pcall", "xpcall", "loadstring", "setfenv", "getfenv", "_G", "SlashCmdList", "RunScript",
@@ -46,6 +49,78 @@ function B.version(getenv, describe)
   return clean(getenv("RELEASE_TAG")) or clean(describe()) or "dev"
 end
 
+-- Длинная скобка Lua в позиции i ("[[", "[==["): возвращает конец открывающей скобки и закрывающую.
+local function longBracket(code, i)
+  local eq = code:match("^%[(=*)%[", i)
+  if not eq then return nil end
+  return i + #eq + 1, "]" .. eq .. "]"
+end
+
+-- Нужен ли пробел между символами a и b, чтобы лексемы не слились: "x y", "1 ..", "- -", ". .", "[ [".
+local GLUED = { ["--"] = true, [".."] = true, ["[["] = true, ["[="] = true }
+function B.needsSpace(a, b)
+  if a:find("[%w_]") and (b:find("[%w_]") or b == ".") then return true end
+  return GLUED[a .. b] == true
+end
+
+-- Код без комментариев и лишних пробелов: строки и длинные строки не трогаются, переводы строк
+-- остаются на месте (номера строк в ошибках из игры совпадают с src/). Клиент 3.3.5a обрезает
+-- слишком длинную вставленную строку импорта, и WeakAuras пишет "Error decompressing" (issue #20).
+function B.minify(code)
+  local out, n, i, len = {}, 0, 1, #code
+  local ws, lineStart = false, true
+  local function emit(s)
+    if ws and not lineStart and B.needsSpace(out[n]:sub(-1), s:sub(1, 1)) then n = n + 1; out[n] = " " end
+    ws, lineStart = false, false
+    n = n + 1; out[n] = s
+  end
+  while i <= len do
+    local c = code:sub(i, i)
+    if c == "\n" then
+      n = n + 1; out[n] = "\n"
+      ws, lineStart = false, true
+      i = i + 1
+    elseif c:find("%s") then -- остальные пробельные Lua: " ", \t, \r, \f, \v
+      ws = true
+      i = i + 1
+    elseif code:sub(i, i + 1) == "--" then
+      local open, close = longBracket(code, i + 2)
+      if open then
+        local stop = assert(code:find(close, open + 1, true), "unfinished long comment")
+        local _, lines = code:sub(i, stop):gsub("\n", "")
+        for _ = 1, lines do n = n + 1; out[n] = "\n" end
+        if lines > 0 then ws, lineStart = false, true else ws = true end
+        i = stop + #close
+      else
+        i = (code:find("\n", i, true) or len + 1)
+      end
+    elseif c == '"' or c == "'" then
+      local j = i + 1
+      while true do
+        local d = code:sub(j, j)
+        assert(d ~= "", "unfinished string")
+        if d == "\\" then j = j + 2
+        elseif d == c then break
+        else j = j + 1 end
+      end
+      emit(code:sub(i, j))
+      i = j + 1
+    else
+      local open, close = longBracket(code, i)
+      if open then
+        local stop = assert(code:find(close, open + 1, true), "unfinished long string")
+        emit(code:sub(i, stop + #close - 1))
+        i = stop + #close
+      else
+        local j = code:find("[%s\"'%-%[]", i + 1) or len + 1
+        emit(code:sub(i, j - 1))
+        i = j
+      end
+    end
+  end
+  return table.concat(out)
+end
+
 -- src/version.lua в сборке заменяется строкой версии (version = nil: B.version()).
 function B.bundle(srcDir, version)
   version = version or B.version()
@@ -54,7 +129,7 @@ function B.bundle(srcDir, version)
     "local function __require(name)\n  local m = __mods[name]\n  if m == nil then error('DoubtMyRotation: module not loaded: ' .. name) end\n  return m\nend\n",
   }
   for _, name in ipairs(B.MODULES) do
-    local code = name == "version" and ("return %q"):format(version) or B.readFile(srcDir .. "/" .. name .. ".lua")
+    local code = name == "version" and ("return %q"):format(version) or B.minify(B.readFile(srcDir .. "/" .. name .. ".lua"))
     parts[#parts + 1] = ('__mods["%s"] = (function(require)\n%s\nend)(__require)\n'):format(name, code)
   end
   return table.concat(parts)
