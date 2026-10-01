@@ -21,6 +21,8 @@ function M.effects(items, glyphs)
   for _, id in ipairs(items or {}) do
     local relic = data.RELICS[id]
     if relic then add(mods, relic); any = true end
+    local proc = data.PROCS[id]
+    if proc then mods.proc = proc; any = true end -- a table, not an addition (one relic slot)
     local set = SET_OF[id]
     if set then pieces[set] = (pieces[set] or 0) + 1 end
   end
