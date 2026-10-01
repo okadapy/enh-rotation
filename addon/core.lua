@@ -6,6 +6,7 @@ local runtime = require("runtime")
 local settings = require("settings")
 local panel = require("panel")
 local update = require("update")
+local helpers = require("helpers")
 
 local M = {}
 M.NAME = "DoubtMyRotation"
@@ -14,14 +15,16 @@ M.PAUSE = 0.3
 
 local function say(line) print(M.TAG .. line) end
 
--- the build's option list plus the update check's, as a copy: the caller's list stays the aura's
+-- the build's option list plus the addon's own (the update check, the helpers), as a copy: the
+-- caller's list stays the aura's
 local function withUpdate(options)
-  local list = {}
-  for i, opt in ipairs(options) do
-    if opt.key == update.OPTION.key then return options end
-    list[i] = opt
+  local list, have = {}, {}
+  for i, opt in ipairs(options) do list[i], have[opt.key] = opt, true end
+  local extra = { update.OPTION }
+  for _, opt in ipairs(helpers.options()) do extra[#extra + 1] = opt end
+  for _, opt in ipairs(extra) do
+    if not have[opt.key] then list[#list + 1], have[opt.key] = opt, true end
   end
-  list[#list + 1] = update.OPTION
   return list
 end
 
@@ -71,6 +74,20 @@ local function start()
   if M.rt and not M.frame:IsVisible() then runtime.sleep(M.rt) end
 end
 
+-- what the helpers (addon/helpers.lua) read of the running engine: one table, filled anew from
+-- M.rt each call, so a restarted engine is picked up with no word to them
+local VIEW = {}
+function M.view()
+  local rt = M.rt
+  if not rt then return nil end
+  local tl = rt.tl
+  VIEW.plan, VIEW.S, VIEW.planner = rt.plan, rt.S, rt.planner
+  VIEW.cache = rt.ctx and rt.ctx.cache
+  VIEW.at, VIEW.frame, VIEW.icon = tl and tl.at, tl and tl.frame, tl and tl.icons and tl.icons[1]
+  VIEW.active = not (rt.sleeping or rt.stopped or rt.inactive)
+  return VIEW
+end
+
 function M.login(o)
   local _, class = UnitClass("player")
   if class ~= "SHAMAN" then return end
@@ -84,6 +101,7 @@ function M.login(o)
     enabled = function() return M.db.config.updateCheck ~= false end,
   })
   M.updates:start(DoubtMyRotationUpdates or CreateFrame("Frame", "DoubtMyRotationUpdates"))
+  M.helpers = M.helpers or helpers.start(M, say)
   -- hidden last time: the frame's OnHide (hooked by runtime.start) puts the engine to sleep
   if M.db.hidden then M.frame:Hide() end
 end
@@ -116,6 +134,7 @@ function M.handle(o, msg)
   local a = r.action
   if a == "open" then M.open()
   elseif a == "export" then runtime.showExport(M.env)
+  elseif a == "check" then if M.helpers then M.helpers.check() end
   elseif a == "unlock" or a == "lock" then
     M.frame:EnableMouse(a == "unlock")
     if a == "unlock" then M.frame.bg:Show() else M.frame.bg:Hide() end

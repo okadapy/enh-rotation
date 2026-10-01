@@ -76,6 +76,10 @@ describe("settings window", function()
     end
     assert.are.equal("advanced", where.updateCheck)
     assert.is_nil(placed.export)
+    -- the helpers' options (addon/helpers.lua) too
+    for _, o in ipairs(require("helpers").options()) do assert.is_true(placed[o.key], o.key) end
+    for _, k in ipairs({ "highlightButtons", "showKeybind", "hoverTips" }) do assert.are.equal("general", where[k], k) end
+    for _, k in ipairs({ "readyCheck", "rankWarning" }) do assert.are.equal("advanced", where[k], k) end
   end)
 
   it("a section key with no such option is skipped", function()
