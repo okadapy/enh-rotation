@@ -734,7 +734,12 @@ function M.showExport(env)
 end
 
 function M.timelineOptions(config)
-  return { icons = config.icons, seconds = config.seconds, scale = config.scale, showReason = config.showReason ~= false }
+  local o = { icons = config.icons, seconds = config.seconds, scale = config.scale, showReason = config.showReason ~= false }
+  --@addon
+  -- one button mode: an addon option only, the aura has no such field
+  o.compact = config.compact == true
+  --@end
+  return o
 end
 
 -- WotLK 3.3.5a only: spell ranks, talents, combat log arguments and the API are of that client

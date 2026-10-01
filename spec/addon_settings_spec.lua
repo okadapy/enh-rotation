@@ -66,7 +66,7 @@ describe("addon settings", function()
   end)
 
   it("plain words are actions", function()
-    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide", "check" }) do
+    for _, a in ipairs({ "export", "lock", "unlock", "show", "hide", "check", "guide" }) do
       assert.are.equal(a, settings.command(OPTIONS, {}, " " .. a:upper() .. " ").action)
     end
   end)
@@ -84,9 +84,37 @@ describe("addon settings", function()
     local check
     for _, line in ipairs(r.lines) do if line:find("^/dmr check") then check = line end end
     assert.are.equal("/dmr check - is everything ready (imbues, shield, totems, ranks)", check)
+    assert.are.equal("/dmr guide - the first-run guide again", r.lines[#r.lines])
     r = settings.command(OPTIONS, {}, "whatever")
     assert.is_nil(r.action)
     assert.are.same(settings.HELP, r.lines)
+  end)
+
+  it("the addon's own options: toggles with valid defaults, in a fixed order", function()
+    local keys, defaults = {}, {}
+    for _, o in ipairs(settings.ADDON_OPTIONS) do
+      assert.are.equal("toggle", o.type)
+      assert.is_string(o.name)
+      assert.is_string(o.desc)
+      assert.is_true(settings.valid(o, o.default), o.key)
+      keys[#keys + 1], defaults[#defaults + 1] = o.key, o.default
+    end
+    assert.are.same({ "compact", "minimap", "levelCards", "elvui" }, keys)
+    assert.are.same({ false, true, true, true }, defaults)
+  end)
+
+  it("withExtra adds the options not there yet, as a copy", function()
+    local extra = { { type = "toggle", key = "showReason", name = "again", default = false },
+                    { type = "toggle", key = "brandNew", name = "Brand new", default = true } }
+    local list = settings.withExtra(OPTIONS, extra)
+    assert.are.equal(#OPTIONS + 1, #list)
+    assert.are.equal(OPTIONS[1], list[1])
+    assert.are.equal(OPTIONS[3], list[3])
+    assert.are.equal("brandNew", list[#list].key)
+    assert.are_not.equal(OPTIONS, list)
+    assert.are.equal(3, #OPTIONS)
+    assert.are.equal(2, #extra)
+    assert.are.same(OPTIONS, settings.withExtra(OPTIONS, nil))
   end)
 
   it("snap rounds a slider value to its step inside the range", function()

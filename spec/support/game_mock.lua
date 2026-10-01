@@ -47,6 +47,8 @@ local function region(kind)
   function r:SetAllPoints(other) self.allPoints = other or true end
   function r:SetClampedToScreen(c) self.clamped = c end
   function r:GetObjectType() return kind end
+  function r:SetFrameLevel(l) self.level = l end
+  function r:GetFrameLevel() return self.level or 1 end
   return r
 end
 
@@ -66,12 +68,17 @@ function G.fontString()
   function f:GetText() return self.text end
   function f:SetTextColor(...) self.textColor = { ... } end
   function f:SetJustifyH(j) self.justify = j end
+  function f:SetJustifyV(j) self.justifyV = j end
   return f
 end
+
+-- methods a UI addon puts on every frame's metatable (ElvUI's SetTemplate); emptied by G.install
+G.FRAME = {}
 
 function G.frame(kind, name)
   local f = region(kind or "Frame")
   f.name, f.events, f.scripts, f.children = name, {}, {}, {}
+  f.kids = {}
   function f:RegisterEvent(e)
     if e == "UNIT_POWER" then error("Attempt to register unknown event UNIT_POWER") end
     self.events[e] = true
@@ -124,7 +131,21 @@ function G.frame(kind, name)
       self.children[#self.children + 1] = fs
     end
   end
-  return f
+  -- the windows of stage 3: child frames, the minimap button, edit boxes, buttons
+  function f:GetChildren() return unpack(self.kids) end
+  function f:GetCenter() local c = self.center or { 0, 0 }; return c[1], c[2] end
+  function f:GetEffectiveScale() return self.scale or 1 end
+  function f:RegisterForClicks(...) self.clicks = { ... } end
+  function f:SetNormalTexture(p) self.normalTexture = p end
+  function f:SetHighlightTexture(p) self.highlightTexture = p end
+  function f:SetPushedTexture(p) self.pushedTexture = p end
+  function f:ClearFocus() self.focused = false end
+  function f:SetToplevel(t) self.toplevel = t end
+  function f:Enable() self.disabled = false end
+  function f:Disable() self.disabled = true end
+  -- the 3.3.5a client gives 1 or nil
+  function f:IsEnabled() return (not self.disabled) and 1 or nil end
+  return setmetatable(f, { __index = G.FRAME })
 end
 
 -- cfg: now, level, mana, manaMax, int, hp, hpMax, ap, sp={[school]=n}, crit, spellCrit, ratings={[cr]=n}, hitMod,
@@ -135,10 +156,12 @@ end
 -- target={exists,enemy,level,hp,hpMax,guid,classification,dead,player}, totems={[slot]={name,start,dur}},
 -- enchants={mh=bool,oh=bool}, tooltip={[16]={lines},[17]={lines}}, links={[slot]=itemLink}, casting={name,startMs,endMs}, talents={[tab]={{name,rank}}}
 -- inventory={[slot]=itemId}, glyphs={[socket]={spellId,glyphType}}
+-- lockdown, instance="none"|"pvp"|"arena"|"party"|"raid", zone, cursor={x,y}, minimapShape, minimapCenter={x,y}
 function G.install(cfg)
   cfg = cfg or {}
   G.cfg = cfg
   G.sent, G.printed = {}, {}
+  for k in pairs(G.FRAME) do G.FRAME[k] = nil end
   local byId, rankOf = G.names()
   local known, book = cfg.known or {}, cfg.bookOnly or {}
   local function inBook(name)
@@ -285,14 +308,32 @@ function G.install(cfg)
     local e = cfg.enchants or {}
     return e.mh and 1 or nil, 1000, 0, e.oh and 1 or nil, 1000, 0
   end
-  _G.CreateFrame = function(kind, name, _, template)
+  _G.CreateFrame = function(kind, name, parent, template)
     local f = G.frame(kind, name)
     f.template = template
+    -- not f.parent: on an options page that field names the parent category (panel_mock sets it)
+    if parent and parent.kids then parent.kids[#parent.kids + 1] = f end
     if name then _G[name] = f end
     return f
   end
   _G.UIParent = G.frame("Frame", "UIParent")
   _G.WorldFrame = G.frame("Frame", "WorldFrame")
+  _G.InCombatLockdown = function() return cfg.lockdown and 1 or nil end
+  -- IsInInstance's second value: "none", "pvp", "arena", "party", "raid" (FrameXML WorldStateFrame.lua)
+  _G.IsInInstance = function()
+    local kind = cfg.instance or "none"
+    return (kind ~= "none") and 1 or nil, kind
+  end
+  _G.GetInstanceInfo = function()
+    local kind = cfg.instance or "none"
+    return cfg.zone or "Northrend", kind, 1, "", kind == "raid" and 25 or 5, 0, false
+  end
+  _G.GetCursorPosition = function() local c = cfg.cursor or { 0, 0 }; return c[1], c[2] end
+  _G.Minimap = G.frame("Frame", "Minimap")
+  Minimap.center = cfg.minimapCenter or { 1000, 700 }
+  -- the client has no GetMinimapShape; addons that reshape the minimap (ElvUI) define it
+  _G.GetMinimapShape = cfg.minimapShape and function() return cfg.minimapShape end or nil
+  _G.UISpecialFrames = {}
   _G.WeakAuras = { ScanEvents = function(...) G.sent[#G.sent + 1] = { ... } end }
   _G.print = function(...)
     local parts = {}
@@ -312,8 +353,9 @@ function G.install(cfg)
   _G.InterfaceOptionsFrame_OpenToCategory = function(panel) G.opened = panel; G.opens = G.opens + 1 end
   G.addonSent = {}
   _G.SendAddonMessage = function(...) G.addonSent[#G.addonSent + 1] = { ... } end
-  for _, k in ipairs({ "Addon", "DB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat", "PanelAdvanced",
-                          "Highlight", "Explain", "Checks", "Ready" }) do
+  for _, k in ipairs({ "Addon", "DB", "CharDB", "Loader", "Frame", "Timer", "Updates", "Panel", "PanelCombat",
+                       "PanelAdvanced", "PanelProfiles", "Highlight", "Explain", "Checks", "Ready", "Wizard", "Card",
+                       "MinimapButton", "Guide", "Coach", "Events" }) do
     _G["DoubtMyRotation" .. k] = nil
   end
   return cfg

@@ -21,6 +21,10 @@ function M.options(opts)
   local o = {}
   for k, v in pairs(M.DEFAULTS) do o[k] = v end
   for k, v in pairs(opts or {}) do if v ~= nil then o[k] = v end end
+  --@addon
+  -- one button mode: one icon on a frame just wide enough for it (the alert sits left of it)
+  if o.compact then o.icons, o.width = 1, 2 * o.nowX end
+  --@end
   return o
 end
 
@@ -68,6 +72,9 @@ function M.layout(plan, S, opts, elapsed)
   local t = S.target
   local L = { nowX = o.nowX, icons = {}, ticks = {}, window = nil, gcd = nil, reason = nil,
               dots = math.max(0, math.min(5, mw)), idle = t ~= nil and not (t.exists and t.enemy) }
+  --@addon
+  L.compact = o.compact
+  --@end
   local prev
   local steps = (plan and plan.steps) or {}
   -- While the first button is overdue (not pressed yet) the rest of the plan waits with it: the
@@ -82,6 +89,10 @@ function M.layout(plan, S, opts, elapsed)
       local big = #L.icons == 0
       local size = big and o.big or o.small
       local x = M.xOf(t, o)
+      --@addon
+      -- one button mode: the icon waits on the line, the glow says when (no lane to slide along)
+      if o.compact then x = o.nowX end
+      --@end
       if prev then x = math.max(x, prev.x + (prev.size + size) / 2 + o.gap) end
       x = math.min(x, o.width)
       local it = { key = st.key, icon = meta.icon, x = x, size = size, big = big, t = t }
@@ -90,6 +101,9 @@ function M.layout(plan, S, opts, elapsed)
       prev = it
     end
   end
+  --@addon
+  if o.compact then return L end
+  --@end
   local swings = M.swingTimes(S, o.seconds + elapsed)
   for _, s in ipairs(swings) do
     local t = s.t - elapsed
@@ -227,6 +241,9 @@ function TL:setup(parent, opts)
   if o.scale then f:SetScale(o.scale) end
   place(self.lane, f, (o.nowX + o.width) / 2, M.TICK_Y, o.width - o.nowX, 1)
   place(self.now, f, o.nowX, o.height / 2, 2, o.height)
+  --@addon
+  if o.compact then self:showLane(false) end
+  --@end
   -- textures are only ever added: fewer icons after an option change just leaves some unused
   self.allIcons = self.allIcons or {}
   self.icons = {}
@@ -309,6 +326,10 @@ function TL:tick(dt)
   local o, f = self.o, self.frame
   local L = M.layout(self.plan, self.S, o, GetTime() - self.at)
   self:showLane(not L.idle)
+  --@addon
+  -- one button mode: no lane and no now-line (the icon itself stands on that spot)
+  if L.compact then self:showLane(false) end
+  --@end
   if L.idle then
     for _, ic in ipairs(self.icons) do ic:Hide() end
     for _, t in ipairs(self.ticks) do t:Hide() end
@@ -379,6 +400,9 @@ function TL:tick(dt)
     d:SetVertexColor(unpack(i <= L.dots and M.COLORS.dotOn or M.COLORS.dotOff))
     d:Show()
   end
+  --@addon
+  if L.compact then for _, d in ipairs(self.dots) do d:Hide() end end
+  --@end
   local first = L.icons[1]
   if o.showReason and L.reason and first then
     self.reason:SetText(L.reason)

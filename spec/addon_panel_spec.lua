@@ -78,8 +78,13 @@ describe("settings window", function()
     assert.is_nil(placed.export)
     -- the helpers' options (addon/helpers.lua) too
     for _, o in ipairs(require("helpers").options()) do assert.is_true(placed[o.key], o.key) end
-    for _, k in ipairs({ "highlightButtons", "showKeybind", "hoverTips" }) do assert.are.equal("general", where[k], k) end
+    -- on Combat: General has no room left for them (see the page size test)
+    for _, k in ipairs({ "highlightButtons", "showKeybind", "hoverTips" }) do assert.are.equal("combat", where[k], k) end
     for _, k in ipairs({ "readyCheck", "rankWarning" }) do assert.are.equal("advanced", where[k], k) end
+    -- and the addon's own (settings.ADDON_OPTIONS)
+    for _, o in ipairs(settings.ADDON_OPTIONS) do assert.is_true(placed[o.key], o.key) end
+    for _, k in ipairs({ "compact", "minimap", "levelCards" }) do assert.are.equal("general", where[k], k) end
+    assert.are.equal("advanced", where.elvui)
   end)
 
   it("a section key with no such option is skipped", function()
@@ -210,13 +215,117 @@ describe("settings window", function()
     assert.are.same({ 2, 1 }, { h.cfg.scale, h.cfg.mode })
   end)
 
-  it("the action buttons call the host and show its label", function()
+  it("the action buttons call the host and show its label, two in a row", function()
     local h = host()
     local f = panel.new({ options = OPTIONS }, h)
     f.refresh(f)
     assert.are.equal("Unlock timeline", f.buttons.lock.text)
-    for _, name in ipairs({ "lock", "export", "hide" }) do f.buttons[name]:Click() end
-    assert.are.same({ "lock", "export", "hide" }, h.actions)
+    assert.are.equal("guide", f.buttons.guide.text)
+    for _, name in ipairs({ "lock", "export", "hide", "guide" }) do
+      f.buttons[name]:Click()
+      assert.are.equal("button", f.buttons[name].kind)
+    end
+    assert.are.same({ "lock", "export", "hide", "guide" }, h.actions)
     assert.are.equal(f, f.buttons.lock:GetParent())
+    assert.are.equal(2, panel.PER_ROW)
+    -- the third starts the second row, under the first
+    assert.are.equal(f.buttons.lock.point[4], f.buttons.hide.point[4])
+    assert.is_true(f.buttons.hide.point[5] < f.buttons.lock.point[5])
+    assert.are.equal(f.buttons.lock.point[5], f.buttons.export.point[5])
+    assert.are.equal(f.buttons.hide.point[5], f.buttons.guide.point[5])
+    assert.are.equal(f.buttons.export.point[4], f.buttons.guide.point[4])
+  end)
+
+  -- a check box has no label above it, a slider or a list does: a run of check boxes sits closer
+  it("check boxes in a run take a shorter row", function()
+    local opts = { OPTIONS[1], OPTIONS[3],
+                   { type = "toggle", key = "showLust", name = "Lust", default = true },
+                   { type = "range", key = "icons", name = "Icons", min = 1, max = 5, default = 3 } }
+    local f = panel.new({ options = opts }, host())
+    local function y(k) return f.controls[k].point[5] end
+    assert.is_true(panel.TOGGLE_ROW < panel.ROW)
+    assert.are.equal(panel.TOP, y("scale"))
+    assert.are.equal(panel.TOP - panel.ROW, y("showReason"))
+    assert.are.equal(y("showReason") - panel.TOGGLE_ROW, y("showLust"))
+    assert.are.equal(y("showLust") - panel.ROW, y("icons"))
+  end)
+
+  -- Interface Options in 3.3.5a (InterfaceOptionsFrame.xml): a 648 x 520 window, the category
+  -- list 175 x 429 on its left; a page gets the rest, about 413 x 429. What sticks out of it is
+  -- cut off or lies over the window's border and buttons.
+  local PAGE_W, PAGE_H = 413, 429
+  -- the templates' own sizes (OptionsSliderTemplate 144 x 17 with its min / max under it,
+  -- InterfaceOptionsCheckButtonTemplate 26 x 26 with its text to the right, UIDropDownMenu_SetWidth
+  -- adds 25 px on each side, 32 tall); the text's width is a guess: 6 px a letter of GameFontHighlight
+  local function box(w)
+    local p = w.point
+    assert.are.equal("TOPLEFT", p[1])
+    assert.are.equal("TOPLEFT", p[3])
+    local x, y, width, height = p[4], p[5], w.w, w.h
+    if w.kind == "range" then width, height = 144, 17 + 14
+    elseif w.kind == "toggle" then width, height = 26 + 2 + 6 * #(_G[w:GetName() .. "Text"].text or ""), 26
+    elseif w.kind == "select" then width, height = (w.ddWidth or 0) + 50, 32 end
+    return x, y, x + width, y - height
+  end
+
+  local function fits(page, list)
+    assert.is_true(#list > 0, page.name)
+    for _, w in ipairs(list) do
+      local left, top, right, bottom = box(w)
+      local what = page.name .. ": " .. tostring(w:GetName())
+      assert.is_true(left >= 0 and top <= 0, what)
+      assert.is_true(right <= PAGE_W, what .. " ends at x = " .. right)
+      assert.is_true(bottom >= -PAGE_H, what .. " ends at y = " .. bottom)
+    end
+  end
+
+  it("every page, Profiles too, fits in Interface Options' page area", function()
+    local list = settings.withExtra(require("build").addonOptions().list, { require("update").OPTION })
+    list = settings.withExtra(settings.withExtra(list, require("helpers").options()), settings.ADDON_OPTIONS)
+    local f = panel.new({ options = list }, host())
+    -- the real labels: the longest check box text is the one to measure
+    for _, opt in ipairs(list) do
+      local c = f.controls[opt.key]
+      if opt.type == "toggle" then assert.are.equal(opt.name, _G[c:GetName() .. "Text"].text) end
+    end
+    for _, sec in ipairs(panel.SECTIONS) do
+      local page, mine = f.pages[sec.key], {}
+      for _, w in ipairs(f.widgets) do
+        if w:GetParent() == page then mine[#mine + 1] = w end
+      end
+      fits(page, mine)
+    end
+    local names = function() return { "Default" } end
+    local p = require("profilepage").new({ list = names, current = function() return "Default" end,
+      active = function() return "Default", "picked" end, rule = function() end })
+    fits(p, p.widgets)
+  end)
+
+  -- addon/skin.lua styles what is listed here, by kind
+  it("lists every control and button of all pages in widgets", function()
+    local f = panel.new({ options = OPTIONS }, host())
+    local seen = {}
+    for _, w in ipairs(f.widgets) do
+      assert.is_string(w.kind)
+      seen[w] = true
+    end
+    for _, c in pairs(f.controls) do assert.is_true(seen[c]) end
+    for _, b in pairs(f.buttons) do assert.is_true(seen[b]) end
+    assert.are.equal(#OPTIONS + #panel.ACTIONS, #f.widgets)
+  end)
+
+  -- another profile came in (addon/core.lua): Cancel goes back to it, not to the old profile
+  it("reload takes a fresh snapshot for Cancel only when the window had one", function()
+    local h = host()
+    local f = panel.new({ options = OPTIONS }, h)
+    panel.reload(f)
+    assert.is_nil(f.opened)
+    f.refresh(f)
+    h.cfg = { scale = 2, mode = 2, showReason = false } -- the new profile's values
+    panel.reload(f)
+    assert.are.equal(2, f.controls.scale:GetValue())
+    f.controls.scale:SetValue(1.5)
+    f.cancel(f)
+    assert.are.same({ scale = 2, mode = 2, showReason = false }, h.cfg)
   end)
 end)
