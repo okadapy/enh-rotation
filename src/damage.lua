@@ -12,6 +12,8 @@ M.ARMOR_POINTS = { { 1, 20 }, { 20, 600 }, { 40, 1600 }, { 60, 3200 }, { 70, 600
 M.WF_AP = { { 80, 1250 }, { 76, 1090 }, { 71, 835 }, { 68, 445 }, { 60, 333 }, { 50, 249 }, { 40, 119 }, { 30, 46 } }
 -- approx: Flametongue fire damage per 1.0 weapon speed, by rank learn level
 M.FT_PER_SPEED = { { 80, 52 }, { 76, 45 }, { 71, 40 }, { 64, 35.5 }, { 56, 24 }, { 46, 17 }, { 36, 11 }, { 26, 7 }, { 18, 4.5 }, { 10, 2.5 } }
+-- Elemental Weapons: x damage of the whole Windfury attack, not its AP bonus (tooltip 29080
+-- "increases the damage caused by your Windfury Weapon effect"; wowsims weapon_imbues.go DamageMultiplier)
 M.EW_WF = { 0.13, 0.27, 0.40 }
 M.EW_FT = { 0.10, 0.20, 0.30 }
 M.WF_CHANCE, M.WF_ICD = 0.2, 3
@@ -156,9 +158,9 @@ function M.wf(S)
   local w = S.weapons.mh
   if not w or w.enchant ~= "wf" then return 0, 0 end
   local ew = talent(S, "elementalWeapons")
-  local bonus = byLevel(M.WF_AP, S.player.level) * (1 + (M.EW_WF[ew] or 0))
+  local bonus = byLevel(M.WF_AP, S.player.level)
   local procs = M.WF_CHANCE / (1 + M.WF_CHANCE * math.floor(M.WF_ICD / w.speed))
-  local attack = (avg(w) + bonus / 14 * wspeed(w)) * M.meleeTable(S, false).factor * M.armorMult(S)
+  local attack = (avg(w) + bonus / 14 * wspeed(w)) * (1 + (M.EW_WF[ew] or 0)) * M.meleeTable(S, false).factor * M.armorMult(S)
   return procs * 2 * attack, procs
 end
 
@@ -371,7 +373,8 @@ function M.action(S, key)
     if not oh then return 0 end
     local y = M.meleeTable(S, false)
     local bonus = oh.enchant == "ft" and 1.25 or 1
-    return M.normalized(S, "oh") * bonus * y.factor + procsPerHit(S, "oh") * y.landed
+    -- "Weapon Damage - %" (tooltip 60103), not normalized like Stormstrike; wowsims lavalash.go OHWeaponDamage
+    return avg(oh) * bonus * y.factor + procsPerHit(S, "oh") * y.landed
   end
   return 0
 end
