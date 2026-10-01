@@ -121,7 +121,7 @@ end
 -- known={[id]=true}, bookOnly={[id]=true}, costs={[name]=n}, castMs={[name]=ms}, cooldowns={[name]={start,dur}},
 -- inRange={[name]=0|1}, interact, auras={[unit]={HELPFUL={...},HARMFUL={...}}} (name,count,expires,caster,id),
 -- target={exists,enemy,level,hp,hpMax,guid,classification,dead,player}, totems={[slot]={name,start,dur}},
--- enchants={mh=bool,oh=bool}, tooltip={[16]={lines},[17]={lines}}, casting={name,startMs,endMs}, talents={[tab]={{name,rank}}}
+-- enchants={mh=bool,oh=bool}, tooltip={[16]={lines},[17]={lines}}, links={[slot]=itemLink}, casting={name,startMs,endMs}, talents={[tab]={{name,rank}}}
 function G.install(cfg)
   cfg = cfg or {}
   G.cfg = cfg
@@ -239,6 +239,7 @@ function G.install(cfg)
   _G.GetNetStats = function() return 0, 0, cfg.latencyMs or 50 end
   _G.GetNumRaidMembers = function() return cfg.raid or 0 end
   _G.GetNumPartyMembers = function() return cfg.party or 0 end
+  _G.GetInventoryItemLink = function(_, slot) return ((cfg.links or {})[slot]) end
   _G.GetUnitSpeed = function() return cfg.moving and 7 or 0 end
   _G.UnitAffectingCombat = function(u)
     local t = u == "target" and tgt()

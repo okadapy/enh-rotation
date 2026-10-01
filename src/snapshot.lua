@@ -127,7 +127,10 @@ end
 
 function M.enchants(c, now)
   local hasMH, _, _, hasOH = GetWeaponEnchantInfo()
-  local sig = tostring(hasMH) .. "/" .. tostring(hasOH)
+  -- the equipped items too: a weapon swap with the same imbues changes the tooltip speed
+  local link = GetInventoryItemLink
+  local sig = tostring(hasMH) .. "/" .. tostring(hasOH) .. "/" .. tostring(link and link("player", 16))
+    .. "/" .. tostring(link and link("player", 17))
   if sig ~= c.enchantSig or now - c.enchantAt > M.ENCHANT_RESCAN then
     local tip = M.tooltip()
     local mh, mhSpeed = M.enchantOf(tip, 16, c.enchantNames)

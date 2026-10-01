@@ -94,6 +94,16 @@ describe("snapshot", function()
     assert.is_nil(S.weapons.mh.base)
   end)
 
+  it("a weapon swap rereads the speed at once, with the same imbues", function()
+    install({ speed = { 1.73, 1.73 }, enchants = { mh = true, oh = true }, links = { [16] = "axe:1", [17] = "axe:2" },
+              tooltip = { [16] = { "Some Axe", "Speed 2.70" }, [17] = { "Other Axe", "Speed 2.60" } } })
+    local c = ctx()
+    assert.are.equal(2.7, snapshot.build(c).weapons.mh.base)
+    install({ speed = { 1.73, 1.73 }, enchants = { mh = true, oh = true }, links = { [16] = "sword:3", [17] = "axe:2" },
+              tooltip = { [16] = { "Fast Sword", "Speed 1.80" }, [17] = { "Other Axe", "Speed 2.60" } } })
+    assert.are.equal(1.8, snapshot.build(c).weapons.mh.base)
+  end)
+
   it("an imbue it does not know (Frostbrand, Earthliving) is 'other', not missing", function()
     install({ enchants = { mh = true, oh = true },
               tooltip = { [16] = { "Some Axe", "Frostbrand 9 (30 min)" }, [17] = { "Other Axe", "Earthliving 6 (30 min)" } } })
