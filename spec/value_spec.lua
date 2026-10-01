@@ -323,6 +323,24 @@ describe("value.terminal", function()
     assert.are.near((value.TAIL - 2) * value.SUPPORT * dps * value.DISCOUNT, value.terminal(long) - value.terminal(short), 1e-6)
   end)
 
+  -- the group gives part of what our totems give (raid.lua: Horn of Winter, another Windfury
+  -- Totem, Improved Icy Talons): our set is worth only the rest, S.mods.support
+  it("support totems the group already covers are worth only S.mods.support", function()
+    local function at(remains, mods)
+      local S = base({ totems = { fire = { kind = false, remains = 0 }, water = { remains = remains } } })
+      S.mods = mods
+      return S
+    end
+    local long = at(200)
+    local dps = damage.auto(long, "mh") / long.swing.mh.speed + damage.auto(long, "oh") / long.swing.oh.speed
+    local m = { support = 0.02 }
+    assert.are.near((value.TAIL - 2) * 0.02 * dps * value.DISCOUNT, value.terminal(at(200, m)) - value.terminal(at(2, m)), 1e-6)
+    m = { support = 0 }
+    assert.are.near(0, value.terminal(at(200, m)) - value.terminal(at(2, m)), 1e-6)
+    -- other mods leave the share alone
+    assert.are.equal(value.terminal(at(200)), value.terminal(at(200, { armor = 0.76 })))
+  end)
+
   -- stub damage: Stormstrike 2000 (351 mana), Earth Shock 1800 (791), Lava Lash 1500 (176)
   describe("solo mana reserve while the target is on its way", function()
     local function at(mana, over)

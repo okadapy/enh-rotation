@@ -224,6 +224,9 @@ function M.cloneState(S)
     now = S.now, gcdRemains = S.gcdRemains, castRemains = S.castRemains, gcd = S.gcd, latency = S.latency,
     mode = S.mode, shieldPref = S.shieldPref, player = S.player, weapons = S.weapons, talents = S.talents, enemies = S.enemies,
     cooldowns = S.cooldowns, cdAllowed = S.cdAllowed, weaveMin = S.weaveMin, memo = S.memo, spells = spellMap(S.spells), inflight = next(S.inflight or {}) and shallow(S.inflight) or {},
+    --@addon
+    mods = S.mods, -- raid debuffs and gear: read-only, one table for the whole search
+    --@end
     buffs = { mw = { stacks = b.mw.stacks, remains = b.mw.remains },
               ls = { charges = b.ls.charges, remains = b.ls.remains },
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
@@ -251,6 +254,9 @@ function fillState(n, S)
   n.now, n.gcdRemains, n.castRemains, n.gcd, n.latency = S.now, S.gcdRemains, S.castRemains, S.gcd, S.latency
   n.mode, n.shieldPref, n.player, n.weapons, n.talents, n.enemies = S.mode, S.shieldPref, S.player, S.weapons, S.talents, S.enemies
   n.cooldowns, n.cdAllowed, n.weaveMin, n.memo = S.cooldowns, S.cdAllowed, S.weaveMin, S.memo
+  --@addon
+  n.mods = S.mods
+  --@end
   local map, sp = n.spells, S.spells
   map.stormstrike, map.lavaLash, map.earthShock, map.flameShock = sp.stormstrike, sp.lavaLash, sp.earthShock, sp.flameShock
   map.frostShock, map.lightningBolt, map.chainLightning = sp.frostShock, sp.lightningBolt, sp.chainLightning
@@ -1005,6 +1011,9 @@ local function fillScratch(S, dt)
     n.shieldPref = S.shieldPref
     n.cooldowns, n.cdAllowed = S.cooldowns, S.cdAllowed
     n.weaveMin = S.weaveMin
+    --@addon
+    n.mods = S.mods
+    --@end
     t.exists, t.enemy, t.level, t.hpMax, t.hpPct = st.exists, st.enemy, st.level, st.hpMax, st.hpPct
     t.guessed, t.armor, t.inCombat, t.isPlayer, t.isBoss = st.guessed, st.armor, st.inCombat, st.isPlayer, st.isBoss
     n.swing.resetByInstant = S.swing.resetByInstant

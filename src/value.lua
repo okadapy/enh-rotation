@@ -292,7 +292,13 @@ local function autoValue(S, damage)
     local ttd = S.target.ttd
     if ttd and ttd < left then left = ttd end
     if left < 0 then left = 0 end
-    v = v + left * M.SUPPORT * dps * M.DISCOUNT
+    local support = M.SUPPORT
+    --@addon
+    -- only what the group does not already give (raid.lua: Horn of Winter, another Windfury Totem...)
+    local mods = S.mods
+    if mods and mods.support then support = mods.support end
+    --@end
+    v = v + left * support * dps * M.DISCOUNT
   end
   return v
 end
