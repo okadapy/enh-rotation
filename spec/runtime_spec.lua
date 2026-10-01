@@ -692,6 +692,27 @@ describe("runtime", function()
     assert.are.equal("onCastStart", rt.ctx.swing.calls[1][1])
   end)
 
+  -- one sample per press: SENT -> SUCCEEDED of an instant, SENT -> START of a cast (its SUCCEEDED
+  -- is no second sample); a press without SENT or a FAILED one gives none
+  it("measures the round trip of each confirmed press, once per press", function()
+    local rt = start(nil, { casting = { name = "Lightning Bolt", startMs = 100120, endMs = 102620, castID = 7 } })
+    assert.are.same({ n = 0, i = 0 }, rt.ctx.ping)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Earth Shock", "Rank 10", "Mob")
+    G.cfg.now = 100.12
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Lightning Bolt", "Rank 14", "Mob")
+    G.cfg.now = 100.30
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    G.cfg.now = 102.80
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10") -- no SENT
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    runtime.onEvent(rt, "UNIT_SPELLCAST_FAILED", "player", "Stormstrike", "")
+    assert.are.equal(2, rt.ctx.ping.n)
+    assert.are.near(0.12, rt.ctx.ping[1], 1e-9)
+    assert.are.near(0.18, rt.ctx.ping[2], 1e-9)
+  end)
+
   -- a second tap during the GCD fails in the client: the first press still counts
   it("a FAILED after SENT does not take the press back; its SUCCEEDED is still no new press", function()
     local rt = start()

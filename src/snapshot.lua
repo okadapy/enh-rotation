@@ -438,6 +438,31 @@ end
 local function charges(a) return a and math.max(1, a.count) or 0 end
 local function remains(a) return a and a.remains or 0 end
 
+-- Latency: the median gap between a press (UNIT_SPELLCAST_SENT) and the server's answer (START of
+-- a cast, SUCCEEDED of an instant) over the session's last PING_N presses (runtime.onCast). That
+-- is what a press really takes, the server's tick included. GetNetStats is the home latency the
+-- client refreshes every 30 s, without the server's part; + 0.1 stood in for it, and still does
+-- until PING_MIN presses are measured. The median: one lag spike moves it little.
+M.PING_N, M.PING_MIN = 15, 3
+
+-- p = { n, i, median, [1..PING_N] }: a ring of the last samples
+function M.addPing(p, dt)
+  if dt < 0 then return end
+  local n, i = p.n or 0, (p.i or 0) % M.PING_N + 1
+  p.i, p[i] = i, dt
+  if n < M.PING_N then n = n + 1; p.n = n end
+  local s = {}
+  for k = 1, n do s[k] = p[k] end
+  table.sort(s)
+  local m = math.floor((n + 1) / 2)
+  p.median = n % 2 == 1 and s[m] or (s[m] + s[m + 1]) / 2
+end
+
+function M.latency(p, netMs)
+  if p and (p.n or 0) >= M.PING_MIN then return p.median end
+  return (netMs or 0) / 1000 + 0.1
+end
+
 function M.build(ctx)
   local now = ctx.now or GetTime()
   local c = ctx.cache or M.scan()
@@ -447,7 +472,7 @@ function M.build(ctx)
   local haste = M.spellHaste(c, mw)
   local S = { now = now, gcdRemains = 0, castRemains = 0, gcd = math.max(1.0, 1.5 / haste), mode = M.mode(ctx.mode) }
   local _, _, latMs = GetNetStats()
-  S.latency = (latMs or 0) / 1000 + 0.1
+  S.latency = M.latency(ctx.ping, latMs)
   local gcdName = c.names.lightningBolt
   if gcdName then
     local st, dur = GetSpellCooldown(gcdName)

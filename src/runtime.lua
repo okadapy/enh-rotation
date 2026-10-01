@@ -221,8 +221,11 @@ function M.onCast(rt, event, key, now, castID)
     return
   end
   local confirmed = sentFor(rt, key, now)
-  if confirmed and rt.rec and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED") then
-    rt.rec:confirm(key)
+  if confirmed and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED") then
+    -- the round trip of this press (snapshot.latency); START clears rt.sent, so the cast's
+    -- SUCCEEDED later is no second sample
+    if ctx.ping then snapshot.addPing(ctx.ping, now - rt.sent.at) end
+    if rt.rec then rt.rec:confirm(key) end
   end
   if event == "UNIT_SPELLCAST_START" then
     done = confirmed
@@ -764,7 +767,7 @@ function M.start(config, env)
   local talentNames = talents.localNames(GetSpellInfo)
   local ctx = { cache = snapshot.scan(talentNames), talentNames = talentNames,
                 swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
-                inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
+                inflight = {}, ping = { n = 0, i = 0 }, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
                 shield = M.SHIELDS[config.shield or 1] or "auto" }
   ctx.cooldowns = M.cooldowns(config)
   ctx.weaveMin = M.weaveMin(config)
