@@ -397,7 +397,14 @@ end
 function M.cooldownFor(S, key)
   local meta = spells.byKey[key]
   if meta.sharedCd == "shock" then return 6 - 0.2 * talent(S, "reverberation") end
-  if key == "fireNova" then return 10 - 2 * talent(S, "improvedFireNova") end
+  if key == "fireNova" then
+    local cd = 10 - 2 * talent(S, "improvedFireNova")
+    --@addon
+    local mods = S.mods -- Glyph of Fire Nova: wowsims firenova.go, 10 - glyph 3 - 2 x talent
+    if mods and mods.fireNovaCd then cd = cd - mods.fireNovaCd end
+    --@end
+    return cd
+  end
   return meta.cd or 0
 end
 
@@ -405,6 +412,10 @@ function M.gcdFor(S, key)
   local g = byKey[key].gcd or 0
   if g <= 0 then return 0 end
   if g < 1.5 then return 1.0 end
+  --@addon
+  local mods = S.mods -- Glyph of Shocking: -0.5 s off the base GCD, hasted it is below the 1 s floor
+  if mods and SHOCK_RANGE[key] and (mods.shockGcd or 0) > 0 then return 1.0 end
+  --@end
   g = S.gcd or 1.5
   if g < 1.0 then return 1.0 end -- = math.max(1.0, g), inlined (hot)
   return g
