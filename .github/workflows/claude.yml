@@ -47,7 +47,9 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # новое issue: комментарий с ходом работы и задание; иначе — обычный ответ на @claude
           track_progress: ${{ github.event_name == 'issues' && github.event.action == 'opened' }}
-          prompt: ${{ github.event_name == 'issues' && github.event.action == 'opened' && format('Возьми в работу issue #{0}: прочитай его целиком (картинки, ссылки, вложения), разберись и почини или ответь в issue. Если не хватает данных (снапшотов, строки экспорта, уровня, экипировки) — попроси их комментарием и остановись. Правила проекта — .claude/CLAUDE.md.', github.event.issue.number) || '' }}
+          # блочная строка: в обычной « #» начинает YAML-комментарий и обрезает выражение
+          prompt: >-
+            ${{ github.event_name == 'issues' && github.event.action == 'opened' && format('Возьми в работу issue #{0}: прочитай его целиком (картинки, ссылки, вложения), разберись и почини или ответь в issue. Если не хватает данных (снапшотов, строки экспорта, уровня, экипировки) — попроси их комментарием и остановись. Правила проекта — .claude/CLAUDE.md.', github.event.issue.number) || '' }}
           additional_permissions: |
             actions: read
           claude_args: |
