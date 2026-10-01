@@ -461,3 +461,68 @@ describe("damage per-search memo", function()
     assert.are.equal(2, damage.fireUptime(S, "searingTotem", 2))
   end)
 end)
+
+describe("S.mods (addon: raid debuffs on the target)", function()
+  local NEUTRAL = { armor = 1, spellTaken = 1, physTaken = 1, critTaken = 0, spellCritTaken = 0, spellHitTaken = 0 }
+  local function full(o)
+    local S = s80(o)
+    S.talents = { staticShock = 3, elementalWeapons = 3, concussion = 5, elementalFury = 5 }
+    S.buffs.ls = { charges = 3, remains = 600 }
+    S.spells.stormstrike = { id = 17364, rank = 1, cd = 0, cost = 351, cast = 0 }
+    S.spells.lavaLash = { id = 60103, rank = 1, cd = 0, cost = 176, cast = 0 }
+    return S
+  end
+  local KEYS = { "stormstrike", "lavaLash", "earthShock", "flameShock", "lightningBolt", "chainLightning", "fireNova" }
+
+  it("neutral mods change nothing, bit for bit", function()
+    local a, b = full(), full({ mods = NEUTRAL })
+    for _, key in ipairs(KEYS) do assert.are.equal(damage.action(a, key), damage.action(b, key), key) end
+    for _, src in ipairs(damage.PERIODIC) do assert.are.equal(damage.periodic(a, src), damage.periodic(b, src), src) end
+    assert.are.equal(damage.auto(a, "mh"), damage.auto(b, "mh"))
+    assert.are.equal(damage.auto(a, "oh"), damage.auto(b, "oh"))
+    assert.are.equal(damage.tableCv2(a, "spell"), damage.tableCv2(b, "spell"))
+    assert.are.equal((damage.dot(a, "flameShock")), (damage.dot(b, "flameShock")))
+  end)
+
+  it("armor: Sunder Armor and Faerie Fire multiply the target's armor", function()
+    local S = s80({ mods = { armor = 0.8 * 0.95 } })
+    local a = 10643 * 0.8 * 0.95
+    assert.are.near(1 - a / (a + 15232.5), damage.armorMult(S), 1e-12)
+  end)
+
+  it("physical damage taken (Blood Frenzy) scales every physical hit, not Lava Lash (fire)", function()
+    local a, b = full(), full({ mods = { physTaken = 1.04 } })
+    assert.are.near(1.04, damage.white(b, "mh") / damage.white(a, "mh"), 1e-12)
+    assert.are.near(1.04, damage.periodic(b, "feralSpirit") / damage.periodic(a, "feralSpirit"), 1e-12)
+    assert.are.equal(damage.action(a, "lavaLash"), damage.action(b, "lavaLash"))
+  end)
+
+  it("spell damage taken (Curse of the Elements) scales shocks, Bolt, totems, Flametongue and Lava Lash", function()
+    local a, b = full(), full({ mods = { spellTaken = 1.13 } })
+    for _, key in ipairs({ "earthShock", "lightningBolt", "fireNova", "lavaLash" }) do
+      assert.are.near(1.13, damage.action(b, key) / damage.action(a, key), 1e-12, key)
+    end
+    assert.are.near(1.13, damage.ftHit(b, "oh") / damage.ftHit(a, "oh"), 1e-12)
+    assert.are.near(1.13, damage.periodic(b, "flameShock") / damage.periodic(a, "flameShock"), 1e-12)
+    assert.are.near(1.13, damage.periodic(b, "fireElemental") / damage.periodic(a, "fireElemental"), 1e-12)
+    -- Stormstrike: the weapon part is physical, only its Flametongue / Static Shock procs grow
+    local ss = damage.action(b, "stormstrike") / damage.action(a, "stormstrike")
+    assert.is_true(ss > 1 and ss < 1.13, tostring(ss))
+  end)
+
+  it("crit taken (Totem of Wrath) adds to melee and spell crit, spell crit taken (Improved Scorch) to spells only", function()
+    local S = s80({ mods = { critTaken = 0.03, spellCritTaken = 0.05 } })
+    assert.are.near(0.252 + 0.03, damage.meleeTable(S, true).crit, 1e-9)
+    assert.are.near(0.20 + 0.03 + 0.05, damage.spellCrit(S), 1e-12)
+    assert.are.near(1 + 0.28 * 0.5, damage.spellCritFactor(S), 1e-12)
+    -- the spread of a spell hit reads the same chance
+    local c, h = 0.28, damage.spellHit(S)
+    local m1, m2 = h * (1 - c + c * 1.5), h * (1 - c + c * 1.5 * 1.5)
+    assert.are.near(m2 / (m1 * m1) - 1, damage.tableCv2(S, "spell"), 1e-12)
+  end)
+
+  it("spell hit taken (Misery) closes the spell miss chance", function()
+    assert.are.near(0.93, damage.spellHit(s80()), 1e-12)
+    assert.are.near(0.96, damage.spellHit(s80({ mods = { spellHitTaken = 0.03 } })), 1e-12)
+  end)
+end)

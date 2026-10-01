@@ -885,7 +885,10 @@ describe("model working copies (search speed)", function()
                            { mode = "solo", target = { range = "30", meleeIn = 3.1, inCombat = true }, enemies = { melee = 0 },
                              swing = { mh = { next = 0.2 } } },
                            { mode = "solo", target = { range = "20" }, enemies = { melee = 0 }, buffs = { mw = { stacks = 2, remains = 20 } } },
-                           { mode = "solo", target = { range = "30" }, enemies = { melee = 0 } } }) do
+                           { mode = "solo", target = { range = "30" }, enemies = { melee = 0 } },
+                           -- raid debuffs on the target (addon: S.mods)
+                           { mods = { armor = 0.76, spellTaken = 1.13, physTaken = 1.04, critTaken = 0.03,
+                                      spellCritTaken = 0.05, spellHitTaken = 0.03, support = 0.02 } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S
@@ -1081,6 +1084,19 @@ describe("model working copies (search speed)", function()
         S.memo.arena = model.newArena()
       end
     end
+  end)
+
+  it("S.mods (raid debuffs, gear) is one shared table in every copy: new, arena, peeked", function()
+    local S = fixtures.state()
+    S.mods, S.memo = { spellTaken = 1.13 }, {}
+    local mods = S.mods
+    assert.are.equal(mods, model.cloneState(S).mods)
+    assert.are.equal(mods, (model.apply(S, "stormstrike")).mods)
+    assert.are.equal(mods, model.peekApply(S, "stormstrike").mods)
+    assert.are.equal(mods, model.peekWait(S, 0.5).mods)
+    S.memo = { arena = model.newArena() }
+    assert.are.equal(mods, model.clone(S).mods)
+    model.release(S.memo.arena)
   end)
 
   it("apply and wait on arena states give exactly what they give on new tables, reused or not", function()

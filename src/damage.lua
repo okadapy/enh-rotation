@@ -54,18 +54,36 @@ function M.row(S, key)
   return spells.rank(key, sp.id)
 end
 
+-- S.mods (addon only, raid.lua / gear.lua via snapshot): raid debuffs on the target and the
+-- equipment, read-only and the same in every state of one search, so the memos below stay valid.
+-- Every field is optional; without S.mods (the aura, tests) everything is as before, bit for bit.
 function M.spellHit(S)
   local d = lvlDiff(S)
   local miss
   if d >= 3 then miss = math.min(1, 0.17 + 0.11 * (d - 3))
   elseif d <= 0 then miss = math.max(0.01, 0.04 + 0.01 * d)
   else miss = 0.04 + 0.01 * d end
-  return 1 - math.max(0, miss - (S.player.spellHit or 0))
+  local hit = S.player.spellHit or 0
+  --@addon
+  local mods = S.mods
+  if mods and mods.spellHitTaken then hit = hit + mods.spellHitTaken end
+  --@end
+  return 1 - math.max(0, miss - hit)
+end
+
+-- spell crit chance against this target: the character's, plus the target's debuffs (S.mods)
+function M.spellCrit(S)
+  local c = S.player.spellCrit or 0
+  --@addon
+  local mods = S.mods
+  if mods then c = c + (mods.critTaken or 0) + (mods.spellCritTaken or 0) end
+  --@end
+  return util.clamp(c, 0, 1)
 end
 
 function M.spellCritFactor(S)
   local mult = 1.5 + 0.1 * talent(S, "elementalFury")
-  return 1 + util.clamp(S.player.spellCrit or 0, 0, 1) * (mult - 1)
+  return 1 + M.spellCrit(S) * (mult - 1)
 end
 
 function M.spellMult(S, key)
@@ -87,7 +105,12 @@ end
 local function spellDamage(S, key, row)
   if not row then return 0 end
   local base = (row.min + row.max) / 2 + (row.coef or 0) * spellPower(S, SCHOOL[key])
-  return base * M.spellMult(S, key) * M.spellHit(S) * M.spellCritFactor(S)
+  local v = base * M.spellMult(S, key) * M.spellHit(S) * M.spellCritFactor(S)
+  --@addon
+  local mods = S.mods
+  if mods and mods.spellTaken then v = v * mods.spellTaken end
+  --@end
+  return v
 end
 
 function M.targetArmor(level)
@@ -103,12 +126,22 @@ function M.targetArmor(level)
   return M.BOSS_ARMOR
 end
 
+-- physical damage multiplier: armor, and physical damage taken
 function M.armorMult(S)
   local armor = S.target.armor or M.targetArmor(S.target.level)
+  --@addon
+  local mods = S.mods
+  if mods and mods.armor then armor = armor * mods.armor end
+  --@end
   local L = S.player.level
   local k
   if L >= 60 then k = 400 + 85 * (L + 4.5 * (L - 59)) else k = 400 + 85 * L end
-  return 1 - armor / (armor + k)
+  local m = 1 - armor / (armor + k)
+  --@addon
+  -- every hit armor applies to is physical (white, Windfury, Stormstrike, wolves): Blood Frenzy too
+  if mods and mods.physTaken then m = m * mods.physTaken end
+  --@end
+  return m
 end
 
 -- level difference -> glancing chance, glancing damage reduction
@@ -126,7 +159,12 @@ function M.meleeTable(S, white)
     local g = GLANCE[math.min(dp, 3)]
     glance, glanceRed = g[1], g[2]
   end
-  local crit = math.max(0, (S.player.meleeCrit or 0) - (d >= 3 and 0.048 or 0.002 * dp))
+  local mc = S.player.meleeCrit or 0
+  --@addon
+  local mods = S.mods
+  if mods and mods.critTaken then mc = mc + mods.critTaken end
+  --@end
+  local crit = math.max(0, mc - (d >= 3 and 0.048 or 0.002 * dp))
   crit = math.min(crit, math.max(0, 1 - miss - dodge - glance))
   local hit = 1 - miss - dodge - glance - crit
   return { miss = miss, dodge = dodge, glance = glance, crit = crit,
@@ -170,7 +208,12 @@ function M.ftHit(S, hand)
   local ew = talent(S, "elementalWeapons")
   local base = byLevel(M.FT_PER_SPEED, S.player.level) * wspeed(w) * (1 + (M.EW_FT[ew] or 0))
   local dmg = base + 0.1 * wspeed(w) / 2.6 * (S.player.spFire or 0)
-  return dmg * M.spellHit(S) * M.spellCritFactor(S)
+  local v = dmg * M.spellHit(S) * M.spellCritFactor(S)
+  --@addon
+  local mods = S.mods
+  if mods and mods.spellTaken then v = v * mods.spellTaken end
+  --@end
+  return v
 end
 
 function M.staticHit(S)
@@ -322,6 +365,10 @@ function M.dot(S, key)
   if key == "flameShock" then
     if not row or not row.tick then return 0, 0, 1 end
     local per = (row.tick + (row.tickCoef or 0) * spellPower(S, SCHOOL[key])) * M.spellMult(S, key) * M.spellCritFactor(S)
+    --@addon
+    local mods = S.mods
+    if mods and mods.spellTaken then per = per * mods.spellTaken end
+    --@end
     return per, row.ticks or 0, row.period or 3
   elseif key == "magmaTotem" or key == "searingTotem" then
     if not row then return 0, 0, 1 end
@@ -340,7 +387,13 @@ function M.periodic(S, source)
     local per, _, period = M.dot(S, source)
     return per * M.targets(S, "magmaTotem") / period
   elseif source == "fireElemental" then
-    return (M.FE_BASE_DPS + M.FE_SP * (S.player.spFire or 0)) * (1 + 0.05 * talent(S, "callOfFlame"))
+    local v = (M.FE_BASE_DPS + M.FE_SP * (S.player.spFire or 0)) * (1 + 0.05 * talent(S, "callOfFlame"))
+    --@addon
+    -- the elemental hits mostly with fire (its melee is a simplification)
+    local mods = S.mods
+    if mods and mods.spellTaken then v = v * mods.spellTaken end
+    --@end
+    return v
   elseif source == "feralSpirit" then
     local perHit = M.WOLF_BASE + M.WOLF_AP * (S.player.ap or 0) / 14 * M.WOLF_SPEED
     return 2 * perHit / M.WOLF_SPEED * M.armorMult(S)
@@ -374,7 +427,13 @@ function M.action(S, key)
     local y = M.meleeTable(S, false)
     local bonus = oh.enchant == "ft" and 1.25 or 1
     -- "Weapon Damage - %" (tooltip 60103), not normalized like Stormstrike; wowsims lavalash.go OHWeaponDamage
-    return avg(oh) * bonus * y.factor + procsPerHit(S, "oh") * y.landed
+    local wpn = avg(oh) * bonus * y.factor
+    --@addon
+    -- Lava Lash is fire: no armor, but Curse of the Elements
+    local mods = S.mods
+    if mods and mods.spellTaken then wpn = wpn * mods.spellTaken end
+    --@end
+    return wpn + procsPerHit(S, "oh") * y.landed
   end
   return 0
 end
@@ -480,7 +539,7 @@ function M.tableCv2(S, kind)
   local m1, m2
   if kind == "spell" then
     local h = M.spellHit(S)
-    local c = util.clamp(S.player.spellCrit or 0, 0, 1)
+    local c = M.spellCrit(S)
     local k = 1.5 + 0.1 * talent(S, "elementalFury")
     m1, m2 = h * (1 - c + c * k), h * (1 - c + c * k * k)
   else
