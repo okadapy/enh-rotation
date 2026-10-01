@@ -760,4 +760,16 @@ describe("snapshot: a relic's proc buff (addon)", function()
               auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0, expires = 112 } } } } })
     assert.are.same({ stacks = 1, remains = 12 }, snapshot.build(ctx()).buffs.relic)
   end)
+
+  -- Totem of the Elemental Plane / Stonebreaker's Totem: the item's own passive shares the proc
+  -- buff's name; shown without an end time (or longer than the proc lasts) it is not the proc
+  it("an aura of the proc's name that outlasts the proc is the item's passive, not the proc", function()
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" },
+              auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0 } } } } })
+    assert.are.same({ stacks = 0, remains = 0 }, snapshot.build(ctx()).buffs.relic)
+    local dur = require("gear_data").PROCS[47667].duration
+    install({ inventory = { [18] = 47667 }, spellNames = { [67391] = "Volcanic Fury" },
+              auras = { player = { HELPFUL = { { name = "Volcanic Fury", count = 0, expires = 100 + dur + 1 } } } } })
+    assert.are.same({ stacks = 0, remains = 0 }, snapshot.build(ctx()).buffs.relic)
+  end)
 end)

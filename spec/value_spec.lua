@@ -506,7 +506,8 @@ describe("value.terminal", function()
     local doh = damage.auto(S, "oh") / S.swing.oh.speed
     local ap = (dmh * (w.mh.base or w.mh.speed) / 14 / ((w.mh.min + w.mh.max) / 2)
               + doh * (w.oh.base or w.oh.speed) * 0.5 / 14 / ((w.oh.min + w.oh.max) / 2)) * value.MELEE_SHARE
-    assert.are.equal(32.79, value.HASTE_RATING)
+    -- 3.1: hybrid classes (the shaman one of them) get 30% more melee haste from rating
+    assert.are.equal(25.21, value.HASTE_RATING)
     assert.are.near(ap, value.statDps(S, "ap"), 1e-12)
     assert.are.near((dmh + doh) / (value.HASTE_RATING * 100), value.statDps(S, "haste"), 1e-12)
     -- once per search: the memo keeps both

@@ -450,7 +450,7 @@ end
 -- left, up to TAIL and the target's death, at the stat's worth in damage per second. The horizon
 -- itself is counted at the snapshot's stats (a proc up now is in them already), so a press of its
 -- button is worth the buff time it keeps up after the plan.
-M.HASTE_RATING = 32.79 -- haste rating per 1% at level 80 (3.3.5a, hybrid classes' melee haste)
+M.HASTE_RATING = 25.21 -- melee haste rating per 1% at level 80: 32.79 less 30% for hybrids (the shaman one), since 3.1
 
 -- damage per second of one point of `stat` ("ap" | "haste"), once per search (S.memo): attack
 -- power by each hand's share of its weapon damage (UnitDamage holds AP / 14 x speed, the off hand

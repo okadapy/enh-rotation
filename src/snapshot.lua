@@ -554,6 +554,9 @@ function M.build(ctx)
   -- the relic's proc buff: the model carries it along the plan (stacks at least 1 while up)
   if c.procNames then
     local a = M.auras("player", "HELPFUL", c.procNames, false, now).proc
+    -- the item's own passive may share the proc buff's name: one that outlasts the proc is not it
+    local p = S.mods and S.mods.proc
+    if a and p and a.remains > p.duration then a = nil end
     S.buffs.relic = { stacks = a and math.max(1, a.count) or 0, remains = a and a.remains or 0 }
   end
   --@end
