@@ -387,6 +387,17 @@ function M.shieldValue(S)
   return -(S.gcd or 1.5) * M.dpsEstimate(S) * M.DISCOUNT
 end
 
+-- Solo, a kill inside the horizon frees the seconds after it for the next mob: a second is worth
+-- the character's damage per second (the time value manaPrice uses for drinking), at the discount
+-- (the next pull is not in the plan). Killing the mob sooner is worth that much; without it a mob
+-- the swings finish anyway was worth the same finished 1.5 s sooner by a Lava Lash, and the plan
+-- stood empty in melee.
+function M.killCredit(S, live)
+  local died = S.target.diedAt
+  if live or not died or S.now <= died then return 0 end
+  return (S.now - died) * M.dpsEstimate(S) * M.DISCOUNT
+end
+
 function M.terminal(S)
   local damage = D()
   -- one lookup of the per-buff action table for all parts (nothing below changes S's buffs)
@@ -405,7 +416,7 @@ function M.terminal(S)
     mael = stacks * M.MW_SHARE * lb * M.DISCOUNT
   end
   local v = mael + readyValue(S, damage, A, live)
-  if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
+  if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) + M.killCredit(S, live) end
   if live then
     v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
   end

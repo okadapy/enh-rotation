@@ -184,6 +184,15 @@ local function tickSpells(S, map, dt)
   return map
 end
 
+-- A copy's own target table (arena and scratch states) with every field present from the start:
+-- a field set to nil keeps its slot, so a fill never adds a key to a full table (Lua 5.1 would
+-- rehash it on every fill)
+local function newTarget()
+  return { exists = false, enemy = false, level = 0, hp = 0, hpMax = 0, hpPct = 0, ttd = false, range = false,
+           fs = 0, guessed = false, dead = false, diedAt = false, armor = false, inCombat = false,
+           isPlayer = false, meleeIn = false, isBoss = false, ss = false }
+end
+
 local fillState
 function M.clone(S, dt)
   local memo = S.memo
@@ -195,7 +204,7 @@ function M.clone(S, dt)
       FREE_STATE[nFreeState] = nil
       nFreeState = nFreeState - 1
     else
-      n = { spells = {}, inflight = {}, buffs = { mw = {}, ls = {} }, target = {}, totems = {}, swing = {},
+      n = { spells = {}, inflight = {}, buffs = { mw = {}, ls = {} }, target = newTarget(), totems = {}, swing = {},
             pool = { flurry = {}, ss = {}, fire = {}, water = {}, mh = {}, oh = {}, pets = {} } }
     end
     local k = a.nStates + 1
@@ -220,7 +229,7 @@ function M.cloneState(S)
               flurry = b.flurry and { charges = b.flurry.charges, remains = b.flurry.remains },
               rage = b.rage, lust = b.lust, em = b.em },
     target = { exists = t.exists, enemy = t.enemy, level = t.level, hp = t.hp, hpMax = t.hpMax, hpPct = t.hpPct,
-               ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, armor = t.armor,
+               ttd = t.ttd, range = t.range, fs = t.fs, guessed = t.guessed, dead = t.dead, diedAt = t.diedAt or false, armor = t.armor,
                inCombat = t.inCombat, isPlayer = t.isPlayer, meleeIn = t.meleeIn, isBoss = t.isBoss,
                ss = ss and { charges = ss.charges, remains = ss.remains } },
     totems = { fire = fire and { kind = fire.kind, remains = fire.remains },
@@ -259,6 +268,7 @@ function fillState(n, S)
   local nt = n.target
   nt.exists, nt.enemy, nt.level, nt.hp, nt.hpMax, nt.hpPct = t.exists, t.enemy, t.level, t.hp, t.hpMax, t.hpPct
   nt.ttd, nt.range, nt.fs, nt.guessed, nt.dead, nt.armor = t.ttd, t.range, t.fs, t.guessed, t.dead, t.armor
+  nt.diedAt = t.diedAt or false -- never nil: a nil set on a missing key makes Lua 5.1 rehash
   nt.inCombat, nt.isPlayer, nt.meleeIn, nt.isBoss = t.inCombat, t.isPlayer, t.meleeIn, t.isBoss
   nt.ss = ss and fillPair(pool.ss, ss, "charges", "remains") or nil
   local ntot = n.totems
@@ -598,7 +608,93 @@ function M.waitKeepsMana(S)
 end
 
 local spareOf -- below
+local killTime
 local CAST2 = {} -- the rest of a cast after the target arrives inside one advance (reused)
+
+-- Solo, the target dies when our damage takes its health: a solo mob's time-to-die is only an
+-- estimate of our own kill speed (noisy: 21.5 s for a mob the next 5 s took 1200 hp from), so
+-- killing it sooner must show. The ttd still ends the target where its health is not known
+-- (guessed) and in a group (others hit it too).
+function M.hpDeath(n)
+  return n.mode == "solo" and not n.target.guessed
+end
+
+-- the first swing time of a hand in advance(n, dt, cast), as runHand
+local function firstSwing(s, cast)
+  local at = s.next or 0
+  if cast then
+    if cast.reset then
+      at = cast.ends + s.speed
+    elseif at < cast.ends then
+      at = cast.ends
+    end
+  end
+  return at
+end
+
+-- damage over [0, x] of the periodic sources advance counts (Flame Shock, fire totem, wolves)
+local function periodicUpTo(n, x, r, src)
+  local t, fire = n.target, n.totems.fire
+  local d = 0
+  local fs = t.fs or 0
+  if fs > 0 then d = d + r.flameShock * (fs < x and fs or x) end
+  local fireLeft = fire.remains or 0
+  if src and fireLeft > 0 then
+    local span = fireLeft < x and fireLeft or x
+    if src == "searingTotem" then span = damage.fireUptime(n, src, span) end
+    d = d + r[src] * span
+  end
+  local wolves = n.pets and n.pets.wolves or 0
+  if wolves > 0 then d = d + r.feralSpirit * (wolves < x and wolves or x) end
+  return d
+end
+
+-- seconds into advance(n, dt, cast) at which the swings and periodic damage take the target's
+-- health, or nil if it lives through dt. Only a step that can kill walks its swings.
+killTime = function(n, dt, cast)
+  local t, sw = n.target, n.swing
+  local hp = t.hp or 0
+  if hp <= 0 then return 0 end
+  local fire = n.totems.fire
+  local src = fire.kind and FIRE_SOURCE[fire.kind]
+  local r = damage.rates(n)
+  local swings = sw.attacking and t.range == "melee"
+  local st, amh, aoh, smh, soh
+  local total = periodicUpTo(n, dt, r, src)
+  if swings then
+    st = damage.swingStats(n)
+    local mh, oh = sw.mh, sw.oh
+    if mh and (mh.speed or 0) > 0 then
+      amh, smh = firstSwing(mh, cast), mh.speed
+      if amh <= dt + 1e-9 then total = total + st.mh * (math.floor((dt + 1e-9 - amh) / smh) + 1) end
+    end
+    if oh and (oh.speed or 0) > 0 then
+      aoh, soh = firstSwing(oh, cast), oh.speed
+      if aoh <= dt + 1e-9 then total = total + st.oh * (math.floor((dt + 1e-9 - aoh) / soh) + 1) end
+    end
+  end
+  if total < hp then return nil end
+  -- walk the swings in time order; between two the periodic damage grows (bisection)
+  local done, prev = 0, 0
+  local function cross(a, b)
+    for _ = 1, 20 do
+      local m = (a + b) / 2
+      if periodicUpTo(n, m, r, src) + done >= hp then b = m else a = m end
+    end
+    return b
+  end
+  while true do
+    local e, isMh
+    if amh and amh <= dt + 1e-9 then e, isMh = amh, true end
+    if aoh and aoh <= dt + 1e-9 and (not e or aoh < e) then e, isMh = aoh, false end
+    if not e then break end
+    if periodicUpTo(n, e, r, src) + done >= hp then return cross(prev, e) end
+    if isMh then done = done + st.mh; amh = amh + smh else done = done + st.oh; aoh = aoh + soh end
+    if periodicUpTo(n, e, r, src) + done >= hp then return e end
+    prev = e
+  end
+  return cross(prev, dt)
+end
 
 -- scratch state: a spell can be on cooldown only in its own entry, i.e. one on cooldown in the
 -- source (onCd) or one setCd has switched since the fill (dirty); lowered in place
@@ -635,8 +731,15 @@ function M.advance(n, dt, cast, cdsDone)
   local live = t and t.exists and t.enemy and not t.dead
   local life = dt
   local ttd = t.ttd
-  if live and ttd then
-    if ttd < 0 then life = 0 elseif ttd < life then life = ttd end
+  local byHp = false
+  if live then
+    if n.mode == "solo" and not t.guessed then -- M.hpDeath(n), inlined (hot)
+      byHp = true
+      local k = killTime(n, dt, cast)
+      if k then life = k end
+    elseif ttd then
+      if ttd < 0 then life = 0 elseif ttd < life then life = ttd end
+    end
   end
   local dmg = 0
   local mh, oh = sw.mh, sw.oh
@@ -744,7 +847,7 @@ function M.advance(n, dt, cast, cdsDone)
     if hp < 0 then hp = 0 end
     t.hp = hp
     if ttd then ttd = ttd - dt; t.ttd = ttd end
-    if hp <= 0 or (ttd and ttd <= 0) then t.dead = true end
+    if hp <= 0 or (ttd and ttd <= 0 and not byHp) then t.dead, t.diedAt = true, n.now - dt + life end
   end
   return dmg
 end
@@ -759,7 +862,8 @@ local function newScratch()
   return {
     ownSpells = true, spells = {}, inflight = {},
     buffs = { mw = {}, ls = {} },
-    target = {}, totems = {}, swing = {}, pets = {},
+    target = newTarget(),
+    totems = {}, swing = {}, pets = {},
     spare = { ss = {}, fire = {}, water = {}, mh = {}, oh = {}, flurry = {}, spells = {}, player = {}, player2 = {} },
     playerFrom = {}, -- spare player -> the node's player whose stats it holds (setMana)
     filled = {}, -- key -> the spare spell entry already holds id/rank/cost/cast of this search (memo)
@@ -866,7 +970,7 @@ local function fillScratch(S, dt)
     b.flurry = nil
   end
   b.rage, b.lust, b.em = sb.rage, sb.lust, sb.em
-  t.hp, t.ttd, t.fs, t.dead = st.hp, st.ttd, st.fs, st.dead
+  t.hp, t.ttd, t.fs, t.dead, t.diedAt = st.hp, st.ttd, st.fs, st.dead, st.diedAt or false
   t.range, t.meleeIn = st.range, st.meleeIn -- advance changes them (the target comes in)
   local ss = st.ss
   if ss then
@@ -957,8 +1061,10 @@ local function applyOn(n, key, ct, dt, adv)
   local dmg = 0
   local t = n.target
   if t and t.exists and t.enemy and not t.dead then -- alive(n), inlined
-    local ttd = t.ttd
-    if not (ct > 0 and ttd and ttd < ct + (n.latency or 0)) then dmg = damage.action(n, key) end
+    local ttd = t.ttd -- solo: only the health ends the target (M.hpDeath, inlined)
+    if not (ct > 0 and ttd and ttd < ct + (n.latency or 0) and (n.mode ~= "solo" or t.guessed)) then
+      dmg = damage.action(n, key)
+    end
   end
   local mwAtCast = (n.buffs.mw.stacks or 0) + 1e-9
   mwAtCast = mwAtCast - mwAtCast % 1 -- = floor
@@ -986,9 +1092,10 @@ local function applyOn(n, key, ct, dt, adv)
     if ss.charges <= 0 then ss.remains = 0 end
   end
   if CAST_SPELLS[key] then n.buffs.mw.stacks = 0; n.buffs.mw.remains = 0 end
-  -- a melee attack starts auto attack (3.3.5a): the next swing comes as soon as its timer is up
-  if MELEE_ONLY[key] then n.swing.attacking = true end
+  -- Stormstrike and Lava Lash start auto attack (3.3.5a, as every melee attack): the next swing
+  -- comes as soon as its timer is up
   if key == "stormstrike" then
+    n.swing.attacking = true
     local nss = n.target.ss or spareOf(n, "ss") -- own in every copy: changed in place
     nss.charges, nss.remains = M.SS_CHARGES, M.SS_DURATION
     n.target.ss = nss
@@ -997,6 +1104,7 @@ local function applyOn(n, key, ct, dt, adv)
       rageMana(n, (damage.rageChance(n, "mh") + damage.rageChance(n, "oh")) * damage.meleeTable(n, false).landed)
     end
   elseif key == "lavaLash" then
+    n.swing.attacking = true
     addMw(n, damage.mwPerHit(n, "oh"))
     if (n.buffs.rage or 0) > 0 and alive(n) then rageMana(n, damage.rageChance(n, "oh") * damage.meleeTable(n, false).landed) end
   elseif key == "flameShock" then
@@ -1025,7 +1133,7 @@ local function applyOn(n, key, ct, dt, adv)
     local hp = (t.hp or 0) - dmg
     hp = hp > 0 and hp or 0 -- = math.max(0, hp)
     t.hp = hp
-    if hp <= 0 then t.dead = true end
+    if hp <= 0 then t.dead, t.diedAt = true, n.now + (ct > 0 and ct + (n.latency or 0) or 0) end
   end
 
   local cast

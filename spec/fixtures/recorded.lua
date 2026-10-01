@@ -12161,7 +12161,6 @@ return {
     -- ударит за 0.5 с до смерти — это в основном перебор урона и 8 с отката на следующего
     -- моба. Бесплатный Lightning Shield всё равно нужен — ставить его.
     ["expect"] = "lightningShield",
-    ["pending"] = "Stormstrike lands 0.46 s before the estimated death but the model still sees 430 hp to take (288 useful for 100 mana beats the shield). Needs trusting the ttd: damage worth the fight time it saves (d x dps x ttd / hp) fixes it, but these recordings' ttd is often optimistic (#49 3.2 s, alive 5+ s; #74 2.5 s, 6+ s; #77 4.2 s, ~12 s) and it then idles in #49/#77 and jitters #20/#78",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -18127,7 +18126,9 @@ return {
   [74] = {
     -- Моб умрёт через 2.5 с, Flame Shock не висит, мана 19%, щит слетел: DoT на умирающего —
     -- 114 маны за один тик. Бесплатный Lightning Shield всё равно нужен — ставить его.
-    ["expect"] = "lightningShield",
+    -- Или мгновенный Earth Shock (467 из 605 hp) и щит следующим GCD: моб умрёт на ~3 с раньше
+    -- (после этого снимка он прожил ещё 6+ с), это стоит 121 маны; против Flame Shock на один тик.
+    ["expect"] = { "lightningShield", "earthShock" },
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,
@@ -20111,7 +20112,6 @@ return {
     -- с ударов по живой цели, а 15 с баффа и минута отката уйдут в основном на бег к следующему
     -- мобу. Добить Stormstrike или Lava Lash, Rage оставить на следующий бой.
     ["expect"] = { "stormstrike", "lavaLash" },
-    ["pending"] = "no longer Rage, but idles: the swings alone kill the mob (617 hp) inside the 6 s horizon, so a finishing strike only brings the kill ~1.5 s earlier, which the value does not count (a kill-time credit flips #7/#13/#57/#70: the model kills mobs in 6 s whose ttd says 7-22 s)",
     ["S"] = {
       ["buffs"] = {
         ["em"] = 0,

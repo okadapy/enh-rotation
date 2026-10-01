@@ -377,6 +377,20 @@ describe("value.terminal", function()
     end)
   end)
 
+  -- solo, the seconds after a kill go to the next mob: a second is worth the character's dps
+  it("solo: a kill inside the horizon is worth the seconds after it at the discount", function()
+    local S = base({ mode = "solo", target = { hp = 0, dead = true } })
+    local none = value.terminal(S)
+    S.target.diedAt = S.now - 2.5
+    assert.are.near(none + 2.5 * value.dpsEstimate(S) * value.DISCOUNT, value.terminal(S), 1e-6)
+    S.target.diedAt = false
+    assert.are.near(none, value.terminal(S), 1e-9)
+    local G = base({ mode = "group", target = { hp = 0, dead = true } })
+    local g0 = value.terminal(G)
+    G.target.diedAt = G.now - 2.5
+    assert.are.near(g0, value.terminal(G), 1e-9)
+  end)
+
   -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing
   it("solo: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
     local S = base({ mode = "solo", spells = { fireNova = { cd = 10 }, lightningShield = { id = 49281, rank = 11, cd = 0, cost = 0 } } })

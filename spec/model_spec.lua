@@ -587,6 +587,49 @@ describe("model", function()
       assert.is_true(S2.target.dead)
     end)
 
+    -- solo, a mob dies from our damage: its ttd is only an estimate of our own kill speed
+    describe("solo: the target dies when the damage takes its health", function()
+      local function solo(hp)
+        local S = base(); S.mode = "solo"; S.target.hp = hp; S.target.ttd = 0.3; S.target.fs = 0
+        S.totems.fire = { kind = false, remains = 0 }; S.pets.wolves = 0
+        S.swing.mh.next, S.swing.oh.next = 0.5, 1.6
+        return S
+      end
+      it("not at its ttd: swings after it still land", function()
+        local S = solo(1e6)
+        local S2, dmg = model.wait(S, 2)
+        assert.is_true(dmg > 0)
+        assert.is_true(not S2.target.dead)
+      end)
+      it("at the swing that takes the last hp, with the time of it", function()
+        local st = damage.swingStats(solo(1))
+        local S = solo(st.mh + 1) -- the main hand at 0.5 leaves 1 hp, the off hand at 1.6 kills
+        local S2 = model.wait(S, 3)
+        assert.is_true(S2.target.dead)
+        assert.are.near(S.now + 1.6, S2.target.diedAt, 1e-9)
+        S = solo(st.mh / 2)
+        assert.are.near(S.now + 0.5, model.wait(S, 3).target.diedAt, 1e-9)
+      end)
+      it("periodic damage alone: where it runs the health out", function()
+        local S = solo(100); S.swing.attacking = false; S.target.fs = 10
+        local r = damage.periodic(S, "flameShock")
+        local S2 = model.wait(S, 6)
+        assert.is_true(S2.target.dead)
+        assert.are.near(S.now + 100 / r, S2.target.diedAt, 1e-4)
+      end)
+      it("a press that takes the health: dead at the press (at the cast's end for a cast)", function()
+        local S = solo(10)
+        local S2 = model.apply(S, "earthShock")
+        assert.are.near(S.now, S2.target.diedAt, 1e-9)
+      end)
+      it("in a group, or with a guessed health, the ttd still ends it", function()
+        local S = solo(1e6); S.mode = "group"
+        assert.is_true(model.wait(S, 2).target.dead)
+        S = solo(1e6); S.target.guessed = true
+        assert.is_true(model.wait(S, 2).target.dead)
+      end)
+    end)
+
     it("actions follow spells.CATALOG order, waitSwing last at next swing + 0.01", function()
       local S = fixtures.state()
       S.swing.mh.next, S.swing.oh.next = 1.2, 0.4
