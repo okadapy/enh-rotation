@@ -1,9 +1,15 @@
 local spells = require("spells")
 local talents = require("talents")
+local damage = require("damage")
+local value = require("value")
+local util = require("util")
+local model = require("model")
 
 local M = {}
 
-M.BUFFS = { [53817] = "mw", [49281] = "ls", [16280] = "flurry", [30823] = "rage", [2825] = "lust", [32182] = "lust", [16166] = "em" }
+M.BUFFS = { [53817] = "mw", [49281] = "ls", [16280] = "flurry", [30823] = "rage", [2825] = "lust", [32182] = "lust", [16166] = "em",
+  -- Water Shield: matched by name, so rank 1 stands for all ranks (not a castable action here)
+  [52127] = "ws" }
 M.DEBUFFS = { [8050] = "fs", [17364] = "ss" }
 M.TOTEMS = { [2894] = "fireElemental", [8190] = "magma", [3599] = "searing" }
 M.ENCHANTS = { [8232] = "wf", [8024] = "ft", [8017] = "rb" }
@@ -17,6 +23,7 @@ M.MOVE_HOLD = 0.3
 M.RANGE_PROBES = { { "stormstrike", "melee" }, { "lavaLash", "melee" }, { "earthShock", "20" }, { "lightningBolt", "30" } }
 M.HP_BY_LEVEL = { { 1, 42 }, { 10, 200 }, { 20, 600 }, { 30, 1200 }, { 40, 2000 }, { 50, 3500 }, { 60, 4500 }, { 70, 7000 }, { 80, 12000 }, { 83, 14000 } }
 M.BASE_MANA = { { 1, 55 }, { 10, 185 }, { 20, 410 }, { 30, 635 }, { 40, 860 }, { 50, 1085 }, { 60, 1520 }, { 70, 2678 }, { 80, 4396 } }
+M.SHIELD_PREFS = { auto = true, lightning = true, water = true }
 M.CLASS_MULT = { normal = 1, trivial = 1, minus = 0.5, rare = 1.5, elite = 3, rareelite = 3, worldboss = 100 }
 
 local CR_HIT_MELEE, CR_HIT_SPELL, CR_HASTE_MELEE, CR_HASTE_SPELL = 6, 8, 18, 20
@@ -44,7 +51,7 @@ local function namesOf(ids, strip)
   return out
 end
 
-function M.scan()
+function M.scan(talentNames)
   local c = {
     names = {}, keyByName = {}, known = {},
     buffNames = namesOf(M.BUFFS), debuffNames = namesOf(M.DEBUFFS),
@@ -71,7 +78,7 @@ function M.scan()
       end
     end
   end
-  c.talents = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo)
+  c.talents = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo, talentNames)
   return c
 end
 
@@ -267,7 +274,7 @@ end
 
 function M.targetInfo(ctx, c, now, playerLevel)
   local t = { exists = false, enemy = false, level = 0, hp = 0, hpMax = 0, hpPct = 0, ttd = nil, range = "far",
-              fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
+              isBoss = false, fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
   if not UnitExists("target") or UnitIsDeadOrGhost("target") then
     if ctx.rangeHold then ctx.rangeHold.guid = nil end
     return t
@@ -275,6 +282,7 @@ function M.targetInfo(ctx, c, now, playerLevel)
   t.exists = true
   t.enemy = UnitCanAttack("player", "target") and true or false
   local level = UnitLevel("target") or 0
+  t.isBoss = level == -1 or UnitClassification("target") == "worldboss"
   if level <= 0 then
     level = playerLevel + 3
     t.guessed = true
@@ -289,15 +297,105 @@ function M.targetInfo(ctx, c, now, playerLevel)
   end
   t.hp, t.hpMax = hp, hpMax
   local guid = UnitGUID("target")
-  if t.enemy and guid and ctx.ttd then
-    ctx.ttd:add(now, guid, t.hpPct)
-    t.ttd = ctx.ttd:smoothed(now, guid)
-  end
+  -- the estimate itself is read in build: its prior needs the whole state
+  if t.enemy and guid and ctx.ttd then ctx.ttd:add(now, guid, t.hpPct) end
   local deb = M.auras("target", "HARMFUL", c.debuffNames, true, now)
   if deb.fs then t.fs = deb.fs.remains end
   if deb.ss then t.ss = { charges = deb.ss.count, remains = deb.ss.remains } end
   t.range = M.heldRange(ctx, guid, M.range(c), now)
+  -- fighting us: both in combat, or our Flame Shock on it (model: a mob like that runs in)
+  t.isPlayer = UnitIsPlayer("target") and true or false
+  t.inCombat = (t.fs > 0 or (UnitAffectingCombat("target") and UnitAffectingCombat("player"))) and true or false
   return t
+end
+
+-- Expected seconds to kill the target from what the state knows, for the young regression
+-- (ttd): health / (the character's damage per second + the Flame Shock and fire totem already
+-- ticking on it). Solo only: in a group others hit the mob too, and our own rate says nothing of
+-- it. Only while the mob fights us: before the pull nothing is killing it.
+function M.ttdPrior(S)
+  local t = S.target
+  if S.mode ~= "solo" or not t.enemy or (t.hp or 0) <= 0 or not S.player.inCombat then return nil end
+  local fighting = t.inCombat
+  if fighting == nil then fighting = UnitAffectingCombat("target") or (t.fs or 0) > 0 end
+  if not fighting then return nil end
+  local dps = value.dpsEstimate(S)
+  local fire = S.totems.fire
+  local src = fire.kind and value.FIRE_SOURCE[fire.kind]
+  if (t.fs or 0) > 0 or (src and fire.remains > 0) then
+    local r = damage.rates(S)
+    if (t.fs or 0) > 0 then dps = dps + r.flameShock end
+    if src and fire.remains > 0 then dps = dps + r[src] end
+  end
+  if dps <= 0 then return nil end
+  return t.hp / dps
+end
+
+-- The long cooldowns' gate for this snapshot (model.cooldownAllowed reads it along the whole
+-- plan): S.cdAllowed[key] = true / false for every gated key, nil without options. "auto" is
+-- latched per target: once allowed it holds until ttd < need x model.COOLDOWN_RELEASE, so a noisy
+-- ttd near the line does not flip the first button. Latches are kept for the last
+-- M.LATCH_TARGETS GUIDs (ctx.cdLatch = { slot, ... }, most recently seen first, slot =
+-- { guid = ..., [key] = true }): a tank swap or dotting another mob and coming back keeps the
+-- first target's latch; the least recently seen one is dropped. No options clears them all.
+M.LATCH_TARGETS = 3
+
+-- The latch slot for guid, moved to the front; a new table only for a GUID not seen among the
+-- kept ones (the least recently seen slot is dropped past M.LATCH_TARGETS).
+local function latchFor(ctx, guid)
+  local list = ctx.cdLatch
+  if not list then
+    list = {}
+    ctx.cdLatch = list
+  end
+  local n, at = #list, nil
+  for i = 1, n do
+    if list[i].guid == guid then at = i break end
+  end
+  local slot
+  if at then
+    slot = list[at]
+  else
+    slot = { guid = guid }
+    at = n < M.LATCH_TARGETS and n + 1 or n
+  end
+  for i = at, 2, -1 do list[i] = list[i - 1] end
+  list[1] = slot
+  return slot
+end
+
+function M.cooldownGate(ctx, S, guid)
+  if not S.cooldowns then
+    ctx.cdLatch = nil
+    return nil
+  end
+  -- no target: decided without a latch, the kept ones stay as they are
+  local latch = guid ~= nil and latchFor(ctx, guid) or nil
+  local out = {}
+  for key in pairs(model.COOLDOWN_TTD) do
+    local ok = model.cooldownDecide(S, key, latch ~= nil and latch[key])
+    out[key] = ok
+    -- only "auto" on a known target latches (a boss or "always" needs no memory)
+    if latch then latch[key] = (ok and S.cooldowns[key] == "auto") or nil end
+  end
+  return out
+end
+
+function M.targetTtd(ctx, S, now)
+  local t = S.target
+  local guid = t.enemy and ctx.ttd and UnitGUID("target")
+  if not guid then return end
+  t.ttd, t.ttdSource = ctx.ttd:smoothed(now, guid, M.ttdPrior(S))
+end
+
+-- A mob fighting us at 20-30 yards comes to melee (model.advance counts meleeIn down); as
+-- model.canApproach: solo only (in a group it runs to the tank), never a player. A mob not in
+-- combat stays where it is: it comes only when pulled (model.applyOn), or the player walks in.
+function M.meleeIn(S)
+  local t = S.target
+  local eta = util.approachEta(t.range)
+  if eta and S.mode == "solo" and t.exists and t.enemy and t.inCombat and not t.isPlayer then return eta end
+  return nil
 end
 
 function M.swingInfo(ctx, now, weapons)
@@ -347,10 +445,17 @@ function M.build(ctx)
   S.buffs = {
     mw = { stacks = mw, remains = remains(mine.mw) },
     ls = { charges = charges(mine.ls), remains = remains(mine.ls) },
+    ws = mine.ws and { charges = charges(mine.ws), remains = remains(mine.ws) } or nil,
     flurry = { charges = charges(mine.flurry), remains = remains(mine.flurry) },
     rage = remains(mine.rage), lust = remains(mine.lust), em = remains(mine.em),
   }
+  S.player.shield = (mine.ls and "lightning") or (mine.ws and "water") or nil
+  S.shieldPref = M.SHIELD_PREFS[ctx.shield] and ctx.shield or "auto"
   S.target = M.targetInfo(ctx, c, now, S.player.level)
+  S.target.meleeIn = M.meleeIn(S)
+  S.cooldowns = ctx.cooldowns -- the player's options for the long cooldowns (read-only, shared)
+  S.weaveMin = ctx.weaveMin -- the weaving option (nil: the model decides, as before the option)
+  S.manaPolicy = ctx.manaPolicy -- solo mana option (value.MANA_POLICY; nil: balanced)
   local fireKind, fireRemains = M.totem(M.SLOT.fire, c.totemNames, now)
   local _, waterRemains = M.totem(M.SLOT.water, c.totemNames, now)
   S.totems = { fire = { kind = fireKind, remains = fireRemains }, water = { remains = waterRemains } }
@@ -364,6 +469,8 @@ function M.build(ctx)
   S.enemies = { melee = melee, nearby = nearby }
   S.inflight = M.inflight(ctx.inflight, now)
   S.pets = { wolves = math.max(0, (ctx.wolvesUntil or 0) - now) }
+  M.targetTtd(ctx, S, now)
+  S.cdAllowed = M.cooldownGate(ctx, S, S.target.exists and UnitGUID("target") or nil)
   return S
 end
 

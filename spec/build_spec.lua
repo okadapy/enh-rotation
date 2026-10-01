@@ -83,12 +83,61 @@ describe("aura", function()
 
   it("has custom options with defaults in config", function()
     local host = t.c[1]
-    assert.are.same({ "scale", "seconds", "icons", "mode", "showReason", "showLust", "record", "export", "printDebug" },
+    assert.are.same({ "scale", "seconds", "icons", "mode", "cdFeralSpirit", "cdFireElemental", "cdShamanisticRage",
+                      "weave", "manaPolicy", "showReason", "showLust", "shield", "record", "export", "printDebug" },
       optionKeys(host.authorOptions))
     assert.are.same(aura.defaultConfig(), host.config)
-    assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, showReason = true, showLust = true,
+    assert.are.same({ scale = 1, seconds = 6, icons = 4, mode = 1, cdFeralSpirit = 1, cdFireElemental = 1,
+                      cdShamanisticRage = 3, weave = 1, manaPolicy = 1, showReason = true, showLust = false, shield = 1,
                       record = false, export = false, printDebug = false }, aura.defaultConfig())
     assert.are.equal("auto", host.authorOptions[4].values[1])
+    assert.are.same({ "auto", "Lightning Shield", "Water Shield" }, host.authorOptions[12].values)
+  end)
+
+  it("cooldown options: auto / boss only / always / never, read by runtime in the same order", function()
+    local runtime = require("runtime")
+    local byKey = {}
+    for _, o in ipairs(t.c[1].authorOptions) do byKey[o.key] = o end
+    for key, o in pairs(runtime.COOLDOWN_OPTIONS) do
+      local opt = byKey[o[1]]
+      assert.are.same({ "auto", "boss only", "always", "never" }, opt.values)
+      assert.are.equal(o[2], opt.default, key)
+    end
+    -- the defaults: wolves and the elemental on auto, Shamanistic Rage always (a mana tool solo)
+    assert.are.same({ feralSpirit = "auto", fireElemental = "auto", shamanisticRage = "always" },
+      runtime.cooldowns(aura.defaultConfig()))
+    assert.are.same({ feralSpirit = "boss", fireElemental = "never", shamanisticRage = "auto" },
+      runtime.cooldowns({ cdFeralSpirit = 2, cdFireElemental = 4, cdShamanisticRage = 1 }))
+  end)
+
+  it("weave option: 3+ / 5 stacks / any, read by runtime in the same order (default 3+)", function()
+    local runtime = require("runtime")
+    local opt
+    for _, o in ipairs(t.c[1].authorOptions) do if o.key == "weave" then opt = o end end
+    assert.are.same({ "3+ stacks", "5 stacks", "any (model decides)" }, opt.values)
+    assert.are.equal(1, opt.default)
+    assert.are.same({ 3, 5, 0 }, runtime.WEAVE_MINS)
+    assert.are.equal(3, runtime.weaveMin(aura.defaultConfig()))
+    assert.are.equal(3, runtime.weaveMin({}))
+    assert.are.equal(5, runtime.weaveMin({ weave = 2 }))
+    assert.are.equal(0, runtime.weaveMin({ weave = 3 }))
+  end)
+
+  it("solo mana option: balanced / save / spend right after the weave option, read by runtime in the same order", function()
+    local runtime = require("runtime")
+    local value = require("value")
+    local opts = t.c[1].authorOptions
+    local at
+    for i, o in ipairs(opts) do if o.key == "manaPolicy" then at = i end end
+    assert.are.equal("weave", opts[at - 1].key)
+    assert.are.same({ "balanced", "save", "spend" }, opts[at].values)
+    assert.are.equal(1, opts[at].default)
+    assert.are.same(opts[at].values, runtime.MANA_POLICIES)
+    for _, name in ipairs(runtime.MANA_POLICIES) do assert.is_number(value.MANA_POLICY[name]) end
+    assert.are.equal("balanced", runtime.manaPolicy(aura.defaultConfig()))
+    assert.are.equal("balanced", runtime.manaPolicy({}))
+    assert.are.equal("save", runtime.manaPolicy({ manaPolicy = 2 }))
+    assert.are.equal("spend", runtime.manaPolicy({ manaPolicy = 3 }))
   end)
 
   it("round-trips through the import string", function()
@@ -101,7 +150,7 @@ end)
 describe("build (pure)", function()
   it("lists modules in the load order of the contract", function()
     assert.are.same({ "util", "spells_data", "spells", "talents", "swing", "enemies", "ttd", "damage", "model",
-                      "value", "search", "planner", "snapshot", "timeline", "recorder", "runtime" }, build.MODULES)
+                      "value", "search", "planner", "snapshot", "timeline", "recorder", "version", "runtime" }, build.MODULES)
     assert.are.equal("dist/EnhRot.txt", build.OUT)
   end)
 
@@ -153,7 +202,8 @@ describe("build (pure)", function()
 
   it("imports snapshots from the in-game export string", function()
     local list = { { S = { now = 5 }, plan = { value = 2, steps = {} } } }
-    local s = require("recorder").export(list, { serialize = require("LibSerialize"), deflate = require("LibDeflate") })
+    local s = require("recorder").export({ version = "v1.0.0", snapshots = list, presses = {} },
+      { serialize = require("LibSerialize"), deflate = require("LibDeflate") })
     local path, out = os.tmpname(), os.tmpname()
     local f = assert(io.open(path, "wb"))
     f:write(s .. "\n")
@@ -162,6 +212,88 @@ describe("build (pure)", function()
     assert.are.equal(5, dofile(out)[1].S.now)
     os.remove(path)
     os.remove(out)
+  end)
+
+  it("decodes the export string of format 1 (bare list) and 2 (version, snapshots, presses)", function()
+    local LibSerialize, LibDeflate = require("LibSerialize"), require("LibDeflate")
+    local list = { { S = { now = 5 }, plan = { value = 2, steps = {} } } }
+    local v1 = "!ENHROT:1!" .. LibDeflate:EncodeForPrint(LibDeflate:CompressDeflate(
+      LibSerialize:SerializeEx({ errorOnUnserializableType = false }, list), { level = 9 }))
+    assert.are.same(list, build.decodeExport(v1))
+    assert.are.same({ format = 1, snapshots = list, presses = {} }, build.decodeExportFull(v1))
+    local presses = { { t = 5.5, key = "stormstrike", sug = "stormstrike", at = 0, hit = true, delay = 0.5 } }
+    local v2 = require("recorder").export({ version = "v0.9.1", snapshots = list, presses = presses },
+      { serialize = LibSerialize, deflate = LibDeflate })
+    assert.are.equal("!ENHROT:2!", v2:sub(1, 10))
+    assert.are.same(list, build.decodeExport(v2))
+    assert.are.same({ format = 2, version = "v0.9.1", snapshots = list, presses = presses }, build.decodeExportFull(v2))
+    assert.is_nil(build.decodeExport("!ENHROT:3!" .. v2:sub(11)))
+    assert.is_nil(build.decodeExport("not an export"))
+  end)
+
+  it("sums up the press log: followed share, median reaction delay, top mismatches", function()
+    local P = {
+      { key = "stormstrike", sug = "stormstrike", hit = true, delay = 0.3, cf = true },
+      { key = "lavaLash", sug = "lavaLash", hit = true, delay = 0.1, cf = true },
+      { key = "earthShock", sug = "earthShock", hit = true, delay = 0.9, cf = true },
+      { key = "earthShock", sug = "stormstrike", hit = false, delay = -0.2, cf = true },
+      { key = "earthShock", sug = "stormstrike", hit = false, delay = 0.1, cf = true },
+      { key = "lavaLash", sug = "lightningBolt", hit = false, cf = true },
+      { key = "lightningShield" }, -- nothing suggested, not confirmed
+    }
+    local sum = build.pressSummary(P)
+    assert.are.equal(7, sum.total)
+    assert.are.equal(6, sum.suggested)
+    assert.are.equal(3, sum.matched)
+    assert.are.equal(0.3, sum.median)
+    assert.are.equal(1, sum.unconfirmed)
+    assert.are.same({ { pressed = "earthShock", suggested = "stormstrike", count = 2 },
+                      { pressed = "lavaLash", suggested = "lightningBolt", count = 1 } }, sum.mismatches)
+    assert.are.equal(1, #build.pressSummary(P, 1).mismatches)
+    assert.are.near(0.2, build.pressSummary({ P[1], P[2] }).median, 1e-9)
+    local text = build.formatPresses(sum, "v1.0.0")
+    assert.is_not_nil(text:find("version: v1.0.0", 1, true))
+    assert.is_not_nil(text:find("followed it: 3 (50%)", 1, true))
+    assert.is_not_nil(text:find("median reaction delay: 0.300 s", 1, true))
+    assert.is_not_nil(text:find("2  earthShock <- stormstrike", 1, true))
+    assert.is_nil(build.pressSummary({}).median)
+    assert.is_not_nil(build.formatPresses(build.pressSummary({})):find("version: unknown", 1, true))
+  end)
+
+  it("reads the press log from an export string or WeakAuras.lua", function()
+    local presses = { { t = 1, key = "stormstrike", sug = "lavaLash", hit = false } }
+    local s = require("recorder").export({ version = "v2.0.0", snapshots = {}, presses = presses },
+      { serialize = require("LibSerialize"), deflate = require("LibDeflate") })
+    local path = os.tmpname()
+    local f = assert(io.open(path, "wb"))
+    f:write(s)
+    f:close()
+    local got, version = build.loadPresses(path)
+    assert.are.same(presses, got)
+    assert.are.equal("v2.0.0", version)
+    f = assert(io.open(path, "wb"))
+    f:write('WeakAurasSaved = { displays = { x = { saved = { enhrotPresses = { { t = 2, key = "lavaLash" } } } } } }')
+    f:close()
+    got, version = build.loadPresses(path)
+    assert.are.same({ { t = 2, key = "lavaLash" } }, got)
+    assert.is_nil(version)
+    os.remove(path)
+  end)
+
+  it("takes the version from RELEASE_TAG, else the repository's tag, else dev", function()
+    local function env(v) return function(name) return name == "RELEASE_TAG" and v or nil end end
+    local function tag(v) return function() return v end end
+    assert.are.equal("v1.4.2", build.version(env("v1.4.2"), tag("v1.4.1-3-gabc\n")))
+    assert.are.equal("v1.4.1-3-gabc", build.version(env(""), tag("v1.4.1-3-gabc\n")))
+    assert.are.equal("dev", build.version(env(nil), tag(nil)))
+    assert.are.equal("dev", build.version(env('x"; os.exit()'), tag("")))
+  end)
+
+  it("writes the version into the bundle in place of src/version.lua", function()
+    local code = build.bundle("src", "v3.1.4")
+    assert.is_not_nil(code:find('__mods["version"] = (function(require)\nreturn "v3.1.4"\nend)', 1, true))
+    local mods = assert(loadstring(code .. "\nreturn __require('version')"))
+    assert.are.equal("v3.1.4", mods())
   end)
 
   it("imports recorded snapshots into a fixture file", function()

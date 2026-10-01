@@ -3,16 +3,22 @@ local swing = require("swing")
 local enemies = require("enemies")
 local ttd = require("ttd")
 local snapshot = require("snapshot")
+local talents = require("talents")
 local planner = require("planner")
 local timeline = require("timeline")
 local recorder = require("recorder")
+local version = require("version")
+local util = require("util")
 
 local M = {}
 
 M.PULSE = 0.25
 M.FRAME_MS = 2 -- search time per frame; a search runs over several frames (planner.work)
 M.RECORD_MAX = 30
+M.PRESS_MAX = 200
+M.VERSION = version
 M.MODES = { "auto", "solo", "group", "raid", "pvp" }
+M.SHIELDS = { "auto", "lightning", "water" } -- option "shield" (select index) -> S.shieldPref
 M.EVENTS = {
   "COMBAT_LOG_EVENT_UNFILTERED",
   "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_SUCCEEDED",
@@ -32,11 +38,29 @@ M.DEATH = { UNIT_DIED = true, UNIT_DESTROYED = true, PARTY_KILL = true }
 M.WOLVES = spells.byKey.feralSpirit.duration or 45
 M.ATTACK_ID = 6603
 M.ALERT_ICONS = {
-  noEnchant = "Interface\\Icons\\Spell_Nature_Cyclone",
-  outOfRange = "Interface\\Icons\\Ability_Rogue_Sprint",
+  noEnchant = "Interface\\Icons\\Spell_Fire_FlameTounge",
+  outOfRange = "Interface\\Icons\\Ability_Hunter_EagleEye",
   moveIn = "Interface\\Icons\\Ability_Rogue_Sprint",
   autoAttack = "Interface\\Icons\\INV_Sword_04",
+  waterShield = "Interface\\Icons\\Ability_Shaman_WaterShield",
+  outOfMana = "Interface\\Icons\\Spell_Shadow_ManaBurn",
+  drink = "Interface\\Icons\\INV_Drink_07",
+  saveMana = "Interface\\Icons\\Ability_MeleeDamage",
 }
+-- the imbue a missing one most likely was: Windfury from 30 on the main hand, else Flametongue
+-- (10), else Rockbiter; the off hand (dual wield from 40) carries Flametongue
+M.IMBUE_ICONS = {
+  windfury = "Interface\\Icons\\Spell_Nature_Cyclone",
+  flametongue = "Interface\\Icons\\Spell_Fire_FlameTounge",
+  rockbiter = "Interface\\Icons\\Spell_Nature_RockBiter",
+}
+M.DRINK_PCT = 0.5 -- out of combat, no enemy target, less mana than this: "Drink"
+M.DRINK_PULL_PCT = 0.3 -- solo, a mob out of melee and nobody in combat, at most this much mana: "Drink"
+-- the buffs of drinking, by their (localized) names: "Drink" (430) is on every plain drink;
+-- the mage's conjured food of 3.3.5a (Mana Strudel 58648, Mana Pie 61828: Ritual of
+-- Refreshment) restores health and mana under "Refreshment". "Food" (433) gives no mana.
+M.DRINK_ID = 430
+M.REFRESHMENT_ID = 58648
 
 function M.validPlan(plan)
   if type(plan) ~= "table" or type(plan.steps) ~= "table" then return false end
@@ -64,15 +88,24 @@ function M.alert(S)
     return withIcon({ key = "autoAttack", reason = "Auto-attack is off" })
   end
   -- not while the cast is on its way (the aura comes a moment after the cast)
-  if sp.lightningShield and b.ls.charges <= 0 and not (S.inflight and S.inflight.lightningShield) then
-    return withIcon({ key = "lightningShield", reason = "Lightning Shield missing" })
+  if util.wantsLightningShield(S) then
+    if sp.lightningShield and b.ls.charges <= 0 and not (S.inflight and S.inflight.lightningShield) then
+      return withIcon({ key = "lightningShield", reason = "Lightning Shield missing" })
+    end
+  elseif S.shieldPref == "water" and not (S.player and S.player.shield == "water") then
+    return withIcon({ key = "waterShield", reason = "Water Shield missing" })
   end
-  if (w.mh and not w.mh.enchant) or (w.oh and not w.oh.enchant) then
-    return withIcon({ key = "noEnchant", reason = "Weapon imbue missing" })
+  if w.mh and not w.mh.enchant then
+    local lvl = S.player.level or 80
+    local imbue = lvl >= 30 and "windfury" or lvl >= 10 and "flametongue" or "rockbiter"
+    return { key = "noEnchant", icon = M.IMBUE_ICONS[imbue], reason = "Main-hand imbue missing" }
+  end
+  if w.oh and not w.oh.enchant then
+    return { key = "noEnchant", icon = M.IMBUE_ICONS.flametongue, reason = "Off-hand imbue missing" }
   end
   -- Shamanistic Rage returns mana only through melee hits: not at range, not without auto-attack
   local rage = sp.shamanisticRage
-  if rage and melee and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2
+  if rage and melee and not (S.cooldowns and S.cooldowns.shamanisticRage == "never") and S.player.manaMax > 0 and S.player.mana / S.player.manaMax < 0.2
     and rage.cd <= (S.gcdRemains or 0) + 0.1 then
     return withIcon({ key = "shamanisticRage", reason = "Low mana: Shamanistic Rage" })
   end
@@ -99,6 +132,9 @@ end
 
 function M.lustReady(S, now)
   if S.mode ~= "group" and S.mode ~= "raid" then return nil end
+  -- a fight, not a town: an enemy target, and a fight going on
+  local t = S.target
+  if not (t and t.exists and t.enemy and (t.inCombat or S.player.inCombat)) then return nil end
   if sated() then return nil end
   for _, id in ipairs(M.LUST_IDS) do
     local name = GetSpellInfo(id)
@@ -146,6 +182,27 @@ local function mwNow(ctx, now)
   return a.mw and a.mw.count or 0
 end
 
+-- The first shown button and since when it is due: replans that keep suggesting it at 0 do not
+-- move that moment on (the delay of a press is counted from it).
+function M.trackDue(rt, plan, now)
+  local st = plan and plan.steps[1]
+  local d = rt.due
+  if not st then
+    rt.due = nil
+  elseif d and d.key == st.key then
+    if d.at > now then d.at = now + st.at end
+  else
+    rt.due = { key = st.key, at = now + st.at }
+  end
+end
+
+-- press log (recording on): what was pressed against what was shown
+local function logPress(rt, key, now)
+  if not rt.rec then return end
+  local d = rt.due
+  rt.rec:press(key, now, rt.plan, d and d.at)
+end
+
 -- the event belongs to the tracked hard cast (castID = 4th argument of UNIT_SPELLCAST_* in 3.3.5a)
 local function ownCast(rt, key, castID)
   local c = rt.casting
@@ -159,10 +216,14 @@ function M.onCast(rt, event, key, now, castID)
     -- the key press itself: the client starts the GCD at once, the server confirms a round trip
     -- later. Taken as the press now, so the plan does not show the pressed button for that time.
     rt.sent = { key = key, at = now }
+    logPress(rt, key, now)
     M.mark(rt, "cast", key)
     return
   end
   local confirmed = sentFor(rt, key, now)
+  if confirmed and rt.rec and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED") then
+    rt.rec:confirm(key)
+  end
   if event == "UNIT_SPELLCAST_START" then
     done = confirmed
     if confirmed then rt.sent = nil end
@@ -203,6 +264,8 @@ function M.onCast(rt, event, key, now, castID)
   else
     return
   end
+  -- START / SUCCEEDED without SENT before it: the press itself (SENT did not come)
+  if not done then logPress(rt, key, now) end
   M.mark(rt, "cast", key, done)
 end
 
@@ -275,34 +338,142 @@ function M.onEvent(rt, event, ...)
     rt.shown = false
     ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   elseif M.RESCAN[event] then
-    ctx.cache = snapshot.scan()
+    ctx.cache = snapshot.scan(ctx.talentNames)
     M.checkTalents(rt)
     M.mark(rt, "target")
   end
 end
 
--- The sandbox offers no protected calls: a Lua error inside one update leaves rt.busy set.
--- The next frame sees it and stops the engine instead of repeating the error every frame.
-function M.update(rt, dt)
-  if rt.stopped then return false end
-  if rt.busy then
-    M.fail(rt)
-    return false
+-- The sandbox offers no protected calls, but coroutine.resume hands an error back instead of
+-- raising it. Each guarded function (the frame step, the event handler) runs in its own
+-- long-lived coroutine that yields its results after every call and takes the next call's
+-- arguments from the resume: nothing is allocated per call. An error kills that coroutine; the
+-- next call makes a new one. An error inside a search job (a coroutine of its own) is raised
+-- again by job:run and so ends up here too.
+local function loop(fn)
+  local function again(...)
+    return again(coroutine.yield(fn(...)))
   end
-  rt.busy = true
-  local r = M.step(rt, dt)
-  rt.busy = false
-  return r
+  return again
 end
 
+local function resumed(rt, fn, ok, ...)
+  if ok then return ... end
+  if rt.guards[fn] then rt.guards[fn] = nil end
+  M.onError(rt, (...))
+  return nil
+end
+
+function M.guarded(rt, fn, ...)
+  local guards = rt.guards
+  if not guards then
+    guards = {}
+    rt.guards = guards
+  end
+  local co = guards[fn]
+  local st = co and coroutine.status(co)
+  if st ~= "suspended" then
+    co = coroutine.create(loop(fn))
+    -- a call from inside the same guarded function (an event fired while it runs) gets a coroutine
+    -- of its own and leaves the long-lived one alone
+    if st ~= "running" and st ~= "normal" then guards[fn] = co end
+  end
+  return resumed(rt, fn, coroutine.resume(co, ...))
+end
+
+-- One error: said in chat (each message once), the planner and its search start afresh, the
+-- engine goes on. MAX_ERRORS errors within ERROR_WINDOW seconds: it stops, and starts again on
+-- the next target change or after RETRY_AFTER seconds (an error that comes from one odd target
+-- goes away with it). After MAX_RESTARTS such restarts in a session it stays stopped until /reload.
+M.MAX_ERRORS = 5
+M.ERROR_WINDOW = 10
+M.RETRY_AFTER = 30
+M.MAX_RESTARTS = 3
+
+function M.onError(rt, msg)
+  msg = tostring(msg)
+  rt.counters.errors = rt.counters.errors + 1
+  rt.errorsSeen = rt.errorsSeen or {}
+  if not rt.errorsSeen[msg] then
+    rt.errorsSeen[msg] = true
+    print("|cffff5555EnhRot|r error: " .. msg)
+  end
+  local now = GetTime()
+  local times = rt.errorTimes or {}
+  rt.errorTimes = times
+  times[#times + 1] = now
+  while #times > M.MAX_ERRORS do table.remove(times, 1) end
+  if #times >= M.MAX_ERRORS and now - times[1] <= M.ERROR_WINDOW then
+    M.fail(rt)
+    return
+  end
+  -- what a half-done step may have left behind: the planner (with its search job) and the
+  -- pending event; the next pulse plans from scratch
+  rt.planner, rt.searching, rt.lastFirst, rt.due = M.newPlanner(), false, nil, nil
+  rt.pending, rt.elapsed = nil, 0
+end
+
+function M.update(rt, dt)
+  if rt.stopped then return false end
+  return M.guarded(rt, M.step, rt, dt) or false
+end
+
+-- Stopped: no work, only a cheap wait for a retry. The frame keeps PLAYER_TARGET_CHANGED (the
+-- OnEvent handler restarts on it) and its OnUpdate only adds up the time.
 function M.fail(rt)
+  if rt.stopped then return end
   rt.stopped = true
   M.halt(rt)
-  rt.frame:SetScript("OnUpdate", nil)
+  local frame = rt.frame
+  -- counted on the frame: one per session, a re-init of the aura keeps it
+  if (frame.enhrotRestarts or 0) < M.MAX_RESTARTS then
+    rt.retrying = true
+    frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    local waited = 0
+    frame:SetScript("OnUpdate", function(_, dt)
+      waited = waited + (dt or 0)
+      if waited >= M.RETRY_AFTER then M.restart(rt) end
+    end)
+    print(("|cffff5555EnhRot|r stopped after errors - retrying in %d s or on a new target"):format(M.RETRY_AFTER))
+    return
+  end
+  frame:SetScript("OnUpdate", nil)
   if not rt.failed then
     rt.failed = true
     print("|cffff5555EnhRot|r stopped after an error - /reload to retry")
   end
+end
+
+-- the engine goes (again): every event, a fresh planner and search, the frame's scripts, the
+-- timeline shown. start() and a restart after a stop both run this.
+function M.run(rt)
+  local frame, tl = rt.frame, rt.tl
+  rt.stopped, rt.retrying, rt.sleeping, rt.inactive = nil, nil, false, nil
+  rt.planner, rt.searching, rt.lastFirst, rt.due = M.newPlanner(), false, nil, nil
+  rt.pending, rt.elapsed, rt.errorTimes = nil, 0, nil
+  M.listen(frame)
+  frame:SetScript("OnEvent", function(_, event, ...)
+    if rt.stopped then
+      if rt.retrying and event == "PLAYER_TARGET_CHANGED" then M.restart(rt) end
+      return
+    end
+    M.guarded(rt, M.onEvent, rt, event, ...)
+  end)
+  frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
+  frame:Show()
+  -- a timeline tick that died half-way leaves it busy: it would stop again on its first frame
+  tl.busy = false
+  tl:start()
+end
+
+function M.restart(rt)
+  if not rt.retrying then return end
+  rt.frame.enhrotRestarts = (rt.frame.enhrotRestarts or 0) + 1
+  M.run(rt)
+  M.mark(rt, "target")
+  -- the aura was hidden meanwhile (its OnHide found the engine stopped): sleep at once
+  local region = rt.env.region
+  if region and region.IsVisible and not region:IsVisible() then M.sleep(rt) end
 end
 
 -- no events, no work, timeline hidden
@@ -354,6 +525,7 @@ function M.show(rt, plan, S, now)
   end
   if plan.capped then rt.counters.capped = rt.counters.capped + 1 end
   local first = plan.steps[1] and plan.steps[1].key
+  M.trackDue(rt, plan, now)
   if first ~= rt.lastFirst then
     rt.lastFirst = first
     rt.counters.replans = rt.counters.replans + 1
@@ -362,16 +534,73 @@ function M.show(rt, plan, S, now)
   end
   rt.plan, rt.S = plan, S
   rt.tl:render(plan, S, now)
-  rt.tl:setAlert(rt.alert or M.idleHint(plan, S, rt.searching))
+  rt.tl:setAlert(rt.alert or M.idleHint(plan, S, rt.searching, M.drinking))
   return true
 end
 
--- Nothing to press at 20-30 yards (solo, mana is dear): the timeline would be empty with no
--- hint at all. The plan values the walk to melee at nothing, the player needs to be told.
-function M.idleHint(plan, S, searching)
+-- No button costs as little as the mana left, and Shamanistic Rage (free) is not ready either:
+-- an empty plan for that reason, not because of the global cooldown or cooldowns.
+function M.outOfMana(S)
+  local mana, priced = S.player.mana or 0, false
+  for _, sp in pairs(S.spells) do
+    local cost = sp.cost or 0
+    if cost > 0 then
+      if cost <= mana then return false end
+      priced = true
+    end
+  end
+  local rage = S.spells.shamanisticRage
+  if rage and rage.cd <= (S.gcdRemains or 0) + 0.1 then return false end
+  return priced
+end
+
+-- the player is drinking already: a "Drink" or "Refreshment" buff (see DRINK_ID)
+function M.drinking()
+  local drink = GetSpellInfo(M.DRINK_ID) or "Drink"
+  local refresh = GetSpellInfo(M.REFRESHMENT_ID) or "Refreshment"
+  for i = 1, 40 do
+    local name = UnitAura("player", i, "HELPFUL")
+    if not name then return false end
+    if name == drink or name == refresh then return true end
+  end
+  return false
+end
+
+-- Out of combat with the mana below pct of the bar (at most, with atMost): the "Drink" hint, or
+-- false while already drinking (nothing to say); nil when no drink is due
+local function drinkHint(S, pct, isDrinking, atMost)
+  local p = S.player
+  local max = p and p.manaMax or 0
+  if not p or p.inCombat or max <= 0 then return nil end
+  local mana, limit = p.mana or 0, max * pct
+  if mana > limit or (mana == limit and not atMost) then return nil end
+  if isDrinking and isDrinking() then return false end
+  return withIcon({ key = "drink", reason = "Drink" })
+end
+
+-- An empty timeline must say why. At 20-30 yards (solo, mana is dear) the plan values the walk
+-- to melee at nothing; in melee it may be the mana; with no enemy about, low mana means a drink.
+-- Solo with a mob not yet pulled (out of melee, neither of us in combat) and the bar nearly
+-- empty (DRINK_PULL_PCT), the drink comes before the walk: the pull would be fought without mana;
+-- while drinking, nothing (the walk waits for the drink).
+-- isDrinking: a function, asked only when a drink would be suggested
+function M.idleHint(plan, S, searching, isDrinking)
   local t = S and S.target
-  if searching or not (t and t.exists and t.enemy) or #plan.steps > 0 then return nil end
+  if searching or #plan.steps > 0 or not t then return nil end
+  if not (t.exists and t.enemy) then return drinkHint(S, M.DRINK_PCT, isDrinking) or nil end
+  if S.mode == "solo" and t.range ~= "melee" and not t.inCombat then
+    -- drinking already: not "Move into melee" in the middle of it
+    local h = drinkHint(S, M.DRINK_PULL_PCT, isDrinking, true)
+    if h ~= nil then return h or nil end
+  end
   if t.range == "20" or t.range == "30" then return withIcon({ key = "moveIn", reason = "Move into melee" }) end
+  if t.range == "melee" and M.outOfMana(S) then return withIcon({ key = "outOfMana", reason = "Out of mana" }) end
+  -- solo, in melee, swinging, mana left, and still nothing for 6 s: no spell pays for its mana
+  -- (the drink it costs) - say so, the bar is not broken (Mana policy "spend" spends more)
+  if S.mode == "solo" and t.range == "melee" and not t.dead and (t.hp or 1) > 0
+    and S.swing and S.swing.attacking then
+    return withIcon({ key = "saveMana", reason = "Auto-attack: save mana" })
+  end
   return nil
 end
 
@@ -384,15 +613,18 @@ local function work(rt)
   return M.show(rt, p:view(S.now), S, S.now)
 end
 
--- Talents are matched by English names (talents.KEYS): on another client language every rank
--- reads as 0. Said once per session, from level 10 (the first talent point) on.
+-- Talents are matched by their localized names (from spell ids) and English names: warn when
+-- points are spent but none of them is one we know. Never with no points spent (a fresh
+-- level 10), nor before the client has listed its talents. Said once per session.
 function M.checkTalents(rt)
-  if rt.talentsWarned or (UnitLevel("player") or 0) < 10 then return end
+  if rt.talentsWarned then return end
+  local spent, listed = talents.spent(GetNumTalentTabs, GetNumTalents, GetTalentInfo)
+  if listed == 0 or spent == 0 then return end
   for _, rank in pairs(rt.ctx.cache.talents or {}) do
     if rank > 0 then return end
   end
   rt.talentsWarned = true
-  print("|cffff5555EnhRot|r: talents not detected (non-English client?)")
+  print("|cffff5555EnhRot|r: talents not recognized (unsupported client language?)")
 end
 
 -- nothing to suggest: dead or a ghost, on a flight path, in a vehicle, mounted out of combat
@@ -421,7 +653,7 @@ function M.step(rt, dt)
     if not rt.inactive then
       rt.inactive = true
       rt.planner, rt.searching, rt.lastFirst = M.newPlanner(), false, nil
-      rt.plan = { value = 0, steps = {} }
+      rt.plan, rt.due = { value = 0, steps = {} }, nil
     end
     rt.tl:stop() -- again after a wake-up, which shows the timeline
     return false
@@ -439,8 +671,9 @@ function M.step(rt, dt)
   rt.alert = alert
   rt.tl:setAlert(alert)
   if not (S.target.exists and S.target.enemy) then
-    rt.plan, rt.S, rt.searching = { value = 0, steps = {} }, S, false
+    rt.plan, rt.S, rt.searching, rt.due = { value = 0, steps = {} }, S, false, nil
     rt.tl:render(rt.plan, S, now)
+    if not alert then rt.tl:setAlert(M.idleHint(rt.plan, S, false, M.drinking)) end
     return true
   end
   local plan = rt.planner:update(S, ev)
@@ -459,10 +692,11 @@ end
 -- the export window with the recorded snapshots (option "Export snapshots")
 function M.showExport(env)
   local function text()
-    local list = env.saved and env.saved[recorder.KEY] or {}
-    local s = recorder.export(list, M.exportLibs())
+    local saved = env.saved or {}
+    local list, presses = saved[recorder.KEY] or {}, saved[recorder.PRESS_KEY] or {}
+    local s = recorder.export({ version = M.VERSION, snapshots = list, presses = presses }, M.exportLibs())
     if not s then return "EnhRot: this client has no LibSerialize/LibDeflate, send WeakAuras.lua instead" end
-    if #list == 0 then return "EnhRot: no snapshots yet - turn on Record snapshots and play a while" end
+    if #list == 0 and #presses == 0 then return "EnhRot: no snapshots yet - turn on Record snapshots and play a while" end
     return s
   end
   return timeline.exportWindow(text(), text)
@@ -472,14 +706,61 @@ function M.timelineOptions(config)
   return { icons = config.icons, seconds = config.seconds, scale = config.scale, showReason = config.showReason ~= false }
 end
 
+-- WotLK 3.3.5a only: spell ranks, talents, combat log arguments and the API are of that client
+M.BUILD = 30300
+
+function M.supported()
+  if not GetBuildInfo then return true end
+  local version, _, _, toc = GetBuildInfo()
+  if toc == nil or tonumber(toc) == M.BUILD then return true end
+  return false, ("EnhRot supports only WotLK 3.3.5a (build %d); this client is %s (%s)"):format(M.BUILD, tostring(version), tostring(toc))
+end
+
+-- the options for the long cooldowns (tools/aura.lua: select index) -> S.cooldowns
+M.COOLDOWN_MODES = { "auto", "boss", "always", "never" }
+M.COOLDOWN_OPTIONS = { feralSpirit = { "cdFeralSpirit", 1 }, fireElemental = { "cdFireElemental", 1 },
+                       shamanisticRage = { "cdShamanisticRage", 3 } }
+function M.cooldowns(config)
+  local out = {}
+  for key, o in pairs(M.COOLDOWN_OPTIONS) do out[key] = M.COOLDOWN_MODES[config[o[1]] or o[2]] or "always" end
+  return out
+end
+
+-- the option "weave" (select index) -> S.weaveMin: the fewest Maelstrom stacks for a Lightning
+-- Bolt / Chain Lightning in melee (0 = the model decides)
+M.WEAVE_MINS = { 3, 5, 0 }
+function M.weaveMin(config)
+  return M.WEAVE_MINS[config.weave or 1] or M.WEAVE_MINS[1]
+end
+
+-- the option "manaPolicy" (select index) -> S.manaPolicy: solo, how dear mana is (value.MANA_POLICY)
+M.MANA_POLICIES = { "balanced", "save", "spend" }
+function M.manaPolicy(config)
+  return M.MANA_POLICIES[config.manaPolicy or 1] or M.MANA_POLICIES[1]
+end
+
 function M.start(config, env)
+  local ok, msg = M.supported()
+  if not ok then
+    if not M.buildWarned then
+      M.buildWarned = true
+      print("|cffff5555EnhRot|r" .. msg:sub(7))
+    end
+    return nil
+  end
   config = config or {}
   env = env or {}
   env.saved = env.saved or {}
   env.saved.swing = env.saved.swing or {}
   local now = GetTime()
-  local ctx = { cache = snapshot.scan(), swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
-                inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil }
+  local talentNames = talents.localNames(GetSpellInfo)
+  local ctx = { cache = snapshot.scan(talentNames), talentNames = talentNames,
+                swing = swing.new(env.saved.swing), enemies = enemies.new(), ttd = ttd.new(),
+                inflight = {}, mode = M.MODES[config.mode or 1] or "auto", attacking = nil,
+                shield = M.SHIELDS[config.shield or 1] or "auto" }
+  ctx.cooldowns = M.cooldowns(config)
+  ctx.weaveMin = M.weaveMin(config)
+  ctx.manaPolicy = M.manaPolicy(config)
   ctx.swing:onSpeed(now, UnitAttackSpeed("player"))
   -- after /reload auto-attack may already be on; PLAYER_ENTER_COMBAT will not come again
   if IsCurrentSpell and IsCurrentSpell(M.ATTACK_ID) then
@@ -488,26 +769,22 @@ function M.start(config, env)
   end
   -- one engine frame and one timeline for the whole session: a re-init reuses both
   local frame = EnhRotEngineFrame or CreateFrame("Frame", "EnhRotEngineFrame")
-  M.listen(frame)
   local tl = timeline.new(env.region or UIParent, M.timelineOptions(config), frame.enhrotTimeline)
   frame.enhrotTimeline = tl
   local rt = {
     config = config, env = env, ctx = ctx, frame = frame, tl = tl, elapsed = 0, pending = nil, shown = false,
-    planner = M.newPlanner(), rec = config.record and recorder.new(env.saved, M.RECORD_MAX) or nil,
+    rec = config.record and recorder.new(env.saved, M.RECORD_MAX, M.PRESS_MAX) or nil,
     playerGUID = UnitGUID("player"), mine = {}, counters = { replans = 0, capped = 0, errors = 0 }, reported = false,
   }
-  tl.onError = function() M.fail(rt) end
+  M.run(rt)
+  -- the timeline stops itself on the frame after an error of its own: counted like the engine's,
+  -- and it starts again unless that was one error too many
+  tl.onError = function()
+    M.onError(rt, "timeline error")
+    if not (rt.stopped or rt.sleeping or rt.inactive) then tl:start() end
+  end
   M.checkTalents(rt)
   if config.export then M.showExport(env) end
-  frame:SetScript("OnEvent", function(_, event, ...)
-    if rt.stopped then return end
-    if rt.busy then return M.fail(rt) end
-    rt.busy = true
-    M.onEvent(rt, event, ...)
-    rt.busy = false
-  end)
-  frame:SetScript("OnUpdate", function(_, dt) M.update(rt, dt) end)
-  frame:Show()
   -- the region's hooks stay for the session; they always act on the newest engine state
   frame.enhrotRt = rt
   local region = env.region

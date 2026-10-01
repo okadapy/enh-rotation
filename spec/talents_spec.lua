@@ -17,6 +17,46 @@ describe("talents", function()
     assert.is_nil(t.improvedHealingWave)
   end)
 
+  describe("on a non-English client", function()
+    local RU = { [16256] = "Шквал", [51528] = "Оружие водоворота", [17364] = "Удар бури" }
+    local function ruInfo(id) return RU[id] end
+    local tree = { talents = {
+      [2] = { { name = "Шквал", rank = 5 }, { name = "Оружие водоворота", rank = 3 },
+              { name = "Удар бури", rank = 1 }, { name = "Lava Lash", rank = 1 } },
+    } }
+
+    it("builds localized name -> key from each talent's rank-1 spell", function()
+      local names = talents.localNames(ruInfo)
+      assert.are.same({ ["Шквал"] = "flurry", ["Оружие водоворота"] = "maelstromWeapon", ["Удар бури"] = "stormstrike" }, names)
+    end)
+
+    it("reads ranks by the localized names, English names still as a fallback", function()
+      W.install(tree)
+      local t = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo, talents.localNames(ruInfo))
+      assert.are.equal(5, t.flurry)
+      assert.are.equal(3, t.maelstromWeapon)
+      assert.are.equal(1, t.stormstrike)
+      assert.are.equal(1, t.lavaLash)
+    end)
+
+    it("without the map only the English names are read", function()
+      W.install(tree)
+      local t = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo)
+      assert.are.equal(0, t.flurry)
+      assert.are.equal(1, t.lavaLash)
+    end)
+  end)
+
+  it("counts spent points in every talent, known or not, and the talents listed", function()
+    W.install({ talents = {
+      [1] = { { name = "Elementarschutz", rank = 3 }, { name = "Convection", rank = 0 } },
+      [3] = { { name = "Improved Healing Wave", rank = 2 } },
+    } })
+    assert.are.same({ 5, 3 }, { talents.spent(GetNumTalentTabs, GetNumTalents, GetTalentInfo) })
+    W.install({ talents = {} })
+    assert.are.same({ 0, 0 }, { talents.spent(GetNumTalentTabs, GetNumTalents, GetTalentInfo) })
+  end)
+
   it("returns zero for every known key when nothing is learned", function()
     W.install({ talents = {} })
     local t = talents.read(GetNumTalentTabs, GetNumTalents, GetTalentInfo)
@@ -33,11 +73,13 @@ describe("talents", function()
     end
   end)
 
-  it("has unique keys and names", function()
-    local keys, names = {}, {}
+  it("has unique keys, names and rank-1 spell ids", function()
+    local keys, names, ids = {}, {}, {}
     for _, k in ipairs(talents.KEYS) do
       assert.is_nil(keys[k.key], k.key); keys[k.key] = true
       assert.is_nil(names[k.name], k.name); names[k.name] = true
+      assert.is_number(k.id, k.key)
+      assert.is_nil(ids[k.id], k.key); ids[k.id] = true
     end
   end)
   describe("standard enhancement build by level", function()

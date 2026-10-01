@@ -4,7 +4,7 @@ M.HORIZON = 6.0
 M.BEAM = 7
 M.DEPTH = 4
 M.BUDGET_MS = 2 -- per frame: a search runs in slices (search.start), never cut by the clock
-M.NODE_CAP = 220 -- the whole search stops after this many candidates (deterministic)
+M.NODE_CAP = 300 -- the whole search stops after this many candidates (deterministic)
 M.READY_EPS = 0.05
 M.WEAVE_KEYS = { "lightningBolt", "chainLightning" } -- what waiting for a swing is for
 M.PER_FIRST = 1 -- beam places kept for the best chains of every first button (diversity)
@@ -14,12 +14,12 @@ M.FILL_MARGIN = 0.02 -- first buttons whose best chain is within this share of t
 M.FILL_REPLAYS = 12 -- fillIdle replays per search, best chains first (bounds its time)
 M.IDLE_MIN = 1.0 -- a wait this long inside the plan gets each ready button tried in it (fillIdle)
 
+-- the text under the first icon: short (it fits under a 64 px icon), plain words, and it says why
+-- this button and not its neighbour (M.reason picks the case; these are the fixed ones)
 M.REASONS = {
   stormstrike = "Stormstrike: +20% nature",
   lavaLash = "filler",
-  earthShock = "shock filler",
-  frostShock = "shock filler",
-  searingTotem = "no fire totem",
+  frostShock = "Frost Shock: damage + slow",
   fireElemental = "big cooldown",
   feralSpirit = "big cooldown",
   callOfElements = "totems expiring",
@@ -29,6 +29,7 @@ M.REASONS = {
 local function q(x) return math.floor((x or 0) * 4 + 0.5) end
 
 local FIRE_CODE = { searing = 1, magma = 2, fireElemental = 3, other = 4 }
+local RANGE_CODE = { melee = 1, ["20"] = 2, ["30"] = 3, far = 4 }
 
 local floor, char, unpack_ = math.floor, string.char, unpack
 local BYTES = {} -- reused by every signature() call
@@ -58,6 +59,9 @@ function M.signature(S)
     b(mw and mw.stacks), b(t.fs), b(ss and ss.charges), b(S.gcdRemains), b(S.castRemains)
   bytes[6], bytes[7], bytes[8] = sw and (sw.attacking and 1 or 2) or 0, b(mh and mh.next), b(oh and oh.next)
   bytes[9], bytes[10] = fire and (FIRE_CODE[fire.kind] or 0) or 255, b(fire and fire.remains)
+  -- a mob on its way in (model.advance moves it to melee): where it is and when it arrives
+  local mi = t.meleeIn
+  bytes[11], bytes[12] = RANGE_CODE[t.range] or 0, mi and b(mi) or 255
   -- the spell key set is the same in the whole search tree: sort it once per search
   local memo = S.memo
   local keys = memo and memo.sigKeys
@@ -78,11 +82,11 @@ function M.signature(S)
         v = 0
       end
     end
-    bytes[10 + i] = v
+    bytes[12 + i] = v
   end
   local hpStep = (t.hpMax or 1) * 0.005
   if hpStep < 1 then hpStep = 1 end
-  local n = 10 + #keys
+  local n = 12 + #keys
   local hp = floor((t.hp or 0) / hpStep)
   local mana = floor((S.player.mana or 0) / 50)
   local now = floor((S.now or 0) * 4 + 0.5)
@@ -96,21 +100,57 @@ function M.signature(S)
   return char(unpack_(bytes, 1, n + 8))
 end
 
+-- built once: the search asks for a reason for many candidates
+local FITS, DELAYS, HARD = {}, {}, {}
+for n = 0, 4 do
+  local st = n == 1 and "1 stack" or n .. " stacks"
+  FITS[n], DELAYS[n], HARD[n] = st .. ", fits before swing", st .. ": delays swing", st .. ": hard-cast"
+end
+-- with no stacks the cast resets the swing timer however short it is (model: cast.reset)
+DELAYS[0], FITS[0] = "0 stacks: resets swing", "0 stacks: resets swing"
+
+local castModel
+-- the swing clock goes on when the server ends a cast (castTime + latency after the press, as in
+-- model.apply) and swings due before that wait for it. true: the cast ends before the next own
+-- swing of either hand; false: it holds one back; nil: no swings are coming
+local function beforeSwing(S, key)
+  local sw = S.swing
+  if not (sw and sw.attacking) then return nil end
+  local mh, oh = sw.mh, sw.oh
+  local nxt = mh and mh.next
+  if oh and oh.next and not (nxt and nxt <= oh.next) then nxt = oh.next end
+  if not nxt then return nil end
+  castModel = castModel or require("model")
+  return castModel.castTime(S, key) + (S.latency or 0) <= nxt + 1e-9
+end
+
+-- afterSwing: kept for the callers; whether a cast fits is read from the state's swing clock
 function M.reason(S, key, afterSwing)
-  local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
+  local t = S.target
   if key == "lightningBolt" or key == "chainLightning" then
-    if mw >= 5 then return "5 Maelstrom stacks" end
-    if afterSwing then return "after swing - no clip" end
-    return ("%d Maelstrom stacks"):format(math.floor(mw))
+    local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
+    if mw >= 5 then return "5 stacks: instant" end
+    if t.range and t.range ~= "melee" then return "pull: target out of melee" end
+    mw = math.floor(mw)
+    local fits = beforeSwing(S, key)
+    if fits == nil then return HARD[mw] end
+    return fits and FITS[mw] or DELAYS[mw]
   elseif key == "flameShock" then
-    return (S.target.fs or 0) <= 0 and "Flame Shock expired" or "refresh Flame Shock"
-  elseif key == "fireNova" or key == "magmaTotem" then
+    return (t.fs or 0) <= 0 and "Flame Shock not ticking" or "refresh Flame Shock"
+  elseif key == "earthShock" then
+    return (t.fs or 0) > 0 and "Flame Shock up: Earth Shock" or "Earth Shock: instant damage"
+  elseif key == "searingTotem" or key == "magmaTotem" or key == "fireNova" then
     local n = require("damage").totemTargets(S)
-    if n >= 2 then return ("%d targets"):format(n) end
-    return key == "fireNova" and "Fire Nova ready" or "Magma Totem down"
+    if key == "searingTotem" then return n <= 1 and "1 target: Searing Totem" or "fire totem: Searing Totem" end
+    if n >= 2 then return ("%d targets: %s"):format(n, key == "fireNova" and "Fire Nova" or "Magma Totem") end
+    return key == "fireNova" and "Fire Nova ready" or "fire totem: Magma Totem"
   elseif key == "shamanisticRage" then
     local p = S.player
-    return (p.manaMax and p.mana / p.manaMax < 0.3) and "low mana" or "damage cooldown"
+    return (p.manaMax and p.manaMax > 0 and p.mana / p.manaMax < 0.3) and "mana: Shamanistic Rage"
+      or "Rage: mana, -30% damage"
+  elseif key == "lightningShield" then
+    local ls = S.buffs and S.buffs.ls
+    if ls and (ls.charges or 0) > 0 then return "Lightning Shield low" end
   end
   return M.REASONS[key] or key
 end
@@ -165,23 +205,30 @@ local function finalScore(o, node, rootNow)
   return v + o.value.terminal(S), v
 end
 
--- replay one step: wait exactly a.readyIn (> 0), then press. Real states: a chain of scratch
--- states (model.peek*) would let a state share tables with the one two steps before it.
-local function extend(o, node, a, rootNow, afterSwing)
+-- replay one step: wait exactly a.readyIn (> 0), then press.
+-- peek: the new state is a scratch one (model.peek*), for a chain read only at its newest state
+-- and the one before (a scratch state may share tables with the one two steps before it, which
+-- the next peek changes); else a real state, which stays valid (a node extended again later).
+-- replayed: the caller sets the step's reason itself (not computed here).
+local function extend(o, node, a, rootNow, afterSwing, peek, replayed)
   local S, v = node.S, node.v
+  local m = o.model
+  local wait, apply = m.wait, m.apply
+  if peek and m.peekApply then wait, apply = m.peekWait, m.peekApply end
   if a.readyIn > 1e-9 then
     if S.now + a.readyIn - rootNow >= o.horizon then return nil end
-    local S1, d = o.model.wait(S, a.readyIn)
+    local S1, d = wait(S, a.readyIn)
     v = v + waitValue(o, S, S1, d)
     S = S1
   end
   local at = S.now - rootNow
   if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
-  local S2, dmg = o.model.apply(S, a.key, o.horizon - at)
+  local S2, dmg = apply(S, a.key, o.horizon - at)
   v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   local steps = {}
   for i, s in ipairs(node.steps) do steps[i] = s end
-  steps[#steps + 1] = { key = a.key, at = at, reason = M.reason(S, a.key, afterSwing), afterSwing = afterSwing or nil }
+  steps[#steps + 1] = { key = a.key, at = at, reason = not replayed and M.reason(S, a.key, afterSwing) or nil,
+                        afterSwing = afterSwing or nil }
   return { S = S2, v = v, steps = steps, depth = node.depth + 1 }
 end
 
@@ -197,13 +244,62 @@ local function chainKey(node)
   return k
 end
 
--- shallow root copy with a fresh per-search memo (see damage.lua); S itself is never touched
-local function root(S)
+-- Best first, equal scores by chain: a merge sort with the comparison written inline (table.sort
+-- calls a Lua function for each of its ~700 comparisons per search). The same order as
+-- table.sort with that comparator; only two candidates equal in score and chain could differ.
+local MERGE = {}
+local function sortByScore(a)
+  local n = #a
+  local src, dst = a, MERGE
+  local width = 1
+  while width < n do
+    local i = 1
+    while i <= n do
+      local mid, hi = i + width, i + 2 * width
+      if mid > n + 1 then mid = n + 1 end
+      if hi > n + 1 then hi = n + 1 end
+      local l, r, k = i, mid, i
+      while l < mid and r < hi do
+        local x, y = src[l], src[r]
+        local xs, ys = x.score, y.score
+        if ys > xs or (ys == xs and chainKey(y) < chainKey(x)) then
+          dst[k] = y; r = r + 1
+        else
+          dst[k] = x; l = l + 1
+        end
+        k = k + 1
+      end
+      while l < mid do dst[k] = src[l]; l = l + 1; k = k + 1 end
+      while r < hi do dst[k] = src[r]; r = r + 1; k = k + 1 end
+      i = hi
+    end
+    src, dst = dst, src
+    width = width * 2
+  end
+  if src ~= a then for i = 1, n do a[i] = src[i] end end
+  for i = 1, n do MERGE[i] = nil end -- holds no candidate after the search
+end
+
+-- shallow root copy with a fresh per-search memo (see damage.lua); S itself is never touched.
+-- Solo: memo.killBase = when the target dies if nothing is pressed (at most the horizon's end),
+-- the time value.killCredit measures a faster kill against
+local function root(S, o)
   local r = {}
   for k, v in pairs(S) do r[k] = v end
   r.memo = {}
+  -- the solo mana option (value.manaPrice): the model's copies keep the memo, not the field
+  r.memo.manaPolicy = S.manaPolicy
+  if o and r.mode == "solo" and r.target then
+    local S2 = (o.model.peekWait or o.model.wait)(r, o.horizon)
+    local t = S2.target
+    r.memo.killBase = t and t.diedAt or (r.now or 0) + o.horizon
+  end
   return r
 end
+
+-- stands in for the state before a step in value.step (manaSpent = 0, or its price given,
+-- reads only these): the tail to the horizon, a press in the buffer of the wait before it
+local PRE = { target = {} }
 
 -- Candidates are first evaluated on the model's scratch states (peekApply/peekWait, no
 -- allocation); only the few that enter the beam get a real state again (materialize).
@@ -230,7 +326,12 @@ local function candidate(o, node, a, rootNow)
     waited = true
   end
   local at = S.now - rootNow
-  if at >= o.horizon or not fitsHorizon(o, S, a.key, at) then return nil end
+  if at >= o.horizon then return nil end
+  -- fitsHorizon(o, S, a.key, at), with the cast time kept for the press below
+  local castTime = m.castTime
+  local ct = castTime and castTime(S, a.key) or 0
+  if not (ct <= 0 or at + ct <= o.horizon + 1e-9) then return nil end
+  if not castTime then ct = nil end
   local c = { parent = node, a = a, depth = node.depth + 1, at = at,
               first = node.first or (node.virtual and (node.parent.first or a.key .. "+swing")) or a.key }
   c.afterSwingStep = afterSwing or nil
@@ -240,8 +341,19 @@ local function candidate(o, node, a, rootNow)
   else
     c.pre = S
   end
-  local S2, dmg = peekApply(S, a.key, o.horizon - at)
-  c.v = v + o.value.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
+  local val = o.value
+  if waited and m.peekApplyOver and val.manaPrice then
+    -- the waited state is read by nothing else: press in its own buffer (no second fill); what
+    -- value.step reads of the state before the press is taken first
+    local t = S.target
+    PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = S.mode, t.hp, t.hpMax, t.dead
+    local mana0, price = S.player.mana or 0, val.manaPrice(S)
+    local S2, dmg = m.peekApplyOver(S, a.key, o.horizon - at, ct)
+    c.v = v + val.step(PRE, S2, dmg, mana0 - (S2.player.mana or 0), price)
+    return c, S2
+  end
+  local S2, dmg = peekApply(S, a.key, o.horizon - at, ct)
+  c.v = v + val.step(S, S2, dmg, (S.player.mana or 0) - (S2.player.mana or 0))
   return c, S2
 end
 
@@ -277,9 +389,6 @@ local function materialize(o, c)
   c.S = o.model.apply(pre, c.a.key, o.horizon - c.at)
 end
 
--- stands in for the state before the tail in value.step (manaSpent = 0 reads only these)
-local PRE = { target = {} }
-
 -- CS comes from a peek (a scratch state): pad it to the horizon in place
 -- the candidate's state again, as a scratch state
 local function peekState(o, c)
@@ -289,6 +398,8 @@ local function peekState(o, c)
   if not pre then
     if parent.virtual then
       pre = m.peekWait(parent.parent.S, parent.a.readyIn) -- weave children have no wait of their own
+    elseif m.peekApplyOver then
+      return (m.peekApplyOver(m.peekWait(parent.S, c.a.readyIn), c.a.key, o.horizon - c.at))
     else
       pre = m.peekWait(parent.S, c.a.readyIn)
     end
@@ -302,7 +413,10 @@ local function scoreFrom(o, CS, v, rootNow)
     if o.model.peekApply and o.model.advance then
       PRE.mode, PRE.target.hp, PRE.target.hpMax, PRE.target.dead = CS.mode, CS.target.hp, CS.target.hpMax, CS.target.dead
       local mana0 = CS.player.mana or 0
-      local price = o.value.manaPrice and o.value.manaPrice(CS) or 0 -- before the state moves on
+      -- taken before the state moves on; a tail that cannot change the mana needs none (0 x price)
+      local price = 0
+      local keeps = o.model.waitKeepsMana
+      if o.value.manaPrice and not (keeps and keeps(CS)) then price = o.value.manaPrice(CS) end
       local dmg = o.model.advance(CS, o.horizon - t)
       v = v + o.value.step(PRE, CS, dmg, 0) - (mana0 - (CS.player.mana or 0)) * price
     else
@@ -320,8 +434,7 @@ local fillIdle
 -- result is the same however it is cut into frames. check() (nil = run to the end) is called
 -- only where no scratch state (model.peek*) is held, so other code may use the scratch buffers
 -- while the search is paused.
-local function run(o, S, check)
-  S = root(S)
+local function search(o, S, check)
   local rootNow = S.now
   local rootNode = { S = S, v = 0, steps = {}, depth = 0 }
   local frontier = { rootNode }
@@ -374,10 +487,7 @@ local function run(o, S, check)
     local deeper = false
     for i = 1, #children do if children[i].depth < o.depth then deeper = true; break end end
     if not deeper then break end
-    table.sort(children, function(x, y)
-      if x.score ~= y.score then return x.score > y.score end
-      return chainKey(x) < chainKey(y)
-    end)
+    sortByScore(children)
     -- best first; a state already in the beam (same signature) is skipped. Signatures are only
     -- needed for the few children looked at here, so they are taken from rebuilt states.
     frontier = {}
@@ -434,10 +544,7 @@ local function run(o, S, check)
   for _, c in pairs(bestByFirst) do
     if c.score >= best - math.abs(best) * o.fillMargin then list[#list + 1] = c end
   end
-  table.sort(list, function(x, y)
-    if x.score ~= y.score then return x.score > y.score end
-    return chainKey(x) < chainKey(y)
-  end)
+  sortByScore(list)
   local steps
   local top = -math.huge
   local budget = { replays = o.fillReplays }
@@ -451,6 +558,19 @@ local function run(o, S, check)
   local idle = finalScore(o, rootNode, rootNow)
   if idle >= best then return result(idle, {}) end
   return result(best, steps)
+end
+
+-- The model's real states of one search (and their spell entries and player tables) come from
+-- an arena (model.newArena) and go back to the model when the search is over: nothing in the
+-- result holds them. A search that fails keeps its tables (the garbage collector takes them).
+local function run(o, S, check)
+  S = root(S, o)
+  local m = o.model
+  local arena = m.newArena and m.newArena()
+  S.memo.arena = arena
+  local res = search(o, S, check)
+  if arena then m.release(arena) end
+  return res
 end
 
 -- synchronous: the whole search at once (tests, tools); the same result as a job run in slices
@@ -493,10 +613,23 @@ end
 -- Replay steps[i0..] from node. truncate: a step that is no longer possible ends the plan there
 -- (else: nil, the plan is invalid). gapFrom: stop before the first step i >= gapFrom whose planned
 -- wait is at least IDLE_MIN and return that node and i (fillIdle).
+-- The replayed states are scratch ones (extend: peek), except with gapFrom: the node returned at
+-- the gap is extended again and again. Without gapFrom only the last node's state is read
+-- (finalScore, which does not keep it), and only the steps outlive the call.
 local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
+  local peek = not gapFrom
   for i = i0, #steps do
     local st = steps[i]
     local r = o.model.readyIn(node.S, st.key)
+    if r == nil and st.afterSwing and o.model.swingIn then
+      -- the search tries a weave on the state after the swing: the mana Shamanistic Rage returns
+      -- with it can pay for a Bolt the state before cannot (a scratch state, read only here)
+      local sw = o.model.swingIn(node.S)
+      if sw and node.S.now + sw - rootNow < o.horizon then
+        local r2 = o.model.readyIn((o.model.peekWait or o.model.wait)(node.S, sw), st.key)
+        if r2 then r = sw + r2 end
+      end
+    end
     if r == nil then
       if not truncate then return nil end
       return node
@@ -506,11 +639,15 @@ local function replay(o, node, steps, i0, rootNow, truncate, gapFrom)
     local wait = st.at - (node.S.now - rootNow)
     if gapFrom and i >= gapFrom and wait >= M.IDLE_MIN then return node, i end
     if r > M.READY_EPS and r > wait then wait = r end
+    -- a step planned at its ready time waits exactly that: "at" went through S.now - rootNow and
+    -- can differ in the last bits, which moves a swing due at that very moment (a mob arriving
+    -- into melee) to the other side of the press
+    if r > M.READY_EPS and wait - r < 1e-9 then wait = r end
     if st.afterSwing then
       local sw = o.model.swingIn and o.model.swingIn(node.S)
       if sw and sw > wait and sw <= wait + M.SWING_SLACK then wait = sw end
     end
-    local c = extend(o, node, { key = st.key, readyIn = wait }, rootNow, st.afterSwing)
+    local c = extend(o, node, { key = st.key, readyIn = wait }, rootNow, st.afterSwing, peek, true)
     if not c then return node end
     c.steps[#c.steps].reason = st.reason
     node = c
@@ -534,15 +671,26 @@ end
 -- replay an existing plan on a fresh state; nil if a step is no longer possible
 -- -> value, retimed steps, the part of the value earned inside the horizon (without terminal)
 function M.evaluate(S, steps, opts)
-  return evaluateFrom(defaults(opts), root(S), steps)
+  local o = defaults(opts)
+  return evaluateFrom(o, root(S, o), steps)
 end
 
 -- pressing nothing for the whole horizon -> value, the part earned inside the horizon
 -- (the planner holds an empty plan against a new one with this, like evaluate for a plan)
 function M.idle(S, opts)
   local o = defaults(opts)
-  local r = root(S)
+  local r = root(S, o)
   return finalScore(o, { S = r, v = 0, steps = {}, depth = 0 }, r.now)
+end
+
+-- A replay presses every step at its planned time or later, so a wait of IDLE_MIN before
+-- steps[i] needs one in the plan itself: none from steps[from] on, no replay needed.
+local function planHasGap(steps, from)
+  for i = from, #steps do
+    local prev = i > 1 and steps[i - 1].at or 0
+    if steps[i].at - prev >= M.IDLE_MIN - 1e-6 then return true end
+  end
+  return false
 end
 
 -- A wait of at least IDLE_MIN inside the plan (before its first step or between two steps): try
@@ -551,11 +699,13 @@ end
 -- big ones" although the second is the better plan. Bounded: one replay per gap and ready button.
 function fillIdle(o, S, value, steps, check, budget)
   local rootNow = S.now
-  local start = { S = S, v = 0, steps = {}, depth = 0 }
+  -- the replay goes on from the last gap's (real, never changed) state: the steps before it stay
+  local node, i = { S = S, v = 0, steps = {}, depth = 0 }, 1
   local from = 1
-  while budget.replays > 0 do
-    local gapNode, gapAt = replay(o, start, steps, 1, rootNow, true, from)
+  while budget.replays > 0 and planHasGap(steps, from) do
+    local gapNode, gapAt = replay(o, node, steps, i, rootNow, true, from)
     if not gapAt then break end
+    node, i = gapNode, gapAt
     local ready = {}
     for _, a in ipairs(o.model.actions(gapNode.S)) do
       if a.key ~= "waitSwing" and a.readyIn <= M.READY_EPS and a.key ~= steps[gapAt].key then ready[#ready + 1] = a.key end
@@ -566,7 +716,8 @@ function fillIdle(o, S, value, steps, check, budget)
       if budget.replays <= 0 then break end
       budget.replays = budget.replays - 1
       -- the plan's own later press of the same button may no longer fit: the plan ends there
-      local c = extend(o, gapNode, { key = key, readyIn = 0 }, rootNow, false)
+      -- a scratch state: only the replay right below reads it
+      local c = extend(o, gapNode, { key = key, readyIn = 0 }, rootNow, false, true)
       if c then
         local node = replay(o, c, steps, gapAt, rootNow, true)
         local v = finalScore(o, node, rootNow)

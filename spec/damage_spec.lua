@@ -180,6 +180,37 @@ describe("damage", function()
       assert.are.equal(damage.SEARING_PERIOD, period)
       assert.are.near(per / period, damage.periodic(S, "searingTotem"), 1e-9)
     end)
+    it("Searing Totem shoots 20 yards from the shaman's feet: a target at 30 or far is out of reach", function()
+      local S = s80(); S.enemies = { melee = 0, nearby = 1 }
+      for _, r in ipairs({ "melee", "20" }) do
+        S.target.range = r
+        assert.are.equal(0, damage.fireDelay(S, "searingTotem"), r)
+        assert.are.equal(3, damage.fireUptime(S, "searingTotem", 3), r)
+      end
+      for _, r in ipairs({ "30", "far" }) do
+        S.target.range = r
+        assert.is_nil(damage.fireDelay(S, "searingTotem"), r)
+        assert.are.equal(0, damage.fireUptime(S, "searingTotem", 3), r)
+        -- the other fire sources are not limited by it (Magma has totemTargets of its own)
+        for _, src in ipairs({ "magmaTotem", "fireElemental" }) do
+          assert.are.equal(3, damage.fireUptime(S, src, 3), src)
+        end
+      end
+      -- an enemy hitting the shaman in melee stands in reach: the totem shoots it
+      S.enemies.melee = 1
+      assert.are.equal(3, damage.fireUptime(S, "searingTotem", 3))
+    end)
+    it("an approaching target enters the Searing reach SEARING_LEAD before melee", function()
+      local S = s80(); S.enemies = { melee = 0, nearby = 1 }
+      S.target.range = "far"; S.target.meleeIn = 5
+      assert.are.near((20 - 5) / 7, damage.SEARING_LEAD, 1e-9)
+      assert.are.near(5 - damage.SEARING_LEAD, damage.fireDelay(S, "searingTotem"), 1e-9)
+      assert.are.near(10 - (5 - damage.SEARING_LEAD), damage.fireUptime(S, "searingTotem", 10), 1e-9)
+      assert.are.equal(0, damage.fireUptime(S, "searingTotem", 1))
+      S.target.meleeIn = 1
+      assert.are.equal(0, damage.fireDelay(S, "searingTotem"))
+      assert.are.equal(2, damage.fireUptime(S, "searingTotem", 2))
+    end)
     it("other keys and unknown spells return 0, 0, 1", function()
       local S = s80()
       for _, k in ipairs({ "lightningBolt", "earthShock", "fireElemental", "searingTotem" }) do
@@ -378,5 +409,22 @@ describe("damage per-search memo", function()
         end
       end
     end
+  end)
+
+  it("the Searing reach follows the range even when it changes inside one search", function()
+    -- the approaching mob (target.meleeIn) moves the range inside one search: the memo keeps
+    -- the per-target dps only, the reach is read from the state on every call
+    local S = fixtures.state({ target = { range = "melee" }, enemies = { melee = 0, nearby = 1 } })
+    S.memo = {}
+    local dps = damage.rates(S).searingTotem
+    assert.is_true(dps > 0)
+    assert.are.equal(2, damage.fireUptime(S, "searingTotem", 2))
+    S.target.range = "far"
+    assert.are.equal(dps, damage.rates(S).searingTotem)
+    assert.are.equal(0, damage.fireUptime(S, "searingTotem", 2))
+    S.target.meleeIn = damage.SEARING_LEAD + 0.5
+    assert.are.near(1.5, damage.fireUptime(S, "searingTotem", 2), 1e-9)
+    S.target.meleeIn, S.target.range = nil, "20"
+    assert.are.equal(2, damage.fireUptime(S, "searingTotem", 2))
   end)
 end)

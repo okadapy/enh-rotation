@@ -1,12 +1,14 @@
 local G = require("game_mock")
 local spells = require("spells")
 
--- timeline only needs model.castTime; a fake keeps this spec independent of the real model
+-- timeline only needs model.castTime and model.weaveAllowed; a fake cast time keeps this spec
+-- independent of the real model's haste, the weaving rule is the real one (the band must follow it)
 local realModel = package.loaded.model
 local model = { castTime = function() return 1.0 end }
 package.loaded.model = model
 local timeline = require("timeline")
 package.loaded.model = realModel
+model.weaveAllowed = require("model").weaveAllowed
 
 local function S(patch)
   local s = {
@@ -97,6 +99,50 @@ describe("timeline layout", function()
     assert.is_nil(timeline.castWindow(s5, timeline.swingTimes(s5, 6)))
   end)
 
+  -- the band follows the weaving option (model.weaveAllowed): no "Bolt fits" while a Bolt at
+  -- these stacks would never be suggested
+  describe("with the weaving option (S.weaveMin)", function()
+    local function woven(weaveMin, stacks, patch)
+      local s = S({ weaveMin = weaveMin, buffs = { mw = { stacks = stacks, remains = 20 } },
+                    target = { exists = true, enemy = true, range = "melee" },
+                    talents = { maelstromWeapon = 5 } })
+      for k, v in pairs(patch or {}) do s[k] = v end
+      return s
+    end
+    local function band(s) return timeline.castWindow(s, timeline.swingTimes(s, 6)) end
+
+    it("nil or 0: the band at 1-4 stacks, as before", function()
+      for n = 1, 4 do
+        assert.is_not_nil(band(woven(nil, n)), "nil/" .. n)
+        assert.is_not_nil(band(woven(0, n)), "0/" .. n)
+      end
+    end)
+
+    it("3: hidden at 1-2 stacks in melee, shown at 3-4", function()
+      assert.is_nil(band(woven(3, 1)))
+      assert.is_nil(band(woven(3, 2)))
+      assert.is_not_nil(band(woven(3, 3)))
+      assert.is_not_nil(band(woven(3, 4)))
+      assert.is_nil(timeline.layout(plan(), woven(3, 2), {}, 0).window)
+      assert.is_not_nil(timeline.layout(plan(), woven(3, 3), {}, 0).window)
+    end)
+
+    it("5: never in melee (a 5-stack Bolt is instant, the band is for 1-4)", function()
+      for n = 1, 5 do assert.is_nil(band(woven(5, n)), n) end
+    end)
+
+    it("exception: a target out of melee may take a hard cast, the band stays", function()
+      for _, range in ipairs({ "10", "20", "30" }) do
+        assert.is_not_nil(band(woven(5, 1, { target = { exists = true, enemy = true, range = range } })), range)
+      end
+    end)
+
+    it("exception: without Maelstrom Weapon the option does not apply", function()
+      assert.is_not_nil(band(woven(3, 1, { talents = {} })))
+      assert.is_not_nil(band(woven(5, 2, { talents = {} })))
+    end)
+  end)
+
   it("slides ticks, window and GCD band left as time passes", function()
     local L = timeline.layout(plan({ "stormstrike", 0 }), S({ gcdRemains = 1.2 }), {}, 0.5)
     assert.are.equal("mh", L.ticks[1].hand)
@@ -180,6 +226,50 @@ describe("timeline render", function()
     assert.are.equal("Interface\\Icons\\X", tl.alert.texture)
     tl:setAlert(nil)
     assert.is_false(tl.alert.shown)
+  end)
+
+  it("writes the alert's reason next to its icon, unless reasons are off", function()
+    local tl = timeline.new(CreateFrame("Frame"), {})
+    tl:setAlert({ icon = "Interface\\Icons\\X", reason = "Main-hand imbue missing" })
+    assert.is_true(tl.alertText.shown)
+    assert.are.equal("Main-hand imbue missing", tl.alertText.text)
+    tl:setAlert({ icon = "Interface\\Icons\\X" })
+    assert.is_false(tl.alertText.shown)
+    tl:setAlert(nil)
+    assert.is_false(tl.alertText.shown)
+    local quiet = timeline.new(CreateFrame("Frame"), { showReason = false })
+    quiet:setAlert({ icon = "Interface\\Icons\\X", reason = "Drink" })
+    assert.is_true(quiet.alert.shown)
+    assert.is_false(quiet.alertText.shown)
+  end)
+
+  it("with no enemy target hides the lane, the now-line and the swings, not the alert", function()
+    local tl = timeline.new(CreateFrame("Frame"), {})
+    local fight = S({ target = { exists = true, enemy = true } })
+    tl:render(plan({ "stormstrike", 0, "Stormstrike" }), fight, 100)
+    tl:tick(0.016)
+    assert.is_true(tl.lane.shown)
+    assert.is_true(tl.now.shown)
+    assert.is_true(tl.ticks[1].shown)
+    tl:setAlert({ icon = "Interface\\Icons\\X", reason = "Drink" })
+    tl:render({ value = 0, steps = {} }, S({ target = { exists = false } }), 100)
+    tl:tick(0.016)
+    assert.is_false(tl.lane.shown)
+    assert.is_false(tl.now.shown)
+    for _, t in ipairs(tl.ticks) do assert.is_false(t.shown) end
+    for _, d in ipairs(tl.dots) do assert.is_false(d.shown) end
+    assert.is_false(tl.icons[1].shown)
+    assert.is_false(tl.reason.shown)
+    assert.is_true(tl.alert.shown)
+    assert.is_true(tl.alertText.shown)
+    assert.is_true(timeline.layout({ steps = {} }, S({ target = { exists = true, enemy = false } }), {}, 0).idle)
+    -- a target again: all back
+    tl:render(plan({ "stormstrike", 0 }), fight, 100)
+    tl:tick(0.016)
+    assert.is_true(tl.lane.shown)
+    assert.is_true(tl.now.shown)
+    assert.is_true(tl.dots[1].shown)
+    assert.is_true(tl.icons[1].shown)
   end)
 
   it("hides the reason text when the option is off", function()

@@ -163,6 +163,36 @@ describe("model", function()
       S.buffs.ls = { charges = 0, remains = 0 }
       assert.are.equal(0, model.readyIn(S, "lightningShield"))
     end)
+    -- only one shield can be up: Lightning Shield over Water Shield would remove it
+    it("no Lightning Shield over Water Shield unless asked for", function()
+      local S = base()
+      S.buffs.ls = { charges = 0, remains = 0 }
+      S.buffs.ws = { charges = 3, remains = 500 }
+      S.player.shield = "water"
+      assert.is_nil(model.readyIn(S, "lightningShield")) -- nil pref = auto
+      S.shieldPref = "auto"
+      assert.is_nil(model.readyIn(S, "lightningShield"))
+      S.shieldPref = "water"
+      assert.is_nil(model.readyIn(S, "lightningShield"))
+      S.shieldPref = "lightning"
+      assert.are.equal(0, model.readyIn(S, "lightningShield"))
+      S.player.shield, S.buffs.ws, S.shieldPref = nil, nil, "water"
+      assert.is_nil(model.readyIn(S, "lightningShield")) -- wants Water Shield: never Lightning
+      S.shieldPref = "auto"
+      assert.are.equal(0, model.readyIn(S, "lightningShield")) -- nothing up: as before
+    end)
+    it("the rule survives clones and scratch states", function()
+      local S = base()
+      S.buffs.ls = { charges = 0, remains = 0 }
+      S.player.shield, S.shieldPref, S.memo = "water", "auto", {}
+      for _, a in ipairs(model.actions(model.wait(S, 0.5))) do assert.are_not.equal("lightningShield", a.key) end
+      local P = model.peekApply(model.peekWait(S, 0.5), "stormstrike")
+      assert.is_nil(model.readyIn(P, "lightningShield"))
+      S.player.mana = 5000
+      P = model.peekApply(S, "lavaLash") -- spends mana: own player table in the scratch state
+      assert.are.equal("water", P.player.shield)
+      assert.is_nil(model.readyIn(P, "lightningShield"))
+    end)
     it("the same fire totem is not dropped again while it outlasts what the value counts", function()
       local S = base()
       S.totems.fire = { kind = "magma", remains = 15 }
@@ -274,10 +304,64 @@ describe("model", function()
       local S2 = model.apply(S, "lightningShield")
       assert.are.equal(5, S2.buffs.ls.charges)
     end)
-    it("Shamanistic Rage returns mana on every swing", function()
+    -- 3.3.5a (wotlkdb.com, spell 30823): "a chance" on melee hits, 10 procs per minute
+    it("Shamanistic Rage returns mana with a 10 PPM chance on every landed swing and Windfury extra attack", function()
       local S = base(); S.swing.mh.next = 0.5; S.swing.oh.next = 0.6
       local S2 = model.apply(S, "shamanisticRage")
-      assert.are.near(8000 + 2 * 0.15 * 4000, S2.player.mana, 1e-6)
+      local white, yellow = damage.meleeTable(S, true).landed, damage.meleeTable(S, false).landed
+      local _, wfProcs = damage.wf(S)
+      local cmh, coh = damage.rageChance(S, "mh"), damage.rageChance(S, "oh")
+      assert.are.near(10 * S.weapons.mh.speed / 60, cmh, 1e-9)
+      local procs = (white + wfProcs * 2 * yellow) * cmh + white * coh
+      assert.is_true(white < 1 and wfProcs > 0)
+      assert.are.near(8000 + procs * 0.15 * 4000, S2.player.mana, 1e-6)
+    end)
+    describe("Shamanistic Rage on special attacks", function()
+      local function rageState(mana)
+        local S = base(); S.buffs.rage = 10; S.player.mana = mana
+        S.swing.mh.next, S.swing.oh.next = 5, 5 -- no auto attack inside the GCD
+        return S
+      end
+      local per = 0.15 * 4000
+      it("both Stormstrike hits return mana while Rage is up, each with its weapon's chance", function()
+        local S = rageState(2000)
+        local S2 = model.apply(S, "stormstrike")
+        local landed = damage.meleeTable(S, false).landed
+        local c = damage.rageChance(S, "mh") + damage.rageChance(S, "oh")
+        assert.are.near(2000 - 400 + c * per * landed, S2.player.mana, 1e-6)
+      end)
+      it("one hit without an off-hand weapon", function()
+        local S = rageState(2000); S.weapons.oh = nil; S.swing.oh = nil
+        local S2 = model.apply(S, "stormstrike")
+        local c = damage.rageChance(S, "mh")
+        assert.are.near(2000 - 400 + c * per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
+      end)
+      it("the Lava Lash hit returns mana while Rage is up", function()
+        local S = rageState(2000)
+        local S2 = model.apply(S, "lavaLash")
+        local c = damage.rageChance(S, "oh")
+        assert.are.near(2000 - 200 + c * per * damage.meleeTable(S, false).landed, S2.player.mana, 1e-6)
+      end)
+      it("nothing without Rage", function()
+        local S = rageState(2000); S.buffs.rage = 0
+        assert.are.near(2000 - 400, model.apply(S, "stormstrike").player.mana, 1e-9)
+        assert.are.near(2000 - 200, model.apply(S, "lavaLash").player.mana, 1e-9)
+      end)
+      it("nothing on a dead target", function()
+        local S = rageState(2000); S.target.dead = true
+        assert.are.near(2000 - 400, model.apply(S, "stormstrike").player.mana, 1e-9)
+      end)
+      it("capped at maximum mana", function()
+        local S = rageState(9990); S.spells.stormstrike.cost = 0
+        assert.are.equal(10000, model.apply(S, "stormstrike").player.mana)
+      end)
+      it("peekApply gives the same mana", function()
+        for _, key in ipairs({ "stormstrike", "lavaLash" }) do
+          local S = rageState(2000); S.memo = {}
+          local a = model.apply(S, key).player.mana
+          assert.are.equal(a, model.peekApply(S, key).player.mana, key)
+        end
+      end)
     end)
   end)
 
@@ -360,6 +444,17 @@ describe("model", function()
       _, dmg = model.wait(S, 2)
       assert.are.equal(0, dmg)
     end)
+    -- 3.3.5a: a melee attack starts auto attack; a swing whose timer is up comes at once
+    it("Stormstrike and Lava Lash turn auto attack on, spells do not", function()
+      for _, key in ipairs({ "stormstrike", "lavaLash" }) do
+        local S = base(); S.swing.attacking = false; S.swing.mh.next, S.swing.oh.next = 0, 0
+        local S2, dmg = model.apply(S, key)
+        assert.is_true(S2.swing.attacking, key)
+        assert.is_true(dmg > damage.action(S, key), key) -- both hands swung inside the GCD
+      end
+      local S = base(); S.swing.attacking = false
+      assert.is_false(model.apply(S, "earthShock").swing.attacking)
+    end)
     it("Flame Shock ticks continuously, limited by its remaining time", function()
       local S = base(); S.target.fs = 2
       local _, dmg = model.wait(S, 3)
@@ -381,6 +476,38 @@ describe("model", function()
       local _, dmg = model.wait(S, 3)
       local expected = damage.periodic(S, "magmaTotem") * 1 + damage.periodic(S, "feralSpirit") * 2
       assert.are.near(expected, dmg, 1e-6)
+    end)
+    it("Searing Totem deals damage only with the target within its 20 yards", function()
+      local S = base(); S.totems.fire = { kind = "searing", remains = 30 }
+      S.swing.attacking = false; S.enemies = { melee = 0, nearby = 1 }
+      local rate = damage.periodic(S, "searingTotem")
+      assert.is_true(rate > 0)
+      for _, r in ipairs({ "melee", "20" }) do
+        S.target.range = r
+        local _, dmg = model.wait(S, 3)
+        assert.are.near(rate * 3, dmg, 1e-6, r)
+      end
+      for _, r in ipairs({ "30", "far" }) do
+        S.target.range = r
+        local _, dmg = model.wait(S, 3)
+        assert.are.equal(0, dmg, r)
+        local _, pdmg = model.peekWait(S, 3)
+        assert.are.equal(0, pdmg, r)
+      end
+      -- an enemy hitting the shaman in melee is shot instead
+      S.enemies.melee = 1
+      local _, dmg = model.wait(S, 3)
+      assert.are.near(rate * 3, dmg, 1e-6)
+    end)
+    it("Searing Totem starts shooting an approaching target once it is within 20 yards", function()
+      local S = base(); S.totems.fire = { kind = "searing", remains = 30 }
+      S.swing.attacking = false; S.enemies = { melee = 0, nearby = 1 }
+      S.target.range = "far"; S.target.meleeIn = damage.SEARING_LEAD + 1
+      S.memo = {}
+      local n = util.copy(S)
+      n.memo = S.memo
+      local dmg = model.advance(n, 3, nil, true)
+      assert.are.near(damage.periodic(S, "searingTotem") * 2, dmg, 1e-6)
     end)
     it("timers count down and expire", function()
       local S = base()
@@ -460,6 +587,95 @@ describe("model", function()
       assert.is_true(S2.target.dead)
     end)
 
+    -- solo, a mob dies from our damage: its ttd is only an estimate of our own kill speed
+    describe("solo: the target dies when the damage takes its health", function()
+      local function solo(hp)
+        local S = base(); S.mode = "solo"; S.target.hp = hp; S.target.ttd = 0.3; S.target.fs = 0
+        S.totems.fire = { kind = false, remains = 0 }; S.pets.wolves = 0
+        S.swing.mh.next, S.swing.oh.next = 0.5, 1.6
+        return S
+      end
+      it("not at its ttd: swings after it still land", function()
+        local S = solo(1e6)
+        local S2, dmg = model.wait(S, 2)
+        assert.is_true(dmg > 0)
+        assert.is_true(not S2.target.dead)
+      end)
+      it("the damage stops at the swing that takes the last hp", function()
+        local st = damage.swingStats(solo(1))
+        local S = solo(st.mh + 1) -- the main hand at 0.5 leaves 1 hp, the off hand at 1.6 kills
+        local S2, dmg = model.wait(S, 3)
+        assert.is_true(S2.target.dead)
+        assert.are.near(st.mh + st.oh, dmg, 1e-6)
+      end)
+      -- a hit's damage is random: the expected death is not a step of the health (#9 at 1.0-1.6x
+      -- its health: 2.6, 2.6, 1.9, 2.4, 3.2, 3.8, 3.4 s saved by an Earth Shock)
+      it("the expected time of death grows smoothly with the health", function()
+        local st = damage.swingStats(solo(1))
+        local sv = damage.swingVars(solo(1))
+        assert.is_true(sv.mh > 0 and sv.oh > 0)
+        local prev
+        for hp = 50, 2 * (st.mh + st.oh), 10 do -- swings at 0.5 and 1.6, then 2.6 s later: dead by 4.2
+          local S = solo(hp)
+          local d = model.wait(S, 6).target.diedAt - S.now
+          if prev then
+            assert.is_true(d >= prev - 1e-9, "never earlier with more health: " .. hp)
+            assert.is_true(d - prev < 0.15, "no step at a swing: " .. hp .. " " .. prev .. " -> " .. d)
+          end
+          prev = d
+        end
+        -- a mob the off hand's swing at 1.6 kills on average: by chance sooner or later
+        local S = solo(st.mh + 1)
+        local d = model.wait(S, 3).target.diedAt - S.now
+        assert.is_true(d > 0.5 and d < 1.6 + 1.0, d)
+      end)
+      it("the expected time of death is the same however the wait is split", function()
+        local st = damage.swingStats(solo(1))
+        local S = solo(2.5 * (st.mh + st.oh))
+        local whole = model.wait(S, 6).target.diedAt
+        local x = S
+        for _, dt in ipairs({ 0.7, 1.1, 0.45, 1.3, 2.45 }) do x = model.wait(x, dt) end
+        assert.is_true(x.target.dead)
+        assert.are.near(whole, x.target.diedAt, 1e-3)
+      end)
+      it("periodic damage alone: where it runs the health out", function()
+        local S = solo(100); S.swing.attacking = false; S.target.fs = 10
+        local r = damage.periodic(S, "flameShock")
+        local S2 = model.wait(S, 6)
+        assert.is_true(S2.target.dead)
+        assert.are.near(S.now + 100 / r, S2.target.diedAt, 1e-4)
+      end)
+      it("a press that takes the health: dead at the press, expected a little later (it can miss)", function()
+        local S = solo(10)
+        local S2 = model.apply(S, "earthShock")
+        assert.is_true(S2.target.dead)
+        assert.is_true(S2.target.diedAt >= S.now and S2.target.diedAt < S.now + 0.2, S2.target.diedAt - S.now)
+        S.mode = "group" -- the ttd and the press decide there: at the press
+        assert.are.near(S.now, model.apply(S, "earthShock").target.diedAt, 1e-9)
+      end)
+      -- Magma Totem, Fire Nova and Chain Lightning on two enemies: half (Chain Lightning: 1 / 1.7)
+      -- of their damage takes the target's health, the rest the other enemy's
+      it("an area spell takes only the target's share of its damage from the target's health", function()
+        local S = solo(1e6); S.swing.attacking = false
+        S.enemies = { melee = 2, nearby = 2 }; S.target.range = "melee"
+        local S2, dmg = model.apply(S, "fireNova")
+        assert.is_true(dmg > 0)
+        assert.are.near(S.target.hp - dmg / 2, S2.target.hp, 1e-6)
+        S.totems.fire = { kind = "magma", remains = 20 }
+        local S3, d3 = model.wait(S, 4)
+        assert.are.near(S.target.hp - d3 / 2, S3.target.hp, 1e-6)
+        S.totems.fire = { kind = false, remains = 0 }
+        local S4, d4 = model.apply(S, "chainLightning")
+        assert.are.near(S.target.hp - d4 / 1.7, S4.target.hp, 1e-6)
+      end)
+      it("in a group, or with a guessed health, the ttd still ends it", function()
+        local S = solo(1e6); S.mode = "group"
+        assert.is_true(model.wait(S, 2).target.dead)
+        S = solo(1e6); S.target.guessed = true
+        assert.is_true(model.wait(S, 2).target.dead)
+      end)
+    end)
+
     it("actions follow spells.CATALOG order, waitSwing last at next swing + 0.01", function()
       local S = fixtures.state()
       S.swing.mh.next, S.swing.oh.next = 1.2, 0.4
@@ -523,6 +739,120 @@ describe("model", function()
   end)
 end)
 
+describe("model: a mob running in (target.meleeIn)", function()
+  local ETA20, ETA30 = 20 / 7, 30 / 7
+
+  local function coming(range, meleeIn)
+    local S = base()
+    S.mode = "solo"
+    S.target.range, S.target.inCombat, S.target.meleeIn = range, true, meleeIn
+    S.enemies = { melee = 0, nearby = 1 }
+    return S
+  end
+
+  it("counts meleeIn down: 30 yards -> 20 yards -> melee", function()
+    local S = coming("30", ETA30)
+    local S1 = model.wait(S, 1)
+    assert.are.near(ETA30 - 1, S1.target.meleeIn, 1e-9)
+    assert.are.equal("30", S1.target.range)
+    local S2 = model.wait(S1, 1)
+    assert.are.near(ETA30 - 2, S2.target.meleeIn, 1e-9)
+    assert.are.equal("20", S2.target.range) -- 10 yards run, within 20 now
+    local S3 = model.wait(S2, 3)
+    assert.is_nil(S3.target.meleeIn)
+    assert.are.equal("melee", S3.target.range)
+    -- the input states are untouched
+    assert.are.equal("30", S.target.range)
+    assert.are.near(ETA30, S.target.meleeIn, 1e-9)
+  end)
+
+  it("swings start when the mob arrives, not before (a ready swing timer fires at once)", function()
+    local S = coming("20", 1.0)
+    S.swing.mh.next, S.swing.oh.next = 0, 0.5
+    local S2, dmg = model.wait(S, 2)
+    -- both hands ready at the arrival (1.0 s), next ones 2.6 s later
+    assert.are.near(damage.auto(S2, "mh") + damage.auto(S2, "oh"), dmg, 1e-6)
+    assert.are.near(2.6 - 1.0, S2.swing.mh.next, 1e-9)
+    -- one step or two around the arrival: the same numbers
+    local A, d1 = model.wait(S, 1.0)
+    local B, d2 = model.wait(A, 1.0)
+    assert.are.near(dmg, d1 + d2, 1e-6)
+    assert.are.near(S2.swing.mh.next, B.swing.mh.next, 1e-9)
+    assert.are.near(S2.swing.oh.next, B.swing.oh.next, 1e-9)
+    -- a static target at 20 yards gets no swings at all
+    S.target.meleeIn = nil
+    local _, none = model.wait(S, 2)
+    assert.are.equal(0, none)
+  end)
+
+  it("a cast still running when the mob arrives holds its swings until the cast ends", function()
+    local S = coming("20", 1.0)
+    S.swing.mh.next, S.swing.oh.next = 0, 0
+    local S2, dmg = model.apply(S, "lightningBolt") -- 0 stacks: 2.5 s, swings reset at 2.5 + latency
+    assert.are.near(damage.action(S, "lightningBolt"), dmg, 1e-6)
+    assert.are.equal("melee", S2.target.range)
+    assert.are.near(2.6 - (2.5 - 2.5 - 0.15), S2.swing.mh.next, 1e-9)
+  end)
+
+  it("melee buttons are ready when it arrives, shocks when it is within 20 yards", function()
+    local S = coming("30", ETA30)
+    assert.are.near(ETA30, model.readyIn(S, "stormstrike"), 1e-9)
+    assert.are.near(ETA30, model.readyIn(S, "lavaLash"), 1e-9)
+    assert.are.near(ETA30 - ETA20, model.readyIn(S, "earthShock"), 1e-9)
+    assert.are.equal(0, model.readyIn(S, "lightningBolt"))
+    S.gcdRemains = 2.0 -- the later of the two
+    assert.are.near(2.0, model.readyIn(S, "earthShock"), 1e-9)
+    assert.are.near(ETA30, model.readyIn(S, "stormstrike"), 1e-9)
+    S.target.meleeIn = 6.5 -- past the horizon
+    assert.is_nil(model.readyIn(S, "stormstrike"))
+  end)
+
+  it("the pull: a spell on a solo mob at range brings it in from the moment it lands", function()
+    local S = coming("20", nil)
+    S.target.inCombat = false
+    local F = model.apply(S, "flameShock")
+    assert.are.near(ETA20 - 1.5, F.target.meleeIn, 1e-9)
+    S.target.range = "30"
+    local L = model.apply(S, "lightningBolt")
+    assert.are.near(2.5 + 0.15 + ETA30 - 2.5, L.target.meleeIn, 1e-9)
+    assert.are.equal("30", L.target.range)
+    -- nothing on the target: nothing comes
+    assert.is_nil(model.apply(S, "lightningShield").target.meleeIn)
+    -- an approach already on its way is not restarted
+    S.target.meleeIn = 1.0
+    assert.are.equal("melee", model.apply(S, "lightningBolt").target.range)
+  end)
+
+  it("no approach for players, in a group or from far away", function()
+    local S = coming("20", nil)
+    S.target.isPlayer = true
+    assert.is_nil(model.apply(S, "flameShock").target.meleeIn)
+    S.target.isPlayer, S.mode = false, "group"
+    assert.is_nil(model.apply(S, "flameShock").target.meleeIn)
+    S.mode, S.target.range = "solo", "far"
+    assert.is_nil(model.apply(S, "lightningShield").target.meleeIn)
+  end)
+
+  it("the damage memo follows the range: Fire Nova hits the arrived mob", function()
+    local S = coming("20", 1.0)
+    S.memo = {}
+    S.totems.fire = { kind = "searing", remains = 30 }
+    -- at range nothing stands by the totem: 0 goes into the memo of this search
+    assert.are.equal(0, damage.targets(S, "fireNova"))
+    assert.are.equal(0, damage.action(S, "fireNova"))
+    assert.are.equal(0, damage.rates(S).magmaTotem)
+    local W = model.wait(S, 1.5)
+    assert.are.equal("melee", W.target.range)
+    assert.are.equal(1, damage.targets(W, "fireNova"))
+    local fresh = util.copy(W); fresh.memo = nil
+    assert.is_true(damage.action(fresh, "fireNova") > 0)
+    assert.are.near(damage.action(fresh, "fireNova"), damage.action(W, "fireNova"), 1e-9)
+    assert.is_true(damage.rates(fresh).magmaTotem > 0)
+    assert.are.near(damage.rates(fresh).magmaTotem, damage.rates(W).magmaTotem, 1e-9)
+    assert.is_true(model.readyIn(W, "fireNova") ~= nil)
+  end)
+end)
+
 describe("model working copies (search speed)", function()
   -- contract part of a state, without the scratch bookkeeping
   local function view(S)
@@ -542,9 +872,20 @@ describe("model working copies (search speed)", function()
   local function states()
     local list = {}
     for _, over in ipairs({ {}, { buffs = { mw = { stacks = 3, remains = 20 } } }, { buffs = { rage = 10, ls = { charges = 0 } } },
+                           { buffs = { rage = 10 }, player = { mana = 1500 } },
+                           -- auto attack off: Stormstrike / Lava Lash turn it on (a refill resets it)
+                           { swing = { attacking = false, mh = { next = 0 }, oh = { next = 0 } } },
                            { spells = { stormstrike = { cd = 3 }, earthShock = { cd = 2 } }, totems = { fire = { kind = false } } },
                            { target = { ttd = 1.5, hp = 500 }, buffs = { mw = { stacks = 2, remains = 20 } } },
-                           { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } } }) do
+                           { target = { range = "30" }, enemies = { melee = 1, nearby = 3 } },
+                           { target = { range = "far" }, enemies = { melee = 0, nearby = 1 },
+                             totems = { fire = { kind = "searing", remains = 30 } } },
+                           -- a mob running in: arriving inside a GCD, inside a cast, after it; a pull
+                           { mode = "solo", target = { range = "20", meleeIn = 0.9, inCombat = true }, enemies = { melee = 0 } },
+                           { mode = "solo", target = { range = "30", meleeIn = 3.1, inCombat = true }, enemies = { melee = 0 },
+                             swing = { mh = { next = 0.2 } } },
+                           { mode = "solo", target = { range = "20" }, enemies = { melee = 0 }, buffs = { mw = { stacks = 2, remains = 20 } } },
+                           { mode = "solo", target = { range = "30" }, enemies = { melee = 0 } } }) do
       local S = fixtures.state(over)
       S.memo = {}
       list[#list + 1] = S
@@ -570,6 +911,29 @@ describe("model working copies (search speed)", function()
     end
   end)
 
+  -- fillScratch refills a buffer from the same source faster (only cooldowns and entries setCd
+  -- switched); apply never touches the scratch buffers, so these peeks come one after another
+  it("peeks of the same state one after another give exactly what apply and wait give", function()
+    for _, S in ipairs(states()) do
+      local acts = model.actions(S)
+      for round = 1, 2 do
+        local limit = round == 2 and 0.7 or nil
+        for _, a in ipairs(acts) do
+          if a.key ~= "waitSwing" then
+            local S2, d2 = model.apply(S, a.key, limit)
+            local P, dp = model.peekApply(S, a.key, limit)
+            assert.are.equal(d2, dp, a.key)
+            assert.are.same(view(S2), view(P), a.key)
+          end
+        end
+        local W, dw = model.wait(S, 1.7 * round)
+        local Q, dq = model.peekWait(S, 1.7 * round)
+        assert.are.equal(dw, dq)
+        assert.are.same(view(W), view(Q))
+      end
+    end
+  end)
+
   it("a scratch state can be the input of the next peek", function()
     local S = states()[1]
     local W1, d1 = model.wait(S, 1.2)
@@ -581,6 +945,42 @@ describe("model working copies (search speed)", function()
     assert.are.same(view(S2), view(P2))
   end)
 
+  -- the search presses after a wait in the wait's own buffer (no second fill)
+  it("peekApplyOver on a peekWait state gives exactly what wait, then apply give", function()
+    for _, S in ipairs(states()) do
+      for _, dt in ipairs({ 0.4, 1.2, 2.9 }) do
+        local W = model.wait(S, dt)
+        for _, a in ipairs(model.actions(W)) do
+          if a.key ~= "waitSwing" and a.readyIn <= 0 then
+            for _, limit in ipairs({ false, 0.7 }) do
+              local S2, d2, t2 = model.apply(W, a.key, limit or nil)
+              local P, dp, tp = model.peekApplyOver(model.peekWait(S, dt), a.key, limit or nil)
+              assert.are.equal(d2, dp, a.key)
+              assert.are.equal(t2, tp, a.key)
+              assert.are.same(view(S2), view(P), a.key)
+              -- and the buffer is filled right again from the same source afterwards
+              local Q, dq = model.peekApply(S, a.key)
+              local R, dr = model.apply(S, a.key)
+              assert.are.equal(dr, dq, a.key)
+              assert.are.same(view(R), view(Q), a.key)
+            end
+          end
+        end
+      end
+    end
+  end)
+
+  it("a peek does not leave the mob's arrival in the scratch buffer for the next peek of the same state", function()
+    local S = fixtures.state({ mode = "solo", target = { range = "20", meleeIn = 0.5, inCombat = true }, enemies = { melee = 0 } })
+    S.memo = {}
+    local P = model.peekWait(S, 1)
+    assert.are.equal("melee", P.target.range)
+    P = model.peekWait(S, 0.2)
+    assert.are.equal("20", P.target.range)
+    assert.are.near(0.3, P.target.meleeIn, 1e-9)
+    assert.are.same(view(model.wait(S, 0.2)), view(P))
+  end)
+
   it("advancing a scratch state in place equals wait", function()
     local S = states()[2]
     local W, dw = model.wait(model.apply(S, "lavaLash"), 3.1)
@@ -588,6 +988,61 @@ describe("model working copies (search speed)", function()
     local dp = model.advance(P, 3.1)
     assert.are.equal(dw, dp)
     assert.are.same(view(W), view(P))
+  end)
+
+  -- advance lowers a scratch state's cooldowns only in its own entries (on cooldown at the fill,
+  -- or switched by setCd: a shock sets the shared cooldown of the others)
+  it("advancing any pressed scratch state in place equals advancing the applied state", function()
+    for _, S in ipairs(states()) do
+      for _, a in ipairs(model.actions(S)) do
+        if a.key ~= "waitSwing" then
+          local W = model.apply(S, a.key)
+          local dw = model.advance(W, 2.9)
+          local P = model.peekApply(S, a.key)
+          local dp = model.advance(P, 2.9)
+          assert.are.equal(dw, dp, a.key)
+          assert.are.same(view(W), view(P), a.key)
+        end
+      end
+    end
+  end)
+
+  -- a chain of scratch states through both buffers and back: the third one gets the first
+  -- buffer's own entries (cooldowns run out in the first wait) as ready ones from its source,
+  -- and setCd changes them in place
+  it("a chain of peeks back into the first buffer, advanced in place, equals the applied chain", function()
+    local list = states()
+    local S = fixtures.state({ spells = { earthShock = { cd = 0.3 }, flameShock = { cd = 0.3 }, frostShock = { cd = 0.3 },
+                                          stormstrike = { cd = 0.2 }, lavaLash = { cd = 0.35 } } })
+    S.memo = {}
+    list[#list + 1] = S
+    for _, S0 in ipairs(list) do
+      local R2 = model.wait(model.wait(S0, 0.4), 0.1)
+      for _, b in ipairs(model.actions(R2)) do
+        if b.key ~= "waitSwing" and b.readyIn <= 0 then
+          local R3, dr = model.apply(R2, b.key)
+          local dr2 = model.advance(R3, 2.2)
+          local P3, dp = model.peekApply(model.peekWait(model.peekWait(S0, 0.4), 0.1), b.key)
+          local dp2 = model.advance(P3, 2.2)
+          assert.are.equal(dr, dp, b.key)
+          assert.are.equal(dr2, dp2, b.key)
+          assert.are.same(view(R3), view(P3), b.key)
+        end
+      end
+    end
+  end)
+
+  it("a peek back into the first buffer leaves its source's mana alone", function()
+    local S = fixtures.state({ buffs = { rage = 10 }, swing = { mh = { next = 0.1 }, oh = { next = 0.2 } } })
+    S.memo = {}
+    local P1 = model.peekWait(S, 0.5)   -- both hands swing: Rage returns mana (the buffer's own player)
+    assert.is_true(P1.player ~= S.player)
+    local P2 = model.peekWait(P1, 0.01) -- no swing: the same player as P1
+    assert.are.equal(P1.player, P2.player)
+    local mana = P2.player.mana
+    local P3 = model.peekApply(P2, "earthShock") -- back into P1's buffer, mana spent
+    assert.are.equal(mana, P2.player.mana)
+    assert.are.equal(mana - S.spells.earthShock.cost, P3.player.mana)
   end)
 
   it("clone keeps every spells.CATALOG key and never shares what the model changes", function()
@@ -598,5 +1053,239 @@ describe("model working copies (search speed)", function()
     assert.are_not.equal(S.buffs.mw, n.buffs.mw)
     assert.are_not.equal(S.target.ss, n.target.ss)
     assert.are_not.equal(S.swing.mh, n.swing.mh)
+  end)
+
+  -- a search's real states are filled into arena tables (fillState) instead of cloneState's new
+  -- ones: every field cloneState reads must come over the same way. The sentinel marks any field
+  -- of S, S.target or S.buffs a model version reads, so a field added to cloneState only fails here.
+  it("an arena state carries exactly cloneState's fields", function()
+    local function sentinel(t)
+      return setmetatable(t, { __index = function(_, k) return "sentinel " .. tostring(k) end })
+    end
+    for _, over in ipairs({ {}, { totems = { fire = { kind = "searing", remains = 3 } }, target = { range = "30", meleeIn = 2 } },
+                            { buffs = { rage = 5, flurry = { charges = 2, remains = 10 } }, pets = { wolves = 20 },
+                              inflight = { flameShock = 0.5 } } }) do
+      local S = fixtures.state(over)
+      S.memo = { arena = model.newArena() }
+      sentinel(S.target)
+      sentinel(S.buffs)
+      sentinel(S)
+      local want = model.cloneState(S)
+      for _ = 1, 2 do -- a new arena table, then a reused one
+        local got = model.clone(S)
+        assert.is_table(got.pool)
+        local view = {}
+        for k, v in pairs(got) do if k ~= "pool" then view[k] = v end end
+        assert.are.same(want, view)
+        model.release(S.memo.arena)
+        S.memo.arena = model.newArena()
+      end
+    end
+  end)
+
+  it("apply and wait on arena states give exactly what they give on new tables, reused or not", function()
+    local arena = model.newArena()
+    for _ = 1, 2 do
+      for _, S in ipairs(states()) do
+        local A = util.copy(S)
+        A.memo = { arena = arena }
+        for _, a in ipairs(model.actions(S)) do
+          if a.key ~= "waitSwing" then
+            local S2, d2, t2 = model.apply(S, a.key)
+            local A2, dA, tA = model.apply(A, a.key)
+            assert.are.equal(d2, dA, a.key)
+            assert.are.equal(t2, tA, a.key)
+            assert.are.same(view(S2), view(A2), a.key)
+            local W, dw = model.wait(S2, 2.3)
+            local V, dv = model.wait(A2, 2.3)
+            assert.are.equal(dw, dv, a.key)
+            assert.are.same(view(W), view(V), a.key)
+          end
+        end
+      end
+      model.release(arena) -- every table goes back and is filled again in the second round
+      arena = model.newArena()
+    end
+  end)
+end)
+
+describe("model.cooldownAllowed", function()
+  local function gated(mode, target)
+    local S = base()
+    S.cooldowns = { feralSpirit = mode, fireElemental = mode, shamanisticRage = mode }
+    target = target or {}
+    S.target.isBoss, S.target.ttd = target.isBoss, target.ttd
+    return S
+  end
+
+  it("without options (nil S.cooldowns or nil entry) every key is allowed, as before", function()
+    local S = base()
+    S.target.ttd = nil
+    assert.is_true(model.cooldownAllowed(S, "fireElemental"))
+    S.cooldowns = {}
+    assert.is_true(model.cooldownAllowed(S, "feralSpirit"))
+    assert.is_true(model.cooldownAllowed(gated("never"), "stormstrike")) -- not a gated key
+  end)
+
+  it("always / never ignore the target", function()
+    assert.is_true(model.cooldownAllowed(gated("always", { ttd = 1 }), "fireElemental"))
+    assert.is_false(model.cooldownAllowed(gated("never", { isBoss = true, ttd = 600 }), "fireElemental"))
+  end)
+
+  it("boss only: the boss flag, not the time to die", function()
+    assert.is_true(model.cooldownAllowed(gated("boss", { isBoss = true, ttd = 5 }), "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(gated("boss", { ttd = 600 }), "feralSpirit"))
+  end)
+
+  it("auto: a boss, or a target that lives half the cooldown's active time; unknown ttd off a boss: no", function()
+    assert.are.equal(22.5, model.COOLDOWN_TTD.feralSpirit)
+    assert.are.equal(60, model.COOLDOWN_TTD.fireElemental)
+    assert.is_true(model.cooldownAllowed(gated("auto", { isBoss = true, ttd = nil }), "fireElemental"))
+    assert.is_false(model.cooldownAllowed(gated("auto", { ttd = nil }), "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(gated("auto", { ttd = 12 }), "feralSpirit"))
+    assert.is_true(model.cooldownAllowed(gated("auto", { ttd = 30 }), "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(gated("auto", { ttd = 30 }), "fireElemental"))
+    assert.is_true(model.cooldownAllowed(gated("auto", { ttd = 90 }), "fireElemental"))
+  end)
+
+  it("readyIn and the candidate list skip a key that is not allowed", function()
+    local S = gated("never")
+    assert.is_nil(model.readyIn(S, "shamanisticRage"))
+    for _, a in ipairs(model.actions(S)) do assert.are_not.equal("shamanisticRage", a.key) end
+    S.cooldowns.shamanisticRage = "always"
+    assert.are.equal(0, model.readyIn(S, "shamanisticRage"))
+  end)
+
+  it("the options and the boss flag carry over to the next states (apply and peek alike)", function()
+    local S = gated("boss", { isBoss = true })
+    local n = model.apply(S, "stormstrike")
+    assert.are.equal(S.cooldowns, n.cooldowns)
+    assert.is_true(n.target.isBoss)
+    local p = model.peekApply(S, "stormstrike")
+    assert.are.equal(S.cooldowns, p.cooldowns)
+    assert.is_true(p.target.isBoss)
+    assert.is_true(model.cooldownAllowed(p, "feralSpirit"))
+  end)
+
+  it("latched (snapshot's latch): auto holds down to need x COOLDOWN_RELEASE; unknown ttd holds too", function()
+    assert.are.equal(0.75, model.COOLDOWN_RELEASE)
+    local need = model.COOLDOWN_TTD.feralSpirit
+    assert.is_false(model.cooldownDecide(gated("auto", { ttd = need - 0.5 }), "feralSpirit", false))
+    assert.is_true(model.cooldownDecide(gated("auto", { ttd = need - 0.5 }), "feralSpirit", true))
+    assert.is_true(model.cooldownDecide(gated("auto", { ttd = need * 0.75 }), "feralSpirit", true))
+    assert.is_false(model.cooldownDecide(gated("auto", { ttd = need * 0.75 - 0.1 }), "feralSpirit", true))
+    assert.is_true(model.cooldownDecide(gated("auto", { ttd = nil }), "feralSpirit", true))
+    -- the latch changes only "auto"
+    assert.is_false(model.cooldownDecide(gated("never", { ttd = 600 }), "feralSpirit", true))
+    assert.is_false(model.cooldownDecide(gated("boss", { ttd = 600 }), "feralSpirit", true))
+  end)
+
+  it("S.cdAllowed (the snapshot's decision) wins over the state's own target", function()
+    local S = gated("auto", { ttd = 5 })
+    S.cdAllowed = { feralSpirit = true, fireElemental = false }
+    assert.is_true(model.cooldownAllowed(S, "feralSpirit"))
+    assert.is_false(model.cooldownAllowed(S, "fireElemental"))
+    assert.is_true(model.cooldownAllowed(S, "stormstrike")) -- not in the table: not gated
+    S.cdAllowed.shamanisticRage = true
+    assert.are.equal(0, model.readyIn(S, "shamanisticRage"))
+    S.cdAllowed.shamanisticRage = false
+    assert.is_nil(model.readyIn(S, "shamanisticRage"))
+  end)
+
+  it("S.cdAllowed carries over along the plan (clone, apply, wait, peeks, a scratch refill)", function()
+    local S = gated("auto", { ttd = 23 })
+    S.cdAllowed = { feralSpirit = true, fireElemental = false, shamanisticRage = true }
+    local W = model.wait(S, 3) -- ttd 20 < 22.5 in the deeper state: the snapshot's decision stays
+    assert.are.equal(S.cdAllowed, W.cdAllowed)
+    assert.is_true(model.cooldownAllowed(W, "feralSpirit"))
+    assert.are.equal(S.cdAllowed, model.apply(S, "stormstrike").cdAllowed)
+    assert.are.equal(S.cdAllowed, model.clone(S, 1).cdAllowed)
+    local P = model.peekWait(S, 3)
+    assert.are.equal(S.cdAllowed, P.cdAllowed)
+    assert.are.equal(S.cdAllowed, model.peekApply(P, "stormstrike").cdAllowed)
+    -- a refill from another source without the decision drops it (fillScratch's "not same" path)
+    local O = gated("auto", { ttd = 23 })
+    model.peekWait(O, 0.1)
+    local Q = model.peekWait(O, 0.1)
+    assert.is_nil(Q.cdAllowed)
+    assert.are.equal(S.cdAllowed, model.peekWait(S, 0.1).cdAllowed)
+  end)
+end)
+
+describe("model.weaveAllowed (the weaving option, S.weaveMin)", function()
+  local function woven(weaveMin, stacks)
+    local S = base()
+    S.weaveMin = weaveMin
+    S.buffs.mw = { stacks = stacks or 0, remains = 20 }
+    return S
+  end
+
+  it("without the option (nil or 0) any stack count may cast, as before", function()
+    assert.are.equal(0, model.readyIn(woven(nil, 0), "lightningBolt"))
+    assert.are.equal(0, model.readyIn(woven(0, 1), "chainLightning"))
+    assert.is_true(model.weaveAllowed(woven(nil, 0)))
+  end)
+
+  it("in melee: no Bolt / Chain Lightning below weaveMin stacks (floored), the rest untouched", function()
+    for _, key in ipairs({ "lightningBolt", "chainLightning" }) do
+      assert.is_nil(model.readyIn(woven(3, 2), key))
+      assert.is_nil(model.readyIn(woven(3, 2.9), key))
+      assert.are.equal(0, model.readyIn(woven(3, 3), key))
+      assert.is_nil(model.readyIn(woven(5, 4), key))
+      assert.are.equal(0, model.readyIn(woven(5, 5), key))
+    end
+    local S = woven(5, 0)
+    assert.are.equal(0, model.readyIn(S, "stormstrike"))
+    assert.are.equal(0, model.readyIn(S, "earthShock"))
+    for _, a in ipairs(model.actions(S)) do
+      assert.is_true(a.key ~= "lightningBolt" and a.key ~= "chainLightning", a.key)
+    end
+  end)
+
+  it("exception: a target out of melee (the pull, a ranged target) may take a hard cast", function()
+    for _, range in ipairs({ "10", "20", "30" }) do
+      local S = woven(3, 0)
+      S.target.range = range
+      assert.are.equal(0, model.readyIn(S, "lightningBolt"), range)
+    end
+    -- a target on its way in: casting until it arrives, then the option again
+    local S = woven(3, 0)
+    S.mode, S.target.range, S.target.meleeIn = "solo", "30", 2
+    assert.are.equal(0, model.readyIn(S, "lightningBolt"))
+    local W = model.wait(S, 2.5)
+    assert.are.equal("melee", W.target.range)
+    assert.is_true(W.buffs.mw.stacks < 3)
+    assert.is_nil(model.readyIn(W, "lightningBolt"))
+  end)
+
+  it("exception: without Maelstrom Weapon (leveling below it) a hard cast is the rotation", function()
+    local S = woven(3, 0)
+    S.talents = {}
+    assert.are.equal(0, model.readyIn(S, "lightningBolt"))
+    S.talents = { maelstromWeapon = 1 }
+    assert.is_nil(model.readyIn(S, "lightningBolt"))
+  end)
+
+  it("S.weaveMin carries over along the plan (clone, apply, wait, peeks, both scratch refills)", function()
+    local S = woven(5, 0)
+    S.memo = {}
+    assert.are.equal(5, model.clone(S, 1).weaveMin)
+    assert.are.equal(5, model.apply(S, "stormstrike").weaveMin)
+    assert.are.equal(5, model.wait(S, 1).weaveMin)
+    local P = model.peekWait(S, 1)
+    assert.are.equal(5, P.weaveMin)
+    assert.are.equal(5, model.peekApply(P, "stormstrike").weaveMin)
+    assert.are.equal(5, model.peekApplyOver(model.peekWait(S, 0.5), "stormstrike").weaveMin)
+    -- the same source again (fillScratch's fast path) and another one without the option
+    assert.are.equal(5, model.peekWait(S, 0.2).weaveMin)
+    assert.are.equal(5, model.peekWait(S, 0.2).weaveMin)
+    local O = woven(nil, 0)
+    O.memo = S.memo
+    assert.is_nil(model.peekWait(O, 0.1).weaveMin)
+    assert.is_nil(model.peekWait(O, 0.1).weaveMin)
+    assert.are.equal(5, model.peekWait(S, 0.1).weaveMin)
+    -- a peek gates exactly like the real state
+    local R, Q = model.wait(S, 1), model.peekWait(S, 1)
+    assert.are.equal(model.readyIn(R, "lightningBolt"), model.readyIn(Q, "lightningBolt"))
   end)
 end)

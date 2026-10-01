@@ -124,7 +124,11 @@ function W.install(cfg)
     local x = unit(u); return x and x.hpMax or 100
   end
   _G.GetUnitSpeed = function() return cfg.moving and 7 or 0 end
-  _G.UnitAffectingCombat = function() return cfg.inCombat and 1 or nil end
+  _G.UnitAffectingCombat = function(u)
+    local x = u ~= "player" and unit(u)
+    if x and x.inCombat ~= nil then return x.inCombat and 1 or nil end
+    return cfg.inCombat and 1 or nil
+  end
   _G.GetNumPartyMembers = function() return cfg.party or 0 end
   _G.GetNumRaidMembers = function() return cfg.raid or 0 end
   _G.UnitExists = function(u) if u == "player" then return 1 end local x = unit(u); return (x and x.exists ~= false) and 1 or nil end

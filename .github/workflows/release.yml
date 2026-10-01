@@ -1,6 +1,7 @@
 # Каждый мердж в main — новый релиз: тесты, сборка строки импорта, тег vX.Y.Z (patch + 1),
 # релиз с EnhRot.txt. Старые релизы удаляются — остаётся только последний (теги остаются:
-# по ним считается версия). Вручную (Actions → Release → Run workflow) можно поднять minor или major.
+# по ним считается версия). Вручную (Actions → Release → Run workflow) можно поднять minor или major;
+# при мердже — словом «[major]» или «[minor]» в сообщении мердж-коммита.
 name: Release
 
 on:
@@ -42,6 +43,14 @@ jobs:
           prev=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
           IFS=. read -r major minor patch <<< "${prev#v}"
           major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+          # мердж в main: «[major]» или «[minor]» в сообщении коммита поднимает эту часть версии
+          if [ -z "$BUMP" ]; then
+            msg=$(git log -1 --format=%B)
+            case "$msg" in
+              *"[major]"*) BUMP=major ;;
+              *"[minor]"*) BUMP=minor ;;
+            esac
+          fi
           case "${BUMP:-patch}" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
@@ -55,13 +64,17 @@ jobs:
 
       - name: Тесты
         if: steps.version.outputs.skip != 'true'
-        # perf_spec меряет время и зависит от машины: в CI не гоняется
+        # perf_spec меряет время и зависит от машины: он в отдельном workflow perf.yml, релиз его не ждёт
         run: docker compose run --rm test busted --exclude-tags=perf
 
       - name: Сборка
         if: steps.version.outputs.skip != 'true'
+        # тег релиза попадает в сборку (src/version.lua): по нему видно, какая версия прислала отчёт
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          docker compose run --rm test lua tools/build.lua
+          docker compose run --rm -e RELEASE_TAG="$RELEASE_TAG" test lua tools/build.lua | tee build.log
+          grep -q "version $RELEASE_TAG\$" build.log
           head -c 6 dist/EnhRot.txt | grep -qx '!WA:2!'
 
       - name: Релиз

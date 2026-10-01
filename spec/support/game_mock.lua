@@ -5,6 +5,7 @@ local G = {}
 G.EXTRA_NAMES = {
   [53817] = "Maelstrom Weapon", [49281] = "Lightning Shield", [16280] = "Flurry",
   [30823] = "Shamanistic Rage", [2825] = "Bloodlust", [32182] = "Heroism", [16166] = "Elemental Mastery",
+  [52127] = "Water Shield",
   [8050] = "Flame Shock", [17364] = "Stormstrike",
   [3599] = "Searing Totem", [8190] = "Magma Totem", [2894] = "Fire Elemental Totem",
   [8232] = "Windfury Weapon", [8024] = "Flametongue Weapon", [8017] = "Rockbiter Weapon",
@@ -148,7 +149,7 @@ function G.install(cfg)
       id = inBook(x)
       if not id then return nil end
     end
-    local name = byId[id]
+    local name = (cfg.spellNames or {})[id] or byId[id]
     if not name then return nil end
     return name, "Rank " .. (rankOf[id] or 1), "Interface\\Icons\\" .. id, (cfg.costs or {})[name] or 0,
       false, 0, (cfg.castMs or {})[name] or 0, 0, 30
@@ -239,7 +240,11 @@ function G.install(cfg)
   _G.GetNumRaidMembers = function() return cfg.raid or 0 end
   _G.GetNumPartyMembers = function() return cfg.party or 0 end
   _G.GetUnitSpeed = function() return cfg.moving and 7 or 0 end
-  _G.UnitAffectingCombat = function() return cfg.inCombat ~= false and 1 or nil end
+  _G.UnitAffectingCombat = function(u)
+    local t = u == "target" and tgt()
+    if t and t.inCombat ~= nil then return t.inCombat and 1 or nil end
+    return cfg.inCombat ~= false and 1 or nil
+  end
   _G.UnitOnTaxi = function() return cfg.taxi and 1 or nil end
   _G.UnitInVehicle = function() return cfg.vehicle and 1 or nil end
   _G.UnitHasVehicleUI = function() return cfg.vehicle and 1 or nil end

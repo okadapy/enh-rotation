@@ -197,6 +197,46 @@ local function mwChance(S, hand)
   return math.min(1, 2 * r * w.speed / 60)
 end
 
+-- Shamanistic Rage (30823): "gives your successful melee attacks a chance to regenerate mana
+-- equal to 15% of your attack power" — a proc of 10 per minute (wotlkdb.com, 3.3.5a server data;
+-- wowsims uses 15), not every hit. Chance of one landed attack of `hand` (weapon speed, as
+-- every PPM proc).
+M.RAGE_PPM, M.RAGE_MANA_AP = 10, 0.15
+function M.rageChance(S, hand)
+  local w = S.weapons[hand]
+  if not w then return 0 end
+  local c = M.RAGE_PPM * (w.speed or 0) / 60
+  return c < 1 and c or 1
+end
+
+-- expected Rage procs of one auto attack of `hand`: the swing itself and, for the main hand,
+-- its Windfury extra attacks (counted in M.auto the same way)
+function M.rageProcsPerSwing(S, hand)
+  local hits = M.meleeTable(S, true).landed
+  if hand == "mh" then
+    local _, procs = M.wf(S)
+    hits = hits + procs * 2 * M.meleeTable(S, false).landed
+  end
+  return hits * M.rageChance(S, hand)
+end
+
+-- mana a second Shamanistic Rage returns from auto attacks (swing speeds of S.swing)
+function M.rageManaRate(S)
+  local m = S.memo
+  local r = m and m.rageManaRate
+  if r then return r end
+  r = 0
+  local sw = S.swing
+  for i = 1, 2 do
+    local hand = i == 1 and "mh" or "oh"
+    local s = sw and sw[hand]
+    if s and (s.speed or 0) > 0 and S.weapons[hand] then r = r + M.rageProcsPerSwing(S, hand) / s.speed end
+  end
+  r = r * M.RAGE_MANA_AP * (S.player.ap or 0)
+  if m then m.rageManaRate = r end
+  return r
+end
+
 function M.mwPerHit(S, hand)
   return mwChance(S, hand) * M.meleeTable(S, false).landed
 end
@@ -218,7 +258,8 @@ end
 --   in a group the pack is on the tank, not hitting the shaman, so `melee` would miss it);
 -- * target not in melee: the fight is at range, only enemies hitting the shaman in melee (within
 --   5 yards) stand in reach; 0 = the totem hits nothing.
--- Depends only on target range and enemy counts, which stay the same inside one search (memo).
+-- Depends only on target range and enemy counts. The counts stay the same inside one search, the
+-- range can change (a mob running in, model.advance): memo keys carry "target in melee" (flags).
 function M.totemTargets(S)
   local e, t = S.enemies, S.target
   if t and t.exists and t.enemy and t.range == "melee" then
@@ -226,6 +267,41 @@ function M.totemTargets(S)
     return n > 1 and n or 1
   end
   return e and e.melee or 0
+end
+
+-- Searing Totem also stands at the shaman's feet, but shoots one enemy up to 20 yards away.
+-- A target at "30" or "far" is out of its reach: the totem hits it only once the target comes
+-- within 20 yards. With `target.meleeIn` (seconds until the target reaches melee) it enters the
+-- reach SEARING_LEAD earlier: it still has to run 20 - 5 yards (melee reach) at the normal run
+-- speed of 7 yd/s. Without meleeIn the range is taken as static: out of reach = never (the next
+-- snapshot, with the target in reach, counts the totem still standing by its remaining time).
+-- An enemy already hitting the shaman in melee (totemTargets) is in reach too: the totem shoots it.
+M.SEARING_REACH, M.MELEE_REACH, M.MOB_SPEED = 20, 5, 7
+M.SEARING_LEAD = (M.SEARING_REACH - M.MELEE_REACH) / M.MOB_SPEED
+
+-- seconds from now until the fire totem `src` hits something; nil = not within its lifetime.
+-- Depends on range / meleeIn, which the model may change inside one search: never memoized
+-- (damage.periodic, which is memoized, stays the per-target dps and does not depend on range).
+function M.fireDelay(S, src)
+  if src ~= "searingTotem" then return 0 end
+  local t = S.target
+  local range = t and t.range
+  if range == nil or range == "melee" or range == "20" then return 0 end
+  if M.totemTargets(S) >= 1 then return 0 end
+  local m = t.meleeIn
+  if m then
+    local d = m - M.SEARING_LEAD
+    return d > 0 and d or 0
+  end
+  return nil
+end
+
+-- seconds of the next `span` in which the fire totem `src` deals its damage
+function M.fireUptime(S, src, span)
+  if src ~= "searingTotem" then return span end
+  local d = M.fireDelay(S, src)
+  if not d then return 0 end
+  return span > d and span - d or 0
 end
 
 function M.targets(S, key)
@@ -299,9 +375,22 @@ end
 
 -- Per-search memo. search.best puts a fresh S.memo on its root state; model.clone shares it
 -- along the whole tree. Inside one search player stats, weapons, talents, target level and
--- enemy counts never change, so these results depend only on their argument and on whether
--- Lightning Shield charges (Static Shock) and Stormstrike charges (+20% nature) are up.
+-- enemy counts never change, so these results depend only on their argument, on whether
+-- Lightning Shield charges (Static Shock) and Stormstrike charges (+20% nature) are up and on
+-- whether the target is in melee (totemTargets: a mob running in reaches melee mid-search).
 -- Without S.memo (direct calls, tests) everything is computed as before.
+-- memo slot of S's buffs: Lightning Shield charges up (+1), Stormstrike charges up (+2),
+-- target in melee (+4). Auto attacks (swingStats) do not depend on the range.
+local function flags(S)
+  local f = 1
+  local t = S.target
+  local ls, ss = S.buffs.ls, t.ss
+  if ls and ls.charges and ls.charges > 0 then f = 2 end
+  if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+  if t.range == "melee" then f = f + 4 end
+  return f
+end
+
 -- memo[name][arg] for results that depend only on the argument
 local function memoize(name)
   local raw = M[name]
@@ -312,22 +401,27 @@ local function memoize(name)
     if not slot then slot = {}; m[name] = slot end
     local k = a
     if k == nil then k = 0 end
+    -- Magma Totem hits what stands by the totem: that depends on the target being in melee
+    if k == "magmaTotem" and S.target.range == "melee" then k = "magmaTotem@melee" end
     local v = slot[k]
     if v == nil then v = raw(S, a); slot[k] = v end
     return v
   end
 end
 
--- memo[name][flags][arg]: flags = Lightning Shield charges up (+1), Stormstrike charges up (+2)
+-- memo[name][flags][arg], flags(S) above
 local function memoizeFlags(name)
   local raw = M[name]
   M[name] = function(S, a)
     local m = S.memo
     if not m then return raw(S, a) end
+    -- flags(S), inlined (hot)
     local f = 1
-    local ls, ss = S.buffs.ls, S.target.ss
+    local t = S.target
+    local ls, ss = S.buffs.ls, t.ss
     if ls and ls.charges and ls.charges > 0 then f = 2 end
     if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    if t.range == "melee" then f = f + 4 end
     local slot = m[name]
     if not slot then slot = {}; m[name] = slot end
     local sub = slot[f]
@@ -342,10 +436,7 @@ end
 function M.actionTable(S)
   local m = S.memo
   if not m then return nil end
-  local f = 1
-  local ls, ss = S.buffs.ls, S.target.ss
-  if ls and ls.charges and ls.charges > 0 then f = 2 end
-  if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+  local f = flags(S)
   local slot = m.action
   if not slot then slot = {}; m.action = slot end
   local sub = slot[f]
@@ -358,6 +449,7 @@ memoize("meleeTable")
 memoize("mwPerHit")
 memoize("mwPerSwing")
 memoize("periodic")
+memoize("tableCv2")
 memoizeFlags("auto")
 memoizeFlags("action")
 
@@ -365,11 +457,79 @@ memoizeFlags("action")
 M.PERIODIC = { "flameShock", "searingTotem", "magmaTotem", "fireElemental", "feralSpirit" }
 function M.rates(S)
   local m = S.memo
-  local r = m and m.rates
+  local slot = S.target.range == "melee" and "ratesMelee" or "rates" -- Magma Totem (totemTargets)
+  local r = m and m[slot]
   if r then return r end
   r = {}
   for _, src in ipairs(M.PERIODIC) do r[src] = M.periodic(S, src) end
-  if m then m.rates = r end
+  if m then m[slot] = r end
+  return r
+end
+
+-- The spread of one hit's damage, its variance over its squared mean (CV^2), from the outcomes
+-- of its table: "white" (auto attacks: misses, dodges, glancing blows, crits), "yellow"
+-- (Stormstrike, Lava Lash: no glancing) or "spell" (misses, crits at the spell multiplier). The
+-- model deals average damage; model.killTime uses the spread for the expected time of death.
+function M.tableCv2(S, kind)
+  local m1, m2
+  if kind == "spell" then
+    local h = M.spellHit(S)
+    local c = util.clamp(S.player.spellCrit or 0, 0, 1)
+    local k = 1.5 + 0.1 * talent(S, "elementalFury")
+    m1, m2 = h * (1 - c + c * k), h * (1 - c + c * k * k)
+  else
+    local t = M.meleeTable(S, kind == "white")
+    local hit = 1 - t.miss - t.dodge - t.glance - t.crit
+    local g = t.glance > 0 and (t.factor - hit - 2 * t.crit) / t.glance or 0 -- glancing damage share
+    m1, m2 = t.factor, hit + t.glance * g * g + 4 * t.crit
+  end
+  if m1 <= 0 then return 0 end
+  return m2 / (m1 * m1) - 1
+end
+
+-- variance of one auto attack's damage (M.auto): the white table, the weapon's damage range
+-- (even between min and max) and, for the main hand, whether Windfury procs
+function M.swingVar(S, hand)
+  local w = S.weapons and S.weapons[hand]
+  local a = w and M.auto(S, hand) or 0
+  if a <= 0 then return 0 end
+  local wfDmg, procs = 0, 0
+  if hand == "mh" then wfDmg, procs = M.wf(S) end
+  local base = a - wfDmg
+  local mean = avg(w)
+  local range = mean > 0 and (w.max - w.min) / mean or 0
+  local v = base * base * ((1 + M.tableCv2(S, "white")) * (1 + range * range / 12) - 1)
+  if procs > 0 and procs < 1 then
+    local size = wfDmg / procs
+    v = v + procs * (1 - procs) * size * size
+  end
+  return v
+end
+
+-- CV^2 of a press's damage (M.action): its table (M.tableCv2)
+local YELLOW = { stormstrike = true, lavaLash = true }
+function M.actionCv2(S, key)
+  return M.tableCv2(S, YELLOW[key] and "yellow" or "spell")
+end
+
+-- the variance of one auto attack's damage per hand (swingVar), for S's buffs (as swingStats);
+-- solo only (model.killTime), so a group search never computes it
+function M.swingVars(S)
+  local m = S.memo
+  local f = 1
+  if m then
+    local ls, ss = S.buffs.ls, S.target.ss
+    if ls and ls.charges and ls.charges > 0 then f = 2 end
+    if ss and ss.charges and ss.charges > 0 then f = f + 2 end
+    local slot = m.swingVars
+    local r = slot and slot[f]
+    if r then return r end
+  end
+  local r = { mh = M.swingVar(S, "mh"), oh = M.swingVar(S, "oh") }
+  if m then
+    m.swingVars = m.swingVars or {}
+    m.swingVars[f] = r
+  end
   return r
 end
 

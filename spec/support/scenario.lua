@@ -87,7 +87,7 @@ function Sc.state(level, patch)
     spells = {},
     buffs = { mw = { stacks = 0, remains = 0 }, ls = { charges = 0, remains = 0 }, flurry = { charges = 0, remains = 0 }, rage = 0, lust = 0, em = 0 },
     target = level >= 80
-      and { exists = true, enemy = true, level = 83, hp = 1e7, hpMax = 1e7, hpPct = 1, ttd = 180, range = "melee", fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
+      and { exists = true, enemy = true, level = 83, isBoss = true, hp = 1e7, hpMax = 1e7, hpPct = 1, ttd = 180, range = "melee", fs = 0, ss = { charges = 0, remains = 0 }, guessed = false }
       or { exists = true, enemy = true, level = level, hp = mobHp, hpMax = mobHp, hpPct = 1, ttd = 20, range = "melee", fs = 0, ss = { charges = 0, remains = 0 }, guessed = false },
     totems = { fire = { kind = nil, remains = 0 }, water = { remains = 120 } },
     -- swing speeds are hasted (UnitAttackSpeed), weapon speeds are the base ones (UnitDamage, Windfury)

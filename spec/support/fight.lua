@@ -31,7 +31,7 @@ end
 local function metered()
   local calls = 0
   local m = setmetatable({}, { __index = model })
-  for _, f in ipairs({ "apply", "wait", "peekApply", "peekWait", "advance", "actions", "readyIn" }) do
+  for _, f in ipairs({ "apply", "wait", "peekApply", "peekApplyOver", "peekWait", "advance", "actions", "readyIn" }) do
     local real = model[f]
     m[f] = function(...) calls = calls + 1; return real(...) end
   end

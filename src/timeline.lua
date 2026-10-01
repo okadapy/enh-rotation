@@ -9,10 +9,12 @@ M.ICON_Y = 70
 M.TICK_Y = 22
 M.WHITE = "Interface\\Buttons\\WHITE8X8"
 M.GLOW = "Interface\\Buttons\\UI-ActionButton-Border"
+M.ALERT_X, M.ALERT_SIZE = 16, 30
 M.COLORS = {
   mh = { 0.91, 0.76, 0.35, 1 }, oh = { 0.79, 0.83, 0.86, 1 },
   window = { 0.35, 0.9, 0.47, 0.35 }, now = { 1, 0.83, 0.35, 1 }, gcd = { 1, 1, 1, 0.07 },
   lane = { 0.23, 0.29, 0.24, 1 }, dotOn = { 0.37, 0.7, 1, 1 }, dotOff = { 0.11, 0.16, 0.23, 1 },
+  alert = { 1, 0.55, 0.3, 1 },
 }
 
 function M.options(opts)
@@ -44,9 +46,12 @@ function M.swingTimes(S, seconds)
   return out
 end
 
+-- The gap before a swing where a Bolt fits. Not when a cast at these stacks would not be
+-- suggested: the weaving option (model.weaveAllowed) keeps Bolt below S.weaveMin stacks in melee.
 function M.castWindow(S, swings)
   local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
   if not (S.spells and S.spells.lightningBolt) or mw < 1 or mw >= 5 or #swings == 0 then return nil end
+  if not model.weaveAllowed(S) then return nil end
   local need = model.castTime(S, "lightningBolt") + (S.latency or 0)
   local prev = 0
   for _, s in ipairs(swings) do
@@ -60,8 +65,9 @@ function M.layout(plan, S, opts, elapsed)
   local o = M.options(opts)
   elapsed = elapsed or 0
   local mw = (S.buffs and S.buffs.mw and S.buffs.mw.stacks) or 0
+  local t = S.target
   local L = { nowX = o.nowX, icons = {}, ticks = {}, window = nil, gcd = nil, reason = nil,
-              dots = math.max(0, math.min(5, mw)) }
+              dots = math.max(0, math.min(5, mw)), idle = t ~= nil and not (t.exists and t.enemy) }
   local prev
   local steps = (plan and plan.steps) or {}
   -- While the first button is overdue (not pressed yet) the rest of the plan waits with it: the
@@ -197,6 +203,13 @@ function M.new(parent, opts, old)
     tl.alert:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     tl.alert:Hide()
   end
+  if not tl.alertText then
+    -- the alert's words, to the left of its icon (the space right of it belongs to the plan)
+    tl.alertText = tl.frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tl.alertText:SetJustifyH("RIGHT")
+    tl.alertText:SetTextColor(unpack(M.COLORS.alert))
+    tl.alertText:Hide()
+  end
   tl:setup(parent, opts)
   return tl
 end
@@ -228,8 +241,11 @@ function TL:setup(parent, opts)
     if i <= o.icons then self.icons[i] = ic end
   end
   for i, d in ipairs(self.dots) do place(d, f, o.width - 8 - (5 - i) * 16, o.height - 8, 12, 12) end
-  place(self.alert, f, 16, M.ICON_Y, 30, 30)
+  place(self.alert, f, M.ALERT_X, M.ICON_Y, M.ALERT_SIZE, M.ALERT_SIZE)
   self.alert:Hide()
+  self.alertText:ClearAllPoints()
+  self.alertText:SetPoint("RIGHT", f, "BOTTOMLEFT", M.ALERT_X - M.ALERT_SIZE / 2 - 4, M.ICON_Y)
+  self.alertText:Hide()
   self.glow:Hide()
   self.reason:Hide()
   self.plan, self.S, self.cur, self.alpha, self.busy = nil, nil, {}, {}, false
@@ -269,12 +285,41 @@ function TL:setAlert(alert)
   else
     self.alert:Hide()
   end
+  if alert and alert.icon and alert.reason and self.o.showReason then
+    self.alertText:SetText(alert.reason)
+    self.alertText:Show()
+  else
+    self.alertText:Hide()
+  end
+end
+
+-- no enemy target: no lane, no now-line, no swings - only the alert (a missing buff, a hint)
+function TL:showLane(on)
+  if on then
+    self.lane:Show()
+    self.now:Show()
+  else
+    self.lane:Hide()
+    self.now:Hide()
+  end
 end
 
 function TL:tick(dt)
   if not self.plan or not self.S then return end
   local o, f = self.o, self.frame
   local L = M.layout(self.plan, self.S, o, GetTime() - self.at)
+  self:showLane(not L.idle)
+  if L.idle then
+    for _, ic in ipairs(self.icons) do ic:Hide() end
+    for _, t in ipairs(self.ticks) do t:Hide() end
+    for _, d in ipairs(self.dots) do d:Hide() end
+    self.glow:Hide()
+    self.window:Hide()
+    self.gcd:Hide()
+    self.reason:Hide()
+    if next(self.cur) then self.cur, self.alpha = {}, {} end
+    return
+  end
   local k = math.min(1, (dt or 0) * o.lerp)
   local seen, count = {}, {}
   for i, ic in ipairs(self.icons) do
@@ -329,6 +374,7 @@ function TL:tick(dt)
   end
   for i, d in ipairs(self.dots) do
     d:SetVertexColor(unpack(i <= L.dots and M.COLORS.dotOn or M.COLORS.dotOff))
+    d:Show()
   end
   local first = L.icons[1]
   if o.showReason and L.reason and first then

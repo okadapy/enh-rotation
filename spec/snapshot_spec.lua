@@ -54,6 +54,25 @@ describe("snapshot", function()
     assert.are.equal(0, S.target.ss.charges)
   end)
 
+  it("tells which shield is on the player and passes the shield option on", function()
+    install({ auras = { player = { HELPFUL = { { name = "Water Shield", count = 3, expires = 700 } } } } })
+    local S = snapshot.build(ctx({ shield = "water" }))
+    assert.are.equal("water", S.player.shield)
+    assert.are.equal(3, S.buffs.ws.charges)
+    assert.are.near(600, S.buffs.ws.remains, 1e-9)
+    assert.are.equal(0, S.buffs.ls.charges)
+    assert.are.equal("water", S.shieldPref)
+    install({ auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 } } } } })
+    S = snapshot.build(ctx())
+    assert.are.equal("lightning", S.player.shield)
+    assert.is_nil(S.buffs.ws)
+    assert.are.equal("auto", S.shieldPref)
+    install({})
+    S = snapshot.build(ctx({ shield = "bogus" }))
+    assert.is_nil(S.player.shield)
+    assert.are.equal("auto", S.shieldPref)
+  end)
+
   it("reads weapon imbues from the weapon tooltip", function()
     install({ enchants = { mh = true, oh = true },
               tooltip = { [16] = { "Some Axe", "Windfury 8 (30 min)" }, [17] = { "Other Axe", "Flametongue 10 (30 min)" } } })
@@ -93,6 +112,130 @@ describe("snapshot", function()
     assert.are.equal("other", snapshot.build(ctx()).totems.fire.kind)
     install({})
     assert.is_nil(snapshot.build(ctx()).totems.fire.kind)
+  end)
+
+  it("marks a boss (world boss or level ??) and copies the player's cooldown options", function()
+    install({ target = { level = 80, hp = 5000, hpMax = 10000 } })
+    local S = snapshot.build(ctx())
+    assert.is_false(S.target.isBoss)
+    assert.is_nil(S.cooldowns)
+    install({ target = { level = -1, hp = 5000, hpMax = 10000 } })
+    assert.is_true(snapshot.build(ctx()).target.isBoss)
+    install({ target = { level = 83, hp = 5000, hpMax = 10000, classification = "worldboss" } })
+    assert.is_true(snapshot.build(ctx()).target.isBoss)
+    install({ target = { level = 82, hp = 5000, hpMax = 10000, classification = "elite" } })
+    assert.is_false(snapshot.build(ctx()).target.isBoss)
+    install({})
+    local cds = { feralSpirit = "auto", fireElemental = "boss", shamanisticRage = "always" }
+    assert.are.equal(cds, snapshot.build(ctx({ cooldowns = cds })).cooldowns)
+    -- the weaving option: nil without it (the model decides, as before the option)
+    assert.is_nil(snapshot.build(ctx()).weaveMin)
+    assert.are.equal(5, snapshot.build(ctx({ weaveMin = 5 })).weaveMin)
+    -- the solo mana option: nil without it (value: balanced)
+    assert.is_nil(snapshot.build(ctx()).manaPolicy)
+    assert.are.equal("spend", snapshot.build(ctx({ manaPolicy = "spend" })).manaPolicy)
+  end)
+
+  it("decides the long cooldowns' gate once per snapshot (S.cdAllowed), latched per target", function()
+    local cds = { feralSpirit = "auto", fireElemental = "never", shamanisticRage = "always" }
+    local ttd = 42
+    local c = ctx({ cooldowns = cds, ttd = { add = function() end, smoothed = function() return ttd end } })
+    install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-7" } })
+    assert.is_nil(snapshot.build(ctx()).cdAllowed) -- no options: nothing decided (model decides as before)
+    local S = snapshot.build(c)
+    assert.are.same({ feralSpirit = true, fireElemental = false, shamanisticRage = true }, S.cdAllowed)
+    assert.are.equal("Creature-7", c.cdLatch[1].guid)
+    ttd = 20 -- below 22.5, above 22.5 x 0.75: the latch holds
+    assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
+    ttd = 16 -- below 16.875: released
+    assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
+    ttd = 20 -- released: back to the plain line
+    assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
+    ttd = 23
+    assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
+    -- another target: a fresh latch, the first one kept
+    install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-8" } })
+    ttd = 20
+    assert.is_false(snapshot.build(c).cdAllowed.feralSpirit)
+    assert.are.equal("Creature-8", c.cdLatch[1].guid)
+    assert.are.equal("Creature-7", c.cdLatch[2].guid)
+    install({ target = { level = 80, hp = 5000, hpMax = 10000, guid = "Creature-7" } })
+    assert.is_true(snapshot.build(c).cdAllowed.feralSpirit)
+  end)
+
+  it("cooldownGate: latch per GUID, cleared without options", function()
+    local model = require("model")
+    local need = model.COOLDOWN_TTD.feralSpirit
+    local function S(ttd, boss)
+      return { cooldowns = { feralSpirit = "auto", fireElemental = "boss" }, target = { ttd = ttd, isBoss = boss } }
+    end
+    local c = {}
+    assert.are.same({ feralSpirit = false, fireElemental = false, shamanisticRage = true }, snapshot.cooldownGate(c, S(need - 1), "A"))
+    assert.is_true(snapshot.cooldownGate(c, S(need), "A").feralSpirit)
+    for _, t in ipairs({ 24, 21, 23, 22, 25, 21, 17 }) do
+      assert.is_true(snapshot.cooldownGate(c, S(t), "A").feralSpirit, "ttd " .. t)
+    end
+    assert.is_true(snapshot.cooldownGate(c, S(nil), "A").feralSpirit) -- unknown ttd does not release
+    assert.is_false(snapshot.cooldownGate(c, S(need * 0.75 - 0.01), "A").feralSpirit)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "A").feralSpirit)
+    assert.is_true(snapshot.cooldownGate(c, S(30), "A").feralSpirit)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "B").feralSpirit) -- new target: no latch
+    snapshot.cooldownGate(c, S(30), "B")
+    assert.is_nil(snapshot.cooldownGate(c, { target = { ttd = 30 } }, "B"))
+    assert.is_nil(c.cdLatch)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "B").feralSpirit)
+    assert.is_false(snapshot.cooldownGate(c, S(21), "A").feralSpirit) -- no options dropped A's too
+    -- no target (nil GUID): nothing latches
+    snapshot.cooldownGate(c, S(30), nil)
+    assert.is_false(snapshot.cooldownGate(c, S(21), nil).feralSpirit)
+    -- a boss: allowed whatever the ttd, "boss" too
+    local b = snapshot.cooldownGate(c, S(1, true), "Boss")
+    assert.is_true(b.feralSpirit)
+    assert.is_true(b.fireElemental)
+  end)
+
+  it("cooldownGate: latches for the last LATCH_TARGETS GUIDs", function()
+    assert.are.equal(3, snapshot.LATCH_TARGETS)
+    local need = require("model").COOLDOWN_TTD.feralSpirit
+    local function S(ttd) return { cooldowns = { feralSpirit = "auto" }, target = { ttd = ttd } } end
+    local function gate(c, ttd, guid) return snapshot.cooldownGate(c, S(ttd), guid).feralSpirit end
+    local low = need * 0.75 + 0.5 -- below the line, above the release
+    -- A -> B -> A: A keeps its latch (the review's case: 30, 15, 21)
+    local c = {}
+    assert.is_true(gate(c, 30, "A"))
+    assert.is_false(gate(c, 15, "B"))
+    assert.is_true(gate(c, 21, "A"))
+    assert.is_false(gate(c, 21, "B"))
+    -- no target in between: nothing latched, nothing dropped
+    assert.is_true(gate(c, 30, nil))
+    assert.is_false(gate(c, low, nil))
+    assert.are.equal(2, #c.cdLatch)
+    assert.is_true(gate(c, low, "A"))
+    -- the same GUID again reuses its slot: no new table
+    local slot = c.cdLatch[1]
+    gate(c, low, "A")
+    assert.are.equal(slot, c.cdLatch[1])
+    assert.are.equal(2, #c.cdLatch)
+    -- a 4th GUID drops the least recently seen
+    c = {}
+    for _, g in ipairs({ "A", "B", "C" }) do assert.is_true(gate(c, 30, g)) end
+    assert.is_true(gate(c, low, "A")) -- A seen last: B is now the oldest
+    assert.is_true(gate(c, 30, "D"))
+    assert.are.equal(3, #c.cdLatch)
+    assert.are.same({ "D", "A", "C" }, { c.cdLatch[1].guid, c.cdLatch[2].guid, c.cdLatch[3].guid })
+    assert.is_false(gate(c, low, "B")) -- B evicted: back to the plain line (and B pushes C out)
+    assert.are.same({ "B", "D", "A" }, { c.cdLatch[1].guid, c.cdLatch[2].guid, c.cdLatch[3].guid })
+    assert.is_true(gate(c, low, "D"))
+    assert.is_true(gate(c, low, "A"))
+    assert.is_false(gate(c, low, "C"))
+    -- release per GUID: A released, D untouched
+    assert.is_false(gate(c, need * 0.75 - 0.01, "A"))
+    assert.is_false(gate(c, low, "A"))
+    assert.is_true(gate(c, low, "D"))
+    -- no options: all cleared
+    assert.is_nil(snapshot.cooldownGate(c, { target = { ttd = 30 } }, "D"))
+    assert.is_nil(c.cdLatch)
+    assert.is_false(gate(c, low, "D"))
   end)
 
   it("guesses mob health when the client only gives percent", function()
@@ -139,6 +282,55 @@ describe("snapshot", function()
     assert.are.equal("far", snapshot.build(ctx()).target.range)
     install({ known = { [top("earthShock")] = true, [top("lightningBolt")] = true }, interact = true, inRange = {} })
     assert.are.equal("melee", snapshot.build(ctx()).target.range)
+  end)
+
+  describe("a mob running in", function()
+    local known = { [top("stormstrike")] = true, [top("earthShock")] = true, [top("lightningBolt")] = true }
+    local TWENTY = { Stormstrike = 0, ["Earth Shock"] = 1, ["Lightning Bolt"] = 1 }
+    local THIRTY = { Stormstrike = 0, ["Earth Shock"] = 0, ["Lightning Bolt"] = 1 }
+    local function target(extra)
+      local t = { level = 54, hp = 3000, hpMax = 3000, guid = "Creature-9" }
+      for k, v in pairs(extra or {}) do t[k] = v end
+      return t
+    end
+
+    it("a mob fighting us at 20 or 30 yards is in melee in distance / 7 yd/s", function()
+      install({ known = known, inRange = TWENTY, target = target({ inCombat = true }) })
+      local t = snapshot.build(ctx()).target
+      assert.is_true(t.inCombat)
+      assert.is_false(t.isPlayer)
+      assert.are.near(20 / 7, t.meleeIn, 1e-9)
+      install({ known = known, inRange = THIRTY, target = target({ inCombat = true }) })
+      assert.are.near(30 / 7, snapshot.build(ctx()).target.meleeIn, 1e-9)
+    end)
+
+    it("our Flame Shock on it counts as fighting us", function()
+      install({ known = known, inRange = TWENTY, inCombat = false, target = target({ inCombat = false }),
+                auras = { target = { HARMFUL = { { name = "Flame Shock", expires = 109, caster = "player" } } } } })
+      local t = snapshot.build(ctx()).target
+      assert.is_true(t.inCombat)
+      assert.are.near(20 / 7, t.meleeIn, 1e-9)
+    end)
+
+    it("stays put: out of combat, a player, in a group, in melee or far away", function()
+      install({ known = known, inRange = TWENTY, target = target({ inCombat = false }) })
+      local t = snapshot.build(ctx()).target
+      assert.is_false(t.inCombat)
+      assert.is_nil(t.meleeIn)
+      -- the mob fights someone else while we are out of combat
+      install({ known = known, inRange = TWENTY, inCombat = false, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+      install({ known = known, inRange = TWENTY, target = target({ inCombat = true, player = true }) })
+      t = snapshot.build(ctx()).target
+      assert.is_true(t.isPlayer)
+      assert.is_nil(t.meleeIn)
+      install({ known = known, inRange = TWENTY, party = 2, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+      install({ known = known, inRange = { Stormstrike = 1 }, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+      install({ known = known, inRange = { Stormstrike = 0, ["Earth Shock"] = 0, ["Lightning Bolt"] = 0 }, target = target({ inCombat = true }) })
+      assert.is_nil(snapshot.build(ctx()).target.meleeIn)
+    end)
   end)
 
   describe("range hysteresis", function()
@@ -313,5 +505,108 @@ describe("snapshot", function()
     install({})
     assert.are.equal(0, snapshot.build(ctx()).pets.wolves)
     assert.are.near(30, snapshot.build(ctx({ wolvesUntil = 130 })).pets.wolves, 1e-9)
+  end)
+
+  describe("time-to-die prior", function()
+    local value = require("value")
+    local damage = require("damage")
+    local realCombat
+
+    -- a stub ttd that records the prior snapshot passes
+    local function seen()
+      local rec = {}
+      rec.ttd = { add = function() end,
+                  smoothed = function(_, _, _, prior) rec.prior = prior; return 42, prior and "blend" or "regression" end }
+      return rec
+    end
+    local function mob(extra)
+      local cfg = { level = 53, target = { level = 52, hp = 2437, hpMax = 2769, guid = "Creature-8" } }
+      for k, v in pairs(extra or {}) do cfg[k] = v end
+      install(cfg)
+      realCombat = _G.UnitAffectingCombat
+    end
+    local function targetCombat(on)
+      _G.UnitAffectingCombat = function(u)
+        if u == "target" then return on and 1 or nil end
+        return realCombat(u)
+      end
+    end
+
+    it("solo, fighting us: our health / damage per second goes to ttd", function()
+      mob()
+      local rec = seen()
+      local S = snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.are.near(S.target.hp / value.dpsEstimate(S), rec.prior, 1e-9)
+      assert.are.equal(42, S.target.ttd)
+      assert.are.equal("blend", S.target.ttdSource)
+    end)
+
+    it("counts the Flame Shock and fire totem already on the mob", function()
+      mob({ auras = { target = { HARMFUL = { { name = "Flame Shock", expires = 115, caster = "player" } } } },
+            totems = { [1] = { "Searing Totem VII", 95, 60 } },
+            known = { [ranks("flameShock")[5]] = true, [ranks("searingTotem")[6]] = true } })
+      local rec = seen()
+      local S = snapshot.build(ctx({ ttd = rec.ttd }))
+      local r = damage.rates(S)
+      local dps = value.dpsEstimate(S) + r.flameShock + r.searingTotem
+      assert.is_true(r.flameShock > 0 and r.searingTotem > 0)
+      assert.are.near(S.target.hp / dps, rec.prior, 1e-9)
+    end)
+
+    it("none in a group or raid: others hit the mob too", function()
+      for _, extra in ipairs({ { party = 2 }, { raid = 10 } }) do
+        mob(extra)
+        local rec = seen()
+        snapshot.build(ctx({ ttd = rec.ttd }))
+        assert.is_nil(rec.prior)
+      end
+    end)
+
+    it("none before the pull", function()
+      mob({ inCombat = false })
+      local rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_nil(rec.prior)
+    end)
+
+    it("none while the mob is not fighting, unless our Flame Shock is on it", function()
+      mob()
+      targetCombat(false)
+      local rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_nil(rec.prior)
+      mob({ auras = { target = { HARMFUL = { { name = "Flame Shock", expires = 115, caster = "player" } } } } })
+      targetCombat(false)
+      rec = seen()
+      snapshot.build(ctx({ ttd = rec.ttd }))
+      assert.is_not_nil(rec.prior)
+      _G.UnitAffectingCombat = realCombat
+    end)
+
+    it("S.target.inCombat, when the snapshot has it, decides", function()
+      mob()
+      local S = snapshot.build(ctx())
+      assert.is_not_nil(snapshot.ttdPrior(S))
+      S.target.inCombat = false
+      assert.is_nil(snapshot.ttdPrior(S))
+    end)
+
+    -- recorded: the first snapshot of a fight said 128 s at 88%; the mob died about 6 s later
+    it("with the real estimator the first snapshot in a fight has a finite ttd", function()
+      local ttd = require("ttd")
+      mob({ now = 100 })
+      local c = ctx({ ttd = ttd.new() })
+      local S = snapshot.build(c)
+      assert.are.equal("prior", S.target.ttdSource)
+      assert.is_true(S.target.ttd > 0 and S.target.ttd < 30, tostring(S.target.ttd))
+      -- a whole percent in 2 s: the regression alone would say minutes, the estimate stays near the prior
+      G.cfg.target.hp, G.cfg.now = 2437 - 28, 101
+      snapshot.build(c)
+      G.cfg.target.hp, G.cfg.now = 2437 - 28, 102
+      S = snapshot.build(c)
+      assert.are.equal("blend", S.target.ttdSource)
+      assert.is_true(c.ttd:estimate(102, "Creature-8") > 100)
+      assert.is_true(S.target.ttd < 30, tostring(S.target.ttd))
+    end)
   end)
 end)

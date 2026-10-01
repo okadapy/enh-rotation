@@ -31,7 +31,9 @@ package.loaded.ttd = { new = function()
   return t
 end }
 package.loaded.planner = { new = function() return { update = function() return { value = 0, steps = {} } end } end }
-package.loaded.model = { castTime = function() return 1.0 end }
+-- snapshot decides the long cooldowns' gate through the model (snapshot_spec tests it)
+package.loaded.model = { castTime = function() return 1.0 end, COOLDOWN_TTD = { feralSpirit = 22.5 },
+                         cooldownDecide = function() return true end }
 local runtime = require("runtime")
 local planner = package.loaded.planner
 for _, n in ipairs(NEIGHBOURS) do package.loaded[n] = real[n] end
@@ -93,6 +95,31 @@ describe("runtime", function()
     return rt, env
   end
 
+  it("fills the cooldown options from the config (defaults without it)", function()
+    local rt = start({ cdFeralSpirit = 2, cdFireElemental = 4, cdShamanisticRage = 1 })
+    assert.are.same({ feralSpirit = "boss", fireElemental = "never", shamanisticRage = "auto" }, rt.ctx.cooldowns)
+    rt = start({})
+    assert.are.same({ feralSpirit = "auto", fireElemental = "auto", shamanisticRage = "always" }, rt.ctx.cooldowns)
+  end)
+
+  it("fills the weaving option from the config (3+ stacks without it)", function()
+    assert.are.equal(3, (start({})).ctx.weaveMin)
+    assert.are.equal(5, (start({ weave = 2 })).ctx.weaveMin)
+    assert.are.equal(0, (start({ weave = 3 })).ctx.weaveMin)
+  end)
+
+  it("fills the solo mana option from the config (balanced without it)", function()
+    assert.are.equal("balanced", (start({})).ctx.manaPolicy)
+    assert.are.equal("save", (start({ manaPolicy = 2 })).ctx.manaPolicy)
+    assert.are.equal("spend", (start({ manaPolicy = 3 })).ctx.manaPolicy)
+  end)
+
+  it("no low-mana Shamanistic Rage alert when the player set it to never", function()
+    local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0
+    S.cooldowns = { shamanisticRage = "never" }
+    assert.is_nil(runtime.alert(S))
+  end)
+
   it("validates plans", function()
     assert.is_true(runtime.validPlan(PLAN))
     assert.is_true(runtime.validPlan({ steps = { { key = "waitSwing", at = 0.4 } } }))
@@ -146,6 +173,26 @@ describe("runtime", function()
     assert.is_nil(runtime.alert(S))
   end)
 
+  it("asks for the shield the player wants kept up", function()
+    local S = Sc.state(80)
+    S.buffs.ls.charges = 0; S.player.shield = "water"; S.buffs.ws = { charges = 3, remains = 500 }
+    assert.is_nil(runtime.alert(S)) -- auto with Water Shield on
+    S.shieldPref = "water"
+    assert.is_nil(runtime.alert(S))
+    S.shieldPref = "lightning"
+    assert.are.equal("lightningShield", runtime.alert(S).key)
+    S.player.shield, S.buffs.ws = nil, nil
+    S.shieldPref = "auto"
+    assert.are.equal("lightningShield", runtime.alert(S).key) -- nothing up: as before
+    S.shieldPref = "water"
+    local a = runtime.alert(S)
+    assert.are.equal("waterShield", a.key)
+    assert.are.equal("Water Shield missing", a.reason)
+    assert.are.equal(runtime.ALERT_ICONS.waterShield, a.icon)
+    S.player.shield = "lightning"; S.buffs.ls.charges = 3
+    assert.are.equal("waterShield", runtime.alert(S).key) -- Lightning Shield up, Water wanted
+  end)
+
   -- recorded: Rage pressed at 20 yards without auto-attack on the hint - its mana comes from hits
   it("suggests Shamanistic Rage for mana only in melee with auto-attack on", function()
     local S = Sc.state(80); S.player.mana = S.player.manaMax * 0.1; S.spells.shamanisticRage.cd = 0
@@ -162,7 +209,170 @@ describe("runtime", function()
     assert.is_nil(runtime.idleHint({ steps = { { key = "flameShock", at = 0 } } }, S))
     assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
     S.target.range = "melee"
+    assert.are.equal("saveMana", runtime.idleHint({ steps = {} }, S).key)
+  end)
+
+  it("explains an empty plan in solo melee: auto-attacks, spells are not worth the mana", function()
+    local S = Sc.state(53)
+    S.target.range = "melee"
+    local h = runtime.idleHint({ steps = {} }, S)
+    assert.are.equal("saveMana", h.key)
+    assert.are.equal("Auto-attack: save mana", h.reason)
+    assert.are.equal(runtime.ALERT_ICONS.saveMana, h.icon)
+    assert.is_nil(runtime.idleHint({ steps = { { key = "lavaLash", at = 1 } } }, S))
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
+    S.swing.attacking = false -- no auto-attack: that is an alert of its own
     assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S.swing.attacking = true
+    S.target.dead = true
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S = Sc.state(80) -- raid: mana is cheap, an empty plan is only the GCD or cooldowns
+    S.target.range = "melee"
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+  end)
+
+  it("an empty plan in melee with no mana for any button says so; not for the GCD", function()
+    local S = Sc.state(80)
+    S.spells.shamanisticRage.cd = 30
+    S.player.mana = 0
+    local h = runtime.idleHint({ steps = {} }, S)
+    assert.are.equal("outOfMana", h.key)
+    assert.are.equal("Out of mana", h.reason)
+    assert.are.equal(runtime.ALERT_ICONS.outOfMana, h.icon)
+    S.spells.shamanisticRage.cd = 0 -- Rage is ready: that is the hint (runtime.alert), not "Out of mana"
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S = Sc.state(80)
+    S.spells.shamanisticRage.cd = 30
+    S.gcdRemains = 1.2 -- enough mana, only the GCD: nothing to say
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+  end)
+
+  it("suggests a drink out of combat with no enemy target and low mana, unless drinking", function()
+    local S = Sc.state(80)
+    S.target = { exists = false }
+    S.player.inCombat = false
+    S.player.mana = S.player.manaMax * 0.3
+    local h = runtime.idleHint({ steps = {} }, S, false, function() return false end)
+    assert.are.equal("drink", h.key)
+    assert.are.equal(runtime.ALERT_ICONS.drink, h.icon)
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, false, function() return true end))
+    S.player.inCombat = true
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+    S.player.inCombat, S.player.mana = false, S.player.manaMax * 0.8
+    assert.is_nil(runtime.idleHint({ steps = {} }, S))
+  end)
+
+  -- recorded #63 (level 54, solo, a mob at 30 yd not pulled, 11% mana, empty plan): the hint said
+  -- "Move into melee"; with the bar that empty the drink comes first
+  it("solo, a mob out of melee, nobody in combat, mana at most 30%: Drink before the walk", function()
+    local S = dofile("spec/fixtures/recorded.lua")[63].S
+    assert.are.equal("solo", S.mode)
+    assert.are.equal("30", S.target.range)
+    local h = runtime.idleHint({ steps = {} }, S, false, function() return false end)
+    assert.are.equal("drink", h.key)
+    assert.are.equal("Drink", h.reason)
+    assert.are.equal(runtime.ALERT_ICONS.drink, h.icon)
+    -- already drinking: nothing to add (the walk waits for the drink)
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, false, function() return true end))
+    assert.is_nil(runtime.idleHint({ steps = {} }, S, true)) -- the search is still running
+    assert.is_nil(runtime.idleHint({ steps = { { key = "lightningBolt", at = 0 } } }, S))
+    -- boundaries: 30% drinks, above it the walk as before
+    local p = S.player
+    p.mana = p.manaMax * 0.3
+    assert.are.equal("drink", runtime.idleHint({ steps = {} }, S).key)
+    p.mana = p.manaMax * 0.31
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    p.mana = p.manaMax * 0.1
+    -- in combat (the player or the mob): the fight is on, go
+    p.inCombat = true
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    p.inCombat = false
+    S.target.inCombat = true
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    S.target.inCombat = false
+    -- in a group: as before
+    S.mode = "group"
+    assert.are.equal("moveIn", runtime.idleHint({ steps = {} }, S).key)
+    S.mode = "solo"
+    S.target.range = "20"
+    assert.are.equal("drink", runtime.idleHint({ steps = {} }, S).key)
+    -- in melee the rule does not apply
+    S.target.range = "melee"
+    assert.are_not.equal("drink", (runtime.idleHint({ steps = {} }, S) or {}).key)
+  end)
+
+  it("shows the drink hint with no target, and not while the Drink buff is on", function()
+    local rt = start(nil, { target = { exists = false }, inCombat = false, mana = 2000, manaMax = 10000 })
+    runtime.update(rt, 0.3)
+    assert.is_true(rt.tl.alert.shown)
+    assert.are.equal(runtime.ALERT_ICONS.drink, rt.tl.alert.texture)
+    assert.are.equal("Drink", rt.tl.alertText.text)
+    rt = start(nil, { target = { exists = false }, inCombat = false, mana = 2000, manaMax = 10000,
+                      auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 },
+                                                       { name = "Drink", expires = 120 } } } } })
+    runtime.update(rt, 0.3)
+    assert.is_false(rt.tl.alert.shown)
+  end)
+
+  -- conjured mana food (Ritual of Refreshment) is eaten under "Refreshment", not "Drink";
+  -- names come localized from the spell ids
+  it("counts the Refreshment buff of conjured mana food as drinking, localized; Food is not", function()
+    local function aura(name)
+      install({ auras = { player = { HELPFUL = { { name = "Lightning Shield", count = 3, expires = 700 },
+                                                  { name = name, expires = 30 } } } },
+                spellNames = { [runtime.DRINK_ID] = "Trinken", [runtime.REFRESHMENT_ID] = "Erfrischung" } })
+      return runtime.drinking()
+    end
+    assert.is_true(aura("Trinken"))
+    assert.is_true(aura("Erfrischung"))
+    assert.is_false(aura("Drink"))
+    assert.is_false(aura("Nahrung"))
+    install({ auras = { player = { HELPFUL = { { name = "Refreshment", expires = 30 } } } } })
+    assert.is_true(runtime.drinking())
+    install({ auras = { player = { HELPFUL = { { name = "Food", expires = 30 } } } } })
+    assert.is_false(runtime.drinking())
+  end)
+
+  it("imbue and range alerts have their own icons", function()
+    local S = Sc.state(80); S.weapons.mh.enchant = nil
+    local a = runtime.alert(S)
+    assert.are.equal(runtime.IMBUE_ICONS.windfury, a.icon)
+    assert.are.equal("Main-hand imbue missing", a.reason)
+    S = Sc.state(80); S.weapons.oh.enchant = nil
+    a = runtime.alert(S)
+    assert.are.equal(runtime.IMBUE_ICONS.flametongue, a.icon)
+    assert.are.equal("Off-hand imbue missing", a.reason)
+    S = Sc.state(20); S.weapons.mh.enchant = nil
+    assert.are.equal(runtime.IMBUE_ICONS.flametongue, runtime.alert(S).icon)
+    S = Sc.state(8); S.weapons.mh.enchant = nil
+    assert.are.equal(runtime.IMBUE_ICONS.rockbiter, runtime.alert(S).icon)
+    assert.are_not.equal(runtime.ALERT_ICONS.moveIn, runtime.ALERT_ICONS.outOfRange)
+    local seen = {}
+    for k, icon in pairs(runtime.ALERT_ICONS) do
+      if k ~= "noEnchant" then
+        assert.is_nil(seen[icon], k .. " shares its icon with " .. tostring(seen[icon]))
+        seen[icon] = k
+      end
+      assert.truthy(icon:match("^Interface\\Icons\\[%w_]+$"), icon)
+    end
+    for _, icon in pairs(runtime.IMBUE_ICONS) do assert.truthy(icon:match("^Interface\\Icons\\[%w_]+$"), icon) end
+  end)
+
+  it("Bloodlust ready only in a fight: an enemy target and combat", function()
+    local known = allKnown(); known[2825] = true
+    install({ known = known })
+    local S = Sc.state(80)
+    S.target.inCombat, S.player.inCombat = false, false
+    assert.is_nil(runtime.lustReady(S, 100))
+    S.player.inCombat = true
+    assert.are.equal("lust", runtime.lustReady(S, 100).key)
+    S.player.inCombat, S.target.inCombat = false, true
+    assert.are.equal("lust", runtime.lustReady(S, 100).key)
+    S.target = { exists = false }
+    S.player.inCombat = true
+    assert.is_nil(runtime.lustReady(S, 100)) -- in town, no target
+    S.target = { exists = true, enemy = false, inCombat = true }
+    assert.is_nil(runtime.lustReady(S, 100))
   end)
 
   it("registers 3.3.5 events only and reuses the engine frame", function()
@@ -203,17 +413,208 @@ describe("runtime", function()
     assert.are.equal(2, #calls)
   end)
 
-  it("stops for good after an error instead of failing every frame", function()
+  it("goes on after a single error and says it once", function()
     local rt = start()
     local boom = true
-    rt.planner = { update = function() if boom then boom = false; error("boom") end; return PLAN end }
-    assert.has_error(function() rt.frame.scripts.OnUpdate(rt.frame, 0.3) end)
-    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    rt.planner = { update = function() if boom then boom = false; error("boom", 0) end; return PLAN end }
+    assert.is_false(rt.frame.scripts.OnUpdate(rt.frame, 0.3) or false)
     assert.are.equal(1, #G.printed)
-    assert.truthy(G.printed[1]:find("stopped after an error", 1, true))
-    assert.is_nil(rt.frame.scripts.OnUpdate)
+    assert.are.equal("|cffff5555EnhRot|r error: boom", G.printed[1])
+    assert.are.equal(1, rt.counters.errors)
+    assert.is_nil(rt.stopped)
+    assert.is_not_nil(rt.frame.scripts.OnUpdate)
+    assert.is_true(rt.frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+    -- the planner starts afresh and plans again
+    local calls = 0
+    rt.planner = { update = function() calls = calls + 1; return PLAN end }
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(1, calls)
+    assert.are.equal("stormstrike", rt.plan.steps[1].key)
+    assert.are.equal(1, #G.printed)
+    -- one long-lived coroutine per guarded function, not one per frame
+    local co = rt.guards[runtime.step]
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(co, rt.guards[runtime.step])
+    assert.are.equal("suspended", coroutine.status(co))
+  end)
+
+  it("counts a timeline error and starts the timeline again", function()
+    local rt = start()
+    rt.tl:stop()
+    rt.tl.onError()
+    assert.are.equal("|cffff5555EnhRot|r error: timeline error", G.printed[1])
+    assert.is_true(rt.tl.frame.shown)
+    assert.is_nil(rt.stopped)
+  end)
+
+  it("says the same error once, and stops after too many in a short time", function()
+    local rt = start()
+    local fails = 0
+    local function broken() return { update = function() fails = fails + 1; error("again", 0) end } end
+    for i = 1, runtime.MAX_ERRORS - 1 do
+      rt.planner = broken()
+      rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+      assert.is_nil(rt.stopped)
+    end
+    assert.are.equal(1, #G.printed)
+    rt.planner = broken()
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.are.equal(runtime.MAX_ERRORS, fails)
+    assert.is_true(rt.stopped)
+    assert.are.equal(2, #G.printed)
+    assert.are.equal("|cffff5555EnhRot|r stopped after errors - retrying in 30 s or on a new target", G.printed[2])
+    -- only the wait for a retry is left: a target change, the time
+    assert.are.same({ PLAYER_TARGET_CHANGED = true }, rt.frame.events)
+    assert.is_false(rt.tl.frame.shown)
+    rt.planner = broken()
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    rt.frame.scripts.OnEvent(rt.frame, "UNIT_AURA", "player")
+    assert.are.equal(runtime.MAX_ERRORS, fails)
+    assert.is_true(rt.stopped)
+  end)
+
+  -- five errors in a row, as from one odd target
+  local function failNow(rt)
+    for i = 1, runtime.MAX_ERRORS do
+      rt.planner = { update = function() error("odd target", 0) end }
+      rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    end
+    assert.is_true(rt.stopped)
+  end
+
+  local function running(rt)
+    assert.is_nil(rt.stopped)
+    assert.is_true(rt.frame.events.COMBAT_LOG_EVENT_UNFILTERED)
+    assert.is_true(rt.frame.events.UNIT_AURA)
+    assert.is_true(rt.tl.frame.shown)
+    -- a fresh planner (not the broken one) plans at once: the restart asks for a replan
+    local before = #calls
+    rt.frame.scripts.OnUpdate(rt.frame, 0.01)
+    assert.are.equal(before + 1, #calls)
+    assert.are.equal("target", calls[#calls].ev.kind)
+    assert.are.equal("stormstrike", rt.plan.steps[1].key)
+  end
+
+  it("after a stop starts again on its own after RETRY_AFTER seconds", function()
+    local rt = start()
+    rt.env.region:Show()
+    failNow(rt)
+    rt.frame.scripts.OnUpdate(rt.frame, runtime.RETRY_AFTER - 1)
+    assert.is_true(rt.stopped)
+    assert.are.equal(0, #calls)
+    rt.frame.scripts.OnUpdate(rt.frame, 1)
+    running(rt)
+    -- the same event handlers as start(): events reach the engine again
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_ENTER_COMBAT")
+    assert.are.equal("swing", rt.pending.kind)
+    -- and errors are counted from scratch
+    rt.planner = { update = function() error("once", 0) end }
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.is_nil(rt.stopped)
+  end)
+
+  it("after a stop starts again on a new target", function()
+    local rt = start()
+    rt.env.region:Show()
+    failNow(rt)
+    rt.frame.scripts.OnEvent(rt.frame, "UNIT_AURA", "target")
+    assert.is_true(rt.stopped)
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+    running(rt)
+  end)
+
+  it("a restart while the aura is hidden goes to sleep", function()
+    local rt = start()
+    failNow(rt)
+    rt.env.region:Hide()
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+    assert.is_nil(rt.stopped)
+    assert.is_true(rt.sleeping)
     assert.are.same({}, rt.frame.events)
     assert.is_false(rt.tl.frame.shown)
+    rt.env.region:Show()
+    assert.is_false(rt.sleeping)
+    assert.is_true(rt.frame.events.UNIT_AURA)
+  end)
+
+  it("after MAX_RESTARTS restarts in a session it stays stopped until /reload", function()
+    local rt = start()
+    rt.env.region:Show()
+    for i = 1, runtime.MAX_RESTARTS do
+      failNow(rt)
+      rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+      assert.is_nil(rt.stopped)
+    end
+    -- a re-init of the aura is the same session
+    local frame = rt.frame
+    rt = runtime.start(rt.config, rt.env)
+    assert.are.equal(frame, rt.frame)
+    failNow(rt)
+    assert.are.equal("|cffff5555EnhRot|r stopped after an error - /reload to retry", G.printed[#G.printed])
+    assert.is_nil(rt.frame.scripts.OnUpdate)
+    assert.are.same({}, rt.frame.events)
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_TARGET_CHANGED")
+    assert.is_true(rt.stopped)
+    local n = 0
+    for _, line in ipairs(G.printed) do if line:find("retrying in", 1, true) then n = n + 1 end end
+    assert.are.equal(runtime.MAX_RESTARTS, n)
+  end)
+
+  it("does not stop for errors spread over a longer time", function()
+    local rt = start()
+    for i = 1, runtime.MAX_ERRORS * 2 do
+      G.cfg.now = 100 + i * (runtime.ERROR_WINDOW / 2)
+      rt.planner = { update = function() error("rare", 0) end }
+      rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    end
+    assert.is_nil(rt.stopped)
+    assert.are.equal(runtime.MAX_ERRORS * 2, rt.counters.errors)
+  end)
+
+  it("survives an error in an event handler and in a running search job", function()
+    local rt = start()
+    local swing = rt.ctx.swing
+    rt.ctx.swing = { onAttack = function() error("event boom", 0) end }
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_ENTER_COMBAT")
+    assert.are.equal("|cffff5555EnhRot|r error: event boom", G.printed[1])
+    rt.ctx.swing = swing
+    rt.frame.scripts.OnEvent(rt.frame, "PLAYER_ENTER_COMBAT")
+    assert.are.equal("swing", rt.pending.kind)
+    -- a search coroutine that dies raises its error again from job:run
+    local job = coroutine.create(function() error("search boom", 0) end)
+    rt.planner = { update = function() return PLAN end, busy = function() return true end,
+                   work = function() local ok, e = coroutine.resume(job); if not ok then error(e, 0) end end,
+                   view = function() return PLAN end }
+    rt.frame.scripts.OnUpdate(rt.frame, 0.3)
+    assert.is_true(rt.searching)
+    rt.frame.scripts.OnUpdate(rt.frame, 0.01)
+    assert.are.equal("|cffff5555EnhRot|r error: search boom", G.printed[2])
+    assert.is_false(rt.searching)
+    assert.is_nil(rt.stopped)
+    assert.is_nil(rt.planner.work)
+  end)
+
+  it("starts only on a WotLK 3.3.5a client", function()
+    install()
+    runtime.buildWarned = nil
+    _G.GetBuildInfo = function() return "3.3.5", "12340", "Jun 24 2010", 30300 end
+    assert.is_true((runtime.supported()))
+    local env = { config = {}, region = CreateFrame("Frame"), saved = {} }
+    assert.is_not_nil(runtime.start(env.config, env))
+    _G.GetBuildInfo = function() return "10.2.0", "52188", "Nov 1 2023", 100200 end
+    local ok, msg = runtime.supported()
+    assert.is_false(ok)
+    assert.truthy(msg:find("supports only WotLK 3.3.5a (build 30300); this client is 10.2.0", 1, true))
+    G.printed = {}
+    local env2 = { config = {}, region = CreateFrame("Frame"), saved = {} }
+    assert.is_nil(runtime.start(env2.config, env2))
+    assert.is_nil(runtime.start(env2.config, env2))
+    assert.is_nil(env2.rt)
+    assert.are.equal(1, #G.printed)
+    assert.truthy(G.printed[1]:find("supports only WotLK 3.3.5a", 1, true))
+    _G.GetBuildInfo = nil
+    runtime.buildWarned = nil
+    assert.is_true((runtime.supported()))
   end)
 
   it("feeds own swings and extra attacks to the swing clock", function()
@@ -452,17 +853,36 @@ describe("runtime", function()
     end)
   end
 
-  -- talents are matched by their English names
-  it("warns once in chat when no talent is read at level 10 or above (non-English client?)", function()
+  -- talents are matched by localized names (GetSpellInfo of each talent's rank-1 spell) and English names
+  it("warns once in chat when points are spent but no talent is recognized", function()
     local rt = start(nil, { level = 80, talents = { { { "Elementarschutz", 3 } } } })
     assert.are.equal(1, #G.printed)
-    assert.truthy(G.printed[1]:find("talents not detected (non-English client?)", 1, true))
+    assert.truthy(G.printed[1]:find("talents not recognized", 1, true))
     runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
     assert.are.equal(1, #G.printed)
   end)
 
-  it("does not warn below level 10 or when a talent is read", function()
+  it("reads talents on a Russian client through the spell-id names, without a warning", function()
+    local rt = start(nil, { level = 80, spellNames = { [51528] = "Оружие водоворота", [16256] = "Шквал" },
+                            talents = { { { "Оружие водоворота", 5 }, { "Шквал", 5 } } } })
+    assert.are.equal(0, #G.printed)
+    assert.are.equal(5, rt.ctx.cache.talents.maelstromWeapon)
+    assert.are.equal(5, rt.ctx.cache.talents.flurry)
+    runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
+    assert.are.equal(5, rt.ctx.cache.talents.maelstromWeapon)
+  end)
+
+  it("does not warn with no points spent, before talents load, or when a talent is read", function()
     start(nil, { level = 9, talents = {} })
+    assert.are.equal(0, #G.printed)
+    -- a fresh level 10 (or 80) that has not spent a point, talents listed in any language
+    start(nil, { level = 10, talents = { { { "Elementarschutz", 0 }, { "Konvektion", 0 } } } })
+    assert.are.equal(0, #G.printed)
+    -- at login the client may list no talents yet
+    local rt = start(nil, { level = 80, talents = {} })
+    assert.are.equal(0, #G.printed)
+    G.cfg.talents = { { { "Maelstrom Weapon", 5 } } }
+    runtime.onEvent(rt, "PLAYER_TALENT_UPDATE")
     assert.are.equal(0, #G.printed)
     start(nil, { level = 80, talents = { { { "Maelstrom Weapon", 5 } } } })
     assert.are.equal(0, #G.printed)
@@ -504,6 +924,73 @@ describe("runtime", function()
     local rt, env = start({ record = true })
     runtime.update(rt, 0.3)
     assert.are.equal(1, #env.saved.enhrotSnapshots)
+  end)
+
+  -- the press log: the press is taken at SENT, the server's START / SUCCEEDED only confirms it
+  it("logs the press at SENT against the shown plan and confirms it at SUCCEEDED", function()
+    local rt, env = start({ record = true })
+    runtime.update(rt, 0.3) -- shows stormstrike @0 at 100
+    G.cfg.now = 100.4
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    local log = env.saved.enhrotPresses
+    assert.are.same({ t = 100.4, key = "stormstrike", sug = "stormstrike", at = 0, hit = true, delay = 0.4 }, log[1])
+    assert.are.same({ key = "stormstrike", after = 0.4, matched = true }, env.saved.enhrotSnapshots[1].pressed)
+    G.cfg.now = 100.5
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Stormstrike", "")
+    assert.are.equal(1, #log)
+    assert.is_true(log[1].cf)
+    -- SUCCEEDED without SENT: the press itself, logged once
+    G.cfg.now = 101
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Earth Shock", "Rank 10")
+    assert.are.equal(2, #log)
+    assert.are.same({ t = 101, key = "earthShock", sug = "stormstrike", at = 0, hit = false, delay = 1 }, log[2])
+  end)
+
+  it("logs a hard cast once: SENT, then START and SUCCEEDED of the same cast", function()
+    local rt, env = start({ record = true }, { casting = { name = "Lightning Bolt", startMs = 100000, endMs = 101500, castID = 7 } })
+    runtime.update(rt, 0.3)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Lightning Bolt", "Rank 14", "Mob")
+    runtime.onEvent(rt, "UNIT_SPELLCAST_START", "player", "Lightning Bolt", "Rank 14", 7)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SUCCEEDED", "player", "Lightning Bolt", "Rank 14", 7)
+    local log = env.saved.enhrotPresses
+    assert.are.equal(1, #log)
+    assert.are.equal("lightningBolt", log[1].key)
+    assert.is_false(log[1].hit)
+    assert.is_true(log[1].cf)
+  end)
+
+  it("keeps no press log without recording", function()
+    local rt, env = start()
+    runtime.update(rt, 0.3)
+    runtime.onEvent(rt, "UNIT_SPELLCAST_SENT", "player", "Stormstrike", "", "Mob")
+    assert.is_nil(env.saved.enhrotPresses)
+  end)
+
+  it("counts the delay from the moment the first button became due, not from the last replan", function()
+    local rt = {}
+    local ss = { steps = { { key = "stormstrike", at = 0.5 } } }
+    runtime.trackDue(rt, ss, 100)
+    assert.are.same({ key = "stormstrike", at = 100.5 }, rt.due)
+    runtime.trackDue(rt, { steps = { { key = "stormstrike", at = 0.2 } } }, 100.4) -- not due yet: new estimate
+    assert.are.near(100.6, rt.due.at, 1e-9)
+    runtime.trackDue(rt, { steps = { { key = "stormstrike", at = 0 } } }, 101) -- due since 100.6
+    assert.are.near(100.6, rt.due.at, 1e-9)
+    runtime.trackDue(rt, { steps = { { key = "lavaLash", at = 0 } } }, 101.5)
+    assert.are.same({ key = "lavaLash", at = 101.5 }, rt.due)
+    runtime.trackDue(rt, { steps = {} }, 102)
+    assert.is_nil(rt.due)
+  end)
+
+  it("exports the addon version, snapshots and presses", function()
+    install()
+    local saved = { enhrotSnapshots = { { S = { now = 1 }, plan = { steps = {} } } },
+                    enhrotPresses = { { t = 1, key = "stormstrike" } } }
+    local w = runtime.showExport({ saved = saved })
+    local d = require("build").decodeExportFull(w.box.text)
+    assert.are.equal(runtime.VERSION, d.version)
+    assert.are.equal("dev", runtime.VERSION)
+    assert.are.same(saved.enhrotSnapshots, d.snapshots)
+    assert.are.same(saved.enhrotPresses, d.presses)
   end)
 
   it("rescans spells after learning one", function()
