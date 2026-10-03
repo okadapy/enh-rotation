@@ -42,23 +42,39 @@ function T:add(now, guid, hpPct)
   while #s > 0 and now - s[1].t > M.WINDOW do table.remove(s, 1) end
 end
 
--- least-squares slope of the samples (health share per second) and their time span;
--- nil while there are too few samples or too short a span
+-- The first sample of the damage: the last one before the health first fell (1 while it has
+-- not fallen at all). The samples start when the mob is targeted, not when it is hit: the
+-- seconds of full health while it was pulled or ran in are when the damage started, not how fast
+-- it goes. Counted in, a straight line through the bend read half the real speed (report
+-- 2026-10-02: 57% with ttd 14.6 s, dead 5.8 s later; 46% with 9.3 s against ~6 s), and with a
+-- sample every step it outweighed the prior. A mob whose health has never fallen keeps them all:
+-- nothing is killing it.
+local function first(s)
+  for i = 1, #s - 1 do
+    if s[i + 1].hp < s[i].hp then return i end
+  end
+  return 1
+end
+
+-- least-squares slope of the samples from the damage's first one (health share per second),
+-- their time span and number; nil while there are too few samples or too short a span
 local function fit(s)
   local n = #s
-  if n < M.MIN_SAMPLES or s[n].t - s[1].t < M.MIN_SPAN then return nil end
-  local t0 = s[1].t
+  local a = first(s)
+  if n - a + 1 < M.MIN_SAMPLES or s[n].t - s[a].t < M.MIN_SPAN then return nil end
+  local t0 = s[a].t
   local st, sh, stt, sth = 0, 0, 0, 0
-  for i = 1, n do
+  for i = a, n do
     local t = s[i].t - t0
     st = st + t
     sh = sh + s[i].hp
     stt = stt + t * t
     sth = sth + t * s[i].hp
   end
-  local den = n * stt - st * st
+  local m = n - a + 1
+  local den = m * stt - st * st
   if den <= 0 then return nil end
-  return (n * sth - st * sh) / den, s[n].t - t0
+  return (m * sth - st * sh) / den, s[n].t - t0, m
 end
 
 -- Without a prior: the regression alone, nil until it has seen a decline.
@@ -79,9 +95,9 @@ function T:estimate(now, guid, prior)
     local last = s[n]
     if last.hp <= 0 then return 0, "prior" end
     local speed = last.hp / prior
-    local slope, span = fit(s)
+    local slope, span, m = fit(s)
     if not slope then return prior, "prior" end
-    local w = span * n / (n + M.PRIOR_SAMPLES)
+    local w = span * m / (m + M.PRIOR_SAMPLES)
     local sr = slope < 0 and -slope or 0
     speed = (M.PRIOR_SPAN * speed + w * sr) / (M.PRIOR_SPAN + w)
     local left = last.hp / speed - (now - last.t)

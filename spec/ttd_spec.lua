@@ -171,9 +171,11 @@ describe("ttd with a prior", function()
   -- was at 45% 2.8 s later. The young regression must not outweigh the expected kill rate.
   it("a young regression that sees almost no decline is pulled to the prior", function()
     local t = ttd.new()
-    feed(t, "0xA", 100, { 0.89, 0.89, 0.88 }) -- 2 s, 1% down: the regression alone says ~176 s
-    assert.is_true(t:estimate(102, "0xA") > 100)
-    local v, src = t:smoothed(102, "0xA", 7)
+    -- 3 s, 2% down: the regression alone says ~135 s (a leading 0.89, 0.89 would be the time
+    -- before the damage, not a sample of it: see "the seconds before the health first fell")
+    feed(t, "0xA", 100, { 0.90, 0.89, 0.89, 0.88 })
+    assert.is_true(t:estimate(103, "0xA") > 100)
+    local v, src = t:smoothed(103, "0xA", 7)
     assert.are.equal("blend", src)
     assert.is_true(v < 12, ("%.1f"):format(v))
   end)
@@ -225,5 +227,36 @@ describe("ttd with a prior", function()
       last = v
       hp, now = hp - 0.05, now + 0.5
     end
+  end)
+
+  -- report 2026-10-02 (shaman 60, solo): the samples start when the mob is targeted, a sample a
+  -- step; 5 s at full health while it was pulled, then ~10.6%/s. The line through the bend read
+  -- 57% as 14.6 s (dead 5.8 s later) and 46% as 9.3 s (~6 s).
+  local function pulled(flat, upTo, prior)
+    local t = ttd.new()
+    local now, hp, hpMax, dps = 100, 3989, 3989, 425
+    local v
+    while true do
+      if now >= 100 + flat then hp = hp - dps * 0.1 end
+      local pct = math.ceil(hp / hpMax * 100) / 100 -- whole percent
+      t:add(now, "0xA", pct)
+      local fighting = now >= 100 + flat - 0.5
+      v = t:smoothed(now, "0xA", prior and fighting and hp / dps or nil)
+      if pct <= upTo then return v, hp / dps, t, now end
+      now = now + 0.1
+    end
+  end
+
+  it("the seconds before the health first fell do not slow the estimate", function()
+    for _, at in ipairs({ 0.57, 0.46, 0.3 }) do
+      local v, truth = pulled(5, at, true)
+      assert.is_true(math.abs(v - truth) < 0.15 * truth, ("%d%%: %.2f against %.2f"):format(at * 100, v, truth))
+    end
+  end)
+
+  it("without a prior the regression is the same as if it had started at the first hit", function()
+    local _, _, a, now = pulled(5, 0.6)
+    local _, _, b = pulled(0, 0.6)
+    assert.are.near(b:estimate(now - 5, "0xA"), a:estimate(now, "0xA"), 0.25)
   end)
 end)
