@@ -445,6 +445,33 @@ function M.killCredit(S, live)
   return (S.now - died) * M.dpsEstimate(S) * M.DISCOUNT
 end
 
+-- Solo, a live target whose health is known (not guessed): `own` is its own damage after the
+-- horizon (periodicValue: Flame Shock, fire totem, wolves; autoValue: the swings' share, support
+-- totems). It is worth at most its health left at the discount: uncapped, a mob left at 45
+-- health was worth 12 s of Magma Totem (~900), so the press that killed it inside the horizon
+-- lost that and looked like a loss (report 2026-10-02 #23). The kill bonus (step: WEIGHTS.solo.kill
+-- of the target's maximum health) was paid only when the average damage took the last point
+-- inside the horizon: a mob dying at 5.99 s had it, one left with a few health points at 6.0 s
+-- had not, and a press 0.001 s later moved a plan by ~0.15 x its health. Here a live target's
+-- kill counts after the horizon as the bonus less the work its health still takes: health points
+-- at the character's damage per second are seconds, a second is worth dps x DISCOUNT (killCredit),
+-- so the work is DISCOUNT x health; with more than kill / DISCOUNT of health left (0.3 of the
+-- maximum) it is 0, as before. At 0 health left it is the whole bonus, the same as the kill at
+-- the horizon's end. In the last 0.3 a point of health less is worth DISCOUNT more (the kill
+-- comes sooner, as killCredit counts it inside the horizon) unless the target's own damage
+-- takes it anyway (then the cap takes the same back: damage now is worth 1, never nothing,
+-- the failure of a cap alone: the plan stood empty in melee). Above 0.3 the capped own damage
+-- can still make more health worth more; outside solo nothing changes.
+-- The live state has no expected time of death after the horizon, so the dead state's seconds
+-- below zero there (killCredit, ~0.35 s at 60) remain a small step at the edge.
+local function soloOwn(S, own, hp)
+  local cap = M.DISCOUNT * hp
+  if own > cap then own = cap end
+  local k = M.WEIGHTS.solo.kill * (S.target.hpMax or hp) - cap
+  if k > 0 then own = own + k end
+  return own
+end
+
 --@addon
 -- A relic's proc buff still up at the end of the plan (gear_data.PROCS): its stat for the time
 -- left, up to TAIL and the target's death, at the stat's worth in damage per second. The horizon
@@ -516,7 +543,13 @@ function M.terminal(S)
   if S.mode == "solo" then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) + M.killCredit(S, live)
   elseif (W[S.mode] or W.group).drink then v = v + M.rageValue(S, damage, live) + M.shieldValue(S) end
   if live then
-    v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
+    local hp = t.hp
+    if S.mode == "solo" and hp and not t.guessed then
+      v = v + soloOwn(S, periodicValue(S, damage) + autoValue(S, damage), hp)
+        + (t.range == "melee" and 0 or reserveValue(S, damage, A))
+    else
+      v = v + periodicValue(S, damage) + autoValue(S, damage) + (t.range == "melee" and 0 or reserveValue(S, damage, A))
+    end
     --@addon
     local mods = S.mods
     if mods and mods.proc then v = v + relicValue(S, mods.proc) end

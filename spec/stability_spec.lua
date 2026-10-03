@@ -228,3 +228,36 @@ describe("stability of the long cooldowns' gate with a noisy time to die #integr
     assert.are.equal("stormstrike", firsts[#firsts], table.concat(firsts, " "))
   end)
 end)
+
+-- Solo, the kill bonus (value.step) used to count only when the average damage took the last
+-- point inside the horizon, and a live mob's own damage after it was not capped by its health:
+-- the value of one plan jumped by ~0.07-0.15 x the mob's health where its death crossed the
+-- horizon's end (report 2026-10-02 #23: a press 0.001 s later, 4377 / 3797). What is left at the
+-- edge is the expected time of death after the end (killCredit, ~0.35 s of damage at 60).
+describe("the value of a plan as the kill crosses the horizon's end #integration", function()
+  local search, Sc = require("search"), require("scenario")
+  local HP_MAX = 3989
+  local function worst(attacking, steps)
+    local prev, w, at = nil, 0, nil
+    for hp = 1800, 3000, 2 do
+      local S = Sc.state(60)
+      S.target.hpMax, S.target.hp, S.target.ttd = HP_MAX, hp, 14.6
+      S.totems.fire = { kind = "magma", remains = 15.7 }
+      S.swing.attacking = attacking
+      local v = search.evaluate(S, steps, Sc.OPTS)
+      if prev and math.abs(v - prev) > w then w, at = math.abs(v - prev), hp end
+      prev = v
+    end
+    return w, at
+  end
+  for _, case in ipairs({
+    { "Magma Totem alone, then Stormstrike", false, { { key = "stormstrike", at = 0 } } },
+    { "swings and Magma Totem, Stormstrike", true, { { key = "stormstrike", at = 0 } } },
+    { "swings and Magma Totem, Stormstrike and Lava Lash", true, { { key = "stormstrike", at = 0 }, { key = "lavaLash", at = 1.5 } } },
+  }) do
+    it(case[1] .. ": no step over 0.03 x the health per 2 health points", function()
+      local w, at = worst(case[2], case[3])
+      assert.is_true(w < 0.03 * HP_MAX, ("%.1f at %s"):format(w, tostring(at)))
+    end)
+  end
+end)

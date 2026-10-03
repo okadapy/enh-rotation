@@ -475,6 +475,79 @@ describe("value.terminal", function()
     assert.are.near((0.7 - value.FINISH_MIN) * per, value.killCredit(S, false) - idle, 1e-6)
   end)
 
+  -- solo, a live target's own damage after the horizon (DoT, fire totem, wolves, swings) is worth
+  -- at most its health left: uncapped, a mob left at 45 health was worth 12 s of Magma Totem and
+  -- the press that killed it lost that much (report 2026-10-02 #23)
+  it("solo: a live target's own damage after the horizon is worth at most its health left", function()
+    local function at(hp, remains)
+      local S = base({ mode = "solo", target = { hp = hp, hpMax = 4000, ttd = 60 } })
+      S.totems.fire = { kind = "magma", remains = remains }
+      S.swing.attacking = false
+      return value.terminal(S)
+    end
+    -- 4000 health left: the 11 s more of the totem count, at the discount
+    local rate = damage.periodic(nil, "magmaTotem")
+    assert.are.near(11 * rate * value.DISCOUNT, at(4000, 12) - at(4000, 1), 1e-6)
+    -- 45 health left: the totem's first second takes it, the other 11 s are worth nothing
+    assert.are.near(at(45, 1), at(45, 12), 1e-6)
+  end)
+
+  -- the kill bonus (value.step) was paid only when the average damage took the last point inside
+  -- the horizon: a mob left with a few health points at its end lost the whole bonus, and a press
+  -- 0.001 s later moved the plan by ~0.15 x its health (report 2026-10-02 #23: 4377 / 3797)
+  it("solo: a live target with almost no health left is worth the kill, as one dead at the horizon's end", function()
+    local S = base({ mode = "solo", target = { hp = 1e-6, hpMax = 4000 } })
+    S.totems.fire = { kind = "magma", remains = 12 }
+    local live = value.terminal(S)
+    S.target.hp, S.target.dead, S.target.diedAt = 0, true, S.now
+    -- the dead one had the bonus in value.step
+    assert.are.near(value.terminal(S) + value.WEIGHTS.solo.kill * 4000, live, 1e-3)
+  end)
+
+  -- in the last kill / DISCOUNT of its health a point less is the kill sooner; the target's own
+  -- damage that would take it anyway makes it no worse
+  it("solo: in the last 0.3 of its health less health left is never worth less", function()
+    for _, remains in ipairs({ 0, 1, 3, 12 }) do
+      local prev
+      for _, hp in ipairs({ 1200, 1000, 600, 300, 45, 1 }) do
+        local S = base({ mode = "solo", target = { hp = hp, hpMax = 4000 } })
+        S.totems.fire = { kind = remains > 0 and "magma" or false, remains = remains }
+        local v = value.terminal(S)
+        if prev then assert.is_true(v >= prev - 1e-6, ("totem %d s, hp %d: %.2f < %.2f"):format(remains, hp, v, prev)) end
+        prev = v
+      end
+    end
+  end)
+
+  it("solo: more than 0.3 of the health left and more than its own damage after the horizon: as before", function()
+    local S = base({ mode = "solo", target = { hp = 2000, hpMax = 4000 } })
+    S.totems.fire = { kind = "magma", remains = 3 }
+    S.swing.attacking = false
+    local a = value.terminal(S)
+    S.target.hp = 4000
+    assert.are.near(a, value.terminal(S), 1e-9)
+  end)
+
+  it("group and raid: the end state does not depend on the health left", function()
+    for _, mode in ipairs({ "group", "raid" }) do
+      local S = base({ mode = mode, target = { hp = 45, hpMax = 4000 } })
+      S.totems.fire = { kind = "magma", remains = 12 }
+      local a = value.terminal(S)
+      S.target.hp = 4000
+      assert.are.near(a, value.terminal(S), 1e-9, mode)
+    end
+  end)
+
+  it("solo: guessed or unknown health keeps the end state without the cap", function()
+    local S = base({ mode = "solo", target = { hp = 45, hpMax = 4000, guessed = true } })
+    S.totems.fire = { kind = "magma", remains = 12 }
+    local a = value.terminal(S)
+    S.target.hp = 4000
+    assert.are.near(a, value.terminal(S), 1e-9, "guessed")
+    S.target.guessed, S.target.hp = false, nil
+    assert.are.near(a, value.terminal(S), 1e-9, "no health")
+  end)
+
   -- solo, Lightning Shield missing costs a GCD later: put up in a free GCD it costs nothing
   it("solo and group: a missing Lightning Shield is worth a GCD of damage at the discount, if it is wanted", function()
     for _, mode in ipairs({ "solo", "group" }) do
